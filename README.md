@@ -150,4 +150,4 @@ When `dev` holds a set of validated changes that are ready for the car, a respon
 
 ---
 
-*ISC Racing Team — IFS08 Driverless*
+*ISC Racing Team — IFS08 Control Electronics*
