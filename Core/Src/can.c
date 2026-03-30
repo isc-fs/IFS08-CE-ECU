@@ -20,9 +20,15 @@ extern FDCAN_HandleTypeDef hfdcan3;
 #define TX_STATE_6             0x465u
 #define TX_STATE_7             0x466u
 
-/* Optional inverter command IDs (from vcu.txt). Adjust as needed. */
-#define TXID_INVERSOR          0x181u
-#define RXID_INVERSOR          0x201u
+static uint16_t read_u16_le(const uint8_t *data)
+{
+  return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+static uint16_t read_u16_be(const uint8_t *data)
+{
+  return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
+}
 
 /* Packing layout:
  * w0 = id
@@ -71,41 +77,88 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
   switch (m->id)
   {
     case ID_ACK_PRECARGA:
-      st->ok_precarga = m->data[0];
+      /* Legacy polling firmware treated ACK=0 as "precharge complete". */
+      st->ok_precarga = (m->data[0] == 0u) ? 1u : 0u;
       break;
 
     case ID_DC_BUS_VOLTAGE:
-      /* Example: voltage in first two bytes (little endian). Adjust to your real format. */
-      st->inv_dc_bus_voltage = (uint16_t)((uint16_t)m->data[0] | ((uint16_t)m->data[1] << 8));
+      /* Compatibility path kept for the simplified tests/protocol. */
+      st->inv_dc_bus_voltage = read_u16_le(m->data);
       break;
 
     case ID_S1_ACELERACION:
-      st->s1_aceleracion = (uint16_t)((uint16_t)m->data[0] | ((uint16_t)m->data[1] << 8));
+      /* Legacy DASH frame packs S1/S2 together in big-endian bytes 0..3. */
+      if (m->bus == CAN_BUS_DASH && m->dlc >= 4u)
+      {
+        st->s1_aceleracion = read_u16_be(&m->data[0]);
+        st->s2_aceleracion = read_u16_be(&m->data[2]);
+      }
+      else
+      {
+        st->s1_aceleracion = read_u16_le(m->data);
+      }
       break;
 
     case ID_S2_ACELERACION:
-      st->s2_aceleracion = (uint16_t)((uint16_t)m->data[0] | ((uint16_t)m->data[1] << 8));
+      st->s2_aceleracion = read_u16_le(m->data);
       break;
 
     case ID_S_FRENO:
-      st->s_freno = (uint16_t)((uint16_t)m->data[0] | ((uint16_t)m->data[1] << 8));
+      st->s_freno = read_u16_le(m->data);
       break;
 
     case ID_V_CELDA_MIN:
-      st->v_celda_min = (uint16_t)((uint16_t)m->data[0] | ((uint16_t)m->data[1] << 8));
+      /* Legacy ACU frame is big-endian. */
+      st->v_celda_min = read_u16_be(m->data);
       break;
 
     case TX_STATE_2:
+      st->inv_state = (uint8_t)(m->data[4] & 0x0Fu);
+      if (st->inv_state == 10u || st->inv_state == 11u)
+      {
+        st->inv_error = m->data[2];
+      }
+      break;
+
     case TX_STATE_4:
+      if (m->dlc == 8u)
+      {
+        uint32_t raw = (((uint32_t)m->data[7] & 0x0Fu) << 16)
+                     | ((uint32_t)m->data[6] << 8)
+                     | (uint32_t)m->data[5];
+        if ((raw & 0x80000u) != 0u)
+        {
+          raw |= 0xFFF00000u;
+        }
+        st->inv_rpm = (int32_t)raw;
+      }
+      break;
+
     case TX_STATE_5:
+      if (m->dlc == 8u)
+      {
+        st->inv_motor_temp = (int16_t)m->data[0];
+        st->inv_igbt_temp  = (int16_t)m->data[1];
+        st->inv_air_temp   = (int16_t)m->data[2];
+      }
+      break;
+
     case TX_STATE_6:
+      if (m->dlc == 8u)
+      {
+        st->inv_speed_actual   = (int32_t)read_u16_le(&m->data[2]);
+        st->inv_current_actual = (int32_t)read_u16_le(&m->data[4]);
+      }
+      break;
+
     case TX_STATE_7:
-      /* Example: state in byte0. Adjust to your real mapping. */
-      st->inv_state = m->data[0];
+      if (m->dlc == 6u)
+      {
+        st->inv_dc_bus_voltage = read_u16_le(&m->data[2]);
+      }
       break;
 
     default:
-      /* TODO: add remaining IDs from your current callback */
       break;
   }
 }

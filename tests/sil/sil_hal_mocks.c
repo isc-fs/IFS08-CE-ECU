@@ -4,6 +4,7 @@
  */
 
 #include "sil_hal_mocks.h"
+#include "can.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -29,53 +30,46 @@ uint16_t SIL_ADC_Read(uint32_t channel)
 
 /* ===== CAN simulation ===== */
 /* NOTE: SIL_CAN_Init is defined in sil_can_simulator.c */
-#define SIL_CAN_RX_QUEUE_SIZE 16
-#define SIL_CAN_TX_QUEUE_SIZE 16
+extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 
-typedef struct {
-    uint32_t id;
-    uint8_t data[8];
-    uint8_t dlc;
-} sil_can_frame_t;
-
-static sil_can_frame_t can_rx_queue[SIL_CAN_RX_QUEUE_SIZE] = {0};
-static sil_can_frame_t can_tx_queue[SIL_CAN_TX_QUEUE_SIZE] = {0};
-static uint32_t can_rx_head = 0, can_rx_tail = 0;
-static uint32_t can_tx_tail = 0;
+static FDCAN_HandleTypeDef *guess_fdcan_from_id(uint32_t id)
+{
+    if (id == 0x020u || id == 0x12Cu) return &hfdcan2;
+    if (id == 0x101u || id == 0x102u || id == 0x103u) return &hfdcan3;
+    return &hfdcan1;
+}
 
 void SIL_CAN_SendFrame(uint32_t id, const uint8_t *data, uint8_t dlc)
 {
-    if (can_tx_tail >= SIL_CAN_TX_QUEUE_SIZE) {
-        printf("[CAN] TX queue full, dropping frame 0x%03x\n", id);
+    FDCAN_HandleTypeDef *hfdcan = guess_fdcan_from_id(id);
+
+    if (SIL_FDCAN_InjectRxFrame(hfdcan, id, FDCAN_STANDARD_ID, data, dlc) != HAL_OK) {
+        printf("[CAN] RX fifo full, dropping frame 0x%03x\n", id);
         return;
     }
-    
-    sil_can_frame_t *frame = &can_tx_queue[can_tx_tail];
-    frame->id = id;
-    frame->dlc = dlc;
-    if (data) {
-        memcpy(frame->data, data, dlc);
-    }
-    
-    can_tx_tail++;
-    printf("[CAN] TX: ID=0x%03x DLC=%u\n", id, dlc);
+
+    Can_ISR_PushRxFifo0(hfdcan);
+    printf("[CAN] RX->ISR: ID=0x%03x DLC=%u\n", id, dlc);
 }
 
 int SIL_CAN_ReceiveFrame(uint32_t *id, uint8_t *data, uint8_t *dlc)
 {
-    if (can_rx_head >= can_rx_tail) {
-        return 0;  /* No frame available */
+    FDCAN_TxHeaderTypeDef txh;
+    uint8_t payload[8] = {0};
+    FDCAN_HandleTypeDef *buses[] = {&hfdcan1, &hfdcan2, &hfdcan3};
+
+    for (size_t i = 0; i < 3; i++) {
+        if (SIL_FDCAN_PopTxFrame(buses[i], &txh, payload) == HAL_OK) {
+            if (id)  *id  = txh.Identifier;
+            if (dlc) *dlc = (uint8_t)((txh.DataLength >> 16) & 0xFu);
+            if (data) memcpy(data, payload, 8);
+            return 1;
+        }
     }
-    
-    sil_can_frame_t *frame = &can_rx_queue[can_rx_head];
-    *id = frame->id;
-    *dlc = frame->dlc;
-    if (data) {
-        memcpy(data, frame->data, frame->dlc);
-    }
-    
-    can_rx_head++;
-    return 1;
+
+    return 0;  /* No frame available */
 }
 
 /* ===== GPIO simulation ===== */
@@ -149,6 +143,7 @@ void SIL_HAL_Init(void)
     memset(gpio_states, 0, sizeof(gpio_states));
     memset(usart_tx_buffer, 0, sizeof(usart_tx_buffer));
     memset(usart_rx_buffer, 0, sizeof(usart_rx_buffer));
+    SIL_FDCAN_Reset();
     
     SIL_USART_Init();
     SIL_CAN_Init();

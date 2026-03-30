@@ -2,8 +2,8 @@
  * sil_main.c
  * SIL (Software-In-The-Loop) Entry Point - Simplified Version
  * 
- * Simulates the complete ECU application logic without requiring
- * real FreeRTOS compilation. Perfect for functional testing.
+ * Simulates the complete ECU application logic with the real task layout
+ * from freertos.c, using a cooperative RTOS mock on the host.
  */
 
 #include <stdio.h>
@@ -13,8 +13,11 @@
 #include <time.h>
 
 #include "app_state.h"
+#include "can.h"
 #include "control.h"
+#include "telemetry.h"
 #include "test_integration.h"   /* suites S1-S10, Test_IntegrationRunAll() */
+#include "cmsis_os2.h"
 #include "sil_hal_mocks.h"
 #include "sil_can_simulator.h"
 #include "sil_boot_sequence.h"
@@ -22,13 +25,71 @@
 
 /* Declarada en mocks/diag_sil.c: redirige Diag_Log al fichero especificado */
 extern void SIL_DiagSetFile(FILE *f);
-/* Declarada en mocks/cmsis_os2_impl.c: crea colas CAN y mutex global       */
-extern void SIL_RTOS_Init(void);
+extern void MX_FREERTOS_Init(void);
 
 /* ===== Global state for SIL ===== */
 static volatile uint32_t sil_tick_ms = 0;
 static volatile int sil_simulation_running = 0;
 static volatile uint32_t sil_test_duration_ms = 0;
+static uint8_t sil_last_telemetry[32] = {0};
+static uint32_t sil_telemetry_count = 0;
+static int sil_test_failures = 0;
+
+extern FDCAN_HandleTypeDef hfdcan1;
+
+void Telemetry_Send32(const uint8_t payload[32])
+{
+    if (!payload) return;
+    memcpy(sil_last_telemetry, payload, sizeof(sil_last_telemetry));
+    sil_telemetry_count++;
+}
+
+static void sil_check(int condition, const char *message)
+{
+    if (condition) {
+        printf("[CHECK][PASS] %s\n", message);
+    } else {
+        printf("[CHECK][FAIL] %s\n", message);
+        sil_test_failures++;
+    }
+}
+
+static void sil_reset_captured_outputs(void)
+{
+    memset(sil_last_telemetry, 0, sizeof(sil_last_telemetry));
+    sil_telemetry_count = 0;
+}
+
+static void sil_set_start_button(uint8_t pressed)
+{
+    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
+    g_in.boton_arranque = pressed ? 1u : 0u;
+    if (g_inMutex) osMutexRelease(g_inMutex);
+}
+
+static void sil_runtime_init(void)
+{
+    SIL_RTOS_ResetKernel();
+    (void)osKernelInitialize();
+    SIL_HAL_Init();
+    MX_FREERTOS_Init();
+    (void)osKernelStart();
+    SIL_RTOS_RunReadyThreads();
+
+    sil_tick_ms = 0;
+    sil_simulation_running = 0;
+    sil_test_duration_ms = 0;
+    sil_test_failures = 0;
+    sil_reset_captured_outputs();
+}
+
+static void sil_runtime_step_1ms(void)
+{
+    sil_tick_ms++;
+    SIL_AdvanceTick(1);
+    SIL_CAN_Process();
+    SIL_RTOS_RunReadyThreads();
+}
 
 /* ===== Test: Suites de integración S1-S10 (test_integration.c) ===== */
 
@@ -42,6 +103,7 @@ static volatile uint32_t sil_test_duration_ms = 0;
 static void test_integration_suite(void)
 {
     const char *log_path = "tests/sil/results/integration_test.log";
+    int results_dir_ready = (SIL_EnsureResultsDir() == 0);
 
     printf("\n");
     printf("╔══════════════════════════════════════════════════════╗\n");
@@ -50,12 +112,15 @@ static void test_integration_suite(void)
     printf("╚══════════════════════════════════════════════════════╝\n\n");
 
     /* Abrir fichero de resultados */
-    FILE *log = fopen(log_path, "w");
-    if (!log) {
+    FILE *log = results_dir_ready ? fopen(log_path, "w") : NULL;
+    if (!log && !results_dir_ready) {
+        printf("[WARN] No se pudo preparar el directorio de resultados.\n");
+    } else if (!log) {
         /* Intentar crear el directorio results si no existe */
         printf("[WARN] No se pudo abrir %s, intentando crear directorio...\n", log_path);
-        (void)system("mkdir -p tests/sil/results");
-        log = fopen(log_path, "w");
+        if (SIL_EnsureResultsDir() == 0) {
+            log = fopen(log_path, "w");
+        }
     }
 
     /* Escribir cabecera del fichero de log */
@@ -116,14 +181,14 @@ static void test_integration_suite(void)
  */
 static void sil_run_simulation(uint32_t duration_ms)
 {
-    sil_tick_ms = 0;
     sil_simulation_running = 1;
     sil_test_duration_ms = duration_ms;
+    uint32_t end_tick = sil_tick_ms + duration_ms;
     
     printf("[SIL] Starting simulation for %u ms\n", duration_ms);
     
-    while (sil_tick_ms < duration_ms && sil_simulation_running) {
-        sil_tick_ms++;
+    while (sil_tick_ms < end_tick && sil_simulation_running) {
+        sil_runtime_step_1ms();
         usleep(1000);  /* Sleep 1ms */
     }
     
@@ -154,6 +219,8 @@ uint32_t sil_get_time_ms(void)
  */
 static void test_boot_sequence(void)
 {
+    app_inputs_t snapshot = {0};
+
     printf("\n");
     printf("╔══════════════════════════════════════════╗\n");
     printf("║  SIL TEST: Boot Sequence Verification   ║\n");
@@ -165,16 +232,24 @@ static void test_boot_sequence(void)
     /* Initialize application */
     printf("[BOOT] ➜ Initializing application\n");
     SIL_Results_LogEvent(0, "INIT", "Application startup");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
+    sil_set_start_button(1);
+    SIL_CAN_InjectBrake(100);
     
-    printf("[BOOT] ➜ Simulating boot sequence (10 seconds)\n");
-    sil_run_simulation(10000);
+    printf("[BOOT] ➜ Simulating boot sequence (2.5 seconds)\n");
+    sil_run_simulation(2500);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.ok_precarga == 1u, "precarga reconocida");
+    sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "se enviaron tramas al inversor");
+    sil_check(sil_telemetry_count > 0u, "telemetria generada en arranque");
     
     /* Report results */
-    printf("\n[BOOT] ✅ Boot sequence simulation complete\n");
-    SIL_Results_Log("BOOT_TEST", "SUCCESS", "Boot sequence completed without errors");
+    printf("\n[BOOT] %s Boot sequence simulation complete\n",
+           (sil_test_failures == 0) ? "✅" : "⚠️");
+    SIL_Results_Log("BOOT_TEST",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    (sil_test_failures == 0) ? "Boot sequence completed without errors"
+                                             : "Boot sequence checks failed");
     SIL_Results_LogEvent(sil_get_time_ms(), "COMPLETE", "Boot sequence finished");
     
     SIL_Results_Close();
@@ -185,6 +260,8 @@ static void test_boot_sequence(void)
  */
 static void test_full_cycle(void)
 {
+    app_inputs_t snapshot = {0};
+
     printf("\n");
     printf("╔══════════════════════════════════════════╗\n");
     printf("║  SIL TEST: Full Operating Cycle         ║\n");
@@ -195,48 +272,59 @@ static void test_full_cycle(void)
     
     printf("[CYCLE] ➜ Initializing system\n");
     SIL_Results_LogEvent(0, "INIT", "System initialization");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
+    sil_set_start_button(1);
+    SIL_CAN_InjectBrake(100);
+    SIL_CAN_InjectThrottle(0);
     
-    printf("[CYCLE] ➜ Phase 1: Boot sequence (0-5s)\n");
+    printf("[CYCLE] ➜ Phase 1: Boot + R2D (0-2.5s)\n");
     SIL_Results_LogEvent(0, "PHASE1", "Boot sequence");
-    sil_run_simulation(5000);
+    sil_run_simulation(2500);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.ok_precarga == 1u, "ACK de precarga procesado");
+    sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "mando al inversor capturado tras R2D");
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1_END", "Boot complete");
     
-    printf("[CYCLE] ➜ Phase 2: Precharge sequence (5-15s)\n");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "Precharge sequence");
-    sil_run_simulation(15000);
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2_END", "Precharge complete");
-    
-    printf("[CYCLE] ➜ Phase 3: Dynamic throttle control (15-30s)\n");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "Throttle control phase");
-    
-    /* Simulated throttle profile */
-    printf("         - [15s] Throttle = 0%%\n");
-    SIL_Results_LogEvent(15000, "THROTTLE", "0%");
-    SIL_CAN_InjectThrottle(0);
-    sil_run_simulation(3000);
-    
-    printf("         - [18s] Throttle = 50%%\n");
-    SIL_Results_LogEvent(18000, "THROTTLE", "50%");
+    printf("[CYCLE] ➜ Phase 2: 50%% throttle in RUN\n");
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "50pct throttle");
+    SIL_CAN_InjectBrake(0);
     SIL_CAN_InjectThrottle(50);
-    sil_run_simulation(4000);
+    sil_run_simulation(400);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.torque_total > 0u, "par positivo con 50% de acelerador");
+    sil_check(sil_telemetry_count > 0u, "telemetria publicada");
+    sil_check(sil_last_telemetry[1] == (uint8_t)snapshot.torque_total, "telemetria refleja torque");
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2_END", "50pct throttle complete");
     
-    printf("         - [22s] Throttle = 100%%\n");
-    SIL_Results_LogEvent(22000, "THROTTLE", "100%");
+    printf("[CYCLE] ➜ Phase 3: 100%% throttle\n");
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "100pct throttle");
     SIL_CAN_InjectThrottle(100);
-    sil_run_simulation(4000);
-    
-    printf("         - [26s] Throttle = 0%% (coast down)\n");
-    SIL_Results_LogEvent(26000, "THROTTLE", "0% (coast)");
+    sil_run_simulation(300);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.torque_total >= 80u, "par alto con 100% de acelerador");
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3_END", "100pct throttle complete");
+
+    printf("[CYCLE] ➜ Phase 4: EV 2.3 brake + throttle\n");
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE4", "EV2.3 fault");
+    SIL_CAN_InjectBrake(80);
+    sil_run_simulation(300);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.flag_EV_2_3 == 1u, "EV2.3 latched");
+    sil_check(snapshot.torque_total == 0u, "par inhibido con EV2.3");
+
+    printf("[CYCLE] ➜ Phase 5: Release controls\n");
     SIL_CAN_InjectThrottle(0);
-    sil_run_simulation(4000);
+    SIL_CAN_InjectBrake(0);
+    sil_run_simulation(300);
+    AppState_Snapshot(&snapshot);
+    sil_check(snapshot.flag_EV_2_3 == 0u, "EV2.3 liberado al soltar controles");
     
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3_END", "Throttle control complete");
-    
-    printf("\n[CYCLE] ✅ Full cycle simulation complete\n");
-    SIL_Results_Log("CYCLE_TEST", "SUCCESS", "Full operating cycle completed without errors");
+    printf("\n[CYCLE] %s Full cycle simulation complete\n",
+           (sil_test_failures == 0) ? "✅" : "⚠️");
+    SIL_Results_Log("CYCLE_TEST",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    (sil_test_failures == 0) ? "Full operating cycle completed without errors"
+                                             : "Full operating cycle checks failed");
     SIL_Results_LogEvent(sil_get_time_ms(), "COMPLETE", "Full cycle finished");
     
     SIL_Results_Close();
@@ -256,9 +344,7 @@ static void test_error_low_voltage(void)
     SIL_Results_Log("ERROR_LOW_V", "STARTED", "Low voltage fault scenario");
     
     printf("[ERROR_V] ➜ Initializing system\n");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
     
     printf("[ERROR_V] ➜ Normal operation (0-5s)\n");
     SIL_CAN_InjectDCVoltage(400);  /* Normal 400V */
@@ -306,9 +392,7 @@ static void test_error_high_temperature(void)
     SIL_Results_Log("ERROR_TEMP", "STARTED", "High temperature fault scenario");
     
     printf("[ERROR_T] ➜ Initializing system\n");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
     
     printf("[ERROR_T] ➜ Normal temperature operation (0-5s)\n");
     g_in.inv_motor_temp = 50;
@@ -351,9 +435,7 @@ static void test_safety_brake_throttle(void)
     SIL_Results_Log("SAFETY_BT", "STARTED", "Brake+Throttle safety test");
     
     printf("[SAFETY] ➜ Initializing system\n");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
     
     printf("[SAFETY] ➜ Normal throttle (0-3s)\n");
     SIL_CAN_InjectThrottle(60);
@@ -407,9 +489,7 @@ static void test_dynamic_state_transitions(void)
     SIL_Results_Log("DYNAMIC_ST", "STARTED", "Dynamic state transition testing");
     
     printf("[DYNAMIC] ➜ Initializing\n");
-    AppState_Init();
-    SIL_HAL_Init();
-    SIL_CAN_Init();
+    sil_runtime_init();
     
     printf("[DYNAMIC] ➜ State 1: BOOT (0-5s)\n");
     SIL_Results_LogEvent(0, "STATE", "BOOT");
@@ -463,7 +543,7 @@ static void print_usage(const char *prog)
     printf("  --test-safety-brake      EV 2.3 brake+throttle test\n");
     printf("  --test-dynamic-states    Dynamic state transition test\n");
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
-    printf("                           → genera results/integration_test.log\n");
+    printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
     printf("  --help                   Print this message\n");
 }
@@ -517,6 +597,10 @@ int main(int argc, char *argv[])
     }
     
     printf("\n[SIL] Test execution completed\n\n");
+    if (sil_test_failures > 0) {
+        printf("[SIL] %d runtime checks failed\n", sil_test_failures);
+        return 1;
+    }
     return 0;
 }
 

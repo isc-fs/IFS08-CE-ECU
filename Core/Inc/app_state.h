@@ -19,7 +19,10 @@ typedef struct
   int16_t  inv_motor_temp;
   int16_t  inv_igbt_temp;
   int16_t  inv_air_temp;
-  int16_t  inv_rpm;
+  int32_t  inv_rpm;
+  int32_t  inv_speed_actual;
+  int32_t  inv_current_actual;
+  uint8_t  inv_error;
 
   /* Battery / misc */
   uint16_t v_celda_min;      /* raw / scaled */

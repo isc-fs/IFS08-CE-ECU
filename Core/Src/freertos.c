@@ -29,6 +29,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_state.h"
+#include "app_runtime.h"
+#include "control.h"
 
 /* USER CODE END Includes */
 
@@ -44,6 +47,15 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+#ifdef SIL_USE_THREAD_SCHEDULER
+#define APP_TASK_LOOP_BEGIN() do {
+#define APP_TASK_LOOP_DELAY(ms) do { osDelay((ms)); return; } while (0)
+#define APP_TASK_LOOP_END() } while (0)
+#else
+#define APP_TASK_LOOP_BEGIN() for(;;) {
+#define APP_TASK_LOOP_DELAY(ms) osDelay((ms))
+#define APP_TASK_LOOP_END() }
+#endif
 
 /* USER CODE END PM */
 
@@ -193,7 +205,11 @@ canTxQueueHandle = osMessageQueueNew(64,  sizeof(can_qitem16_t), NULL);
   DiagTaskHandle = osThreadNew(StartDiagTask, NULL, &DiagTask_attributes);
 
   /* creation of IntegrationTestTask */
+#ifndef SIL_USE_THREAD_SCHEDULER
   IntegrationTestTaskHandle = osThreadNew(StartIntegrationTestTask, NULL, &IntegrationTestTask_attributes);
+#else
+  IntegrationTestTaskHandle = NULL;
+#endif
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -215,11 +231,10 @@ canTxQueueHandle = osMessageQueueNew(64,  sizeof(can_qitem16_t), NULL);
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    APP_TASK_LOOP_DELAY(1);
+  APP_TASK_LOOP_END();
   /* USER CODE END StartDefaultTask */
 }
 
@@ -233,19 +248,8 @@ void StartDefaultTask(void *argument)
 void StartAppInitTask(void *argument)
 {
   /* USER CODE BEGIN StartAppInitTask */
-
-  Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
-  
-  // Initialize application state machine (BOOT state)
-  AppState_Init();
-  Diag_Log("State machine initialized (BOOT)\n");
-  
-  // Initialize control logic
-  Control_Init();
-  Diag_Log("Control module initialized\n");
-  
-  Diag_Log("=== INITIALIZATION COMPLETE ===\n");
-  
+  (void)argument;
+  AppRuntime_InitStep();
   // Exit this init task - scheduler will run other tasks
   osThreadExit();
 
@@ -263,28 +267,11 @@ void StartControlTask(void *argument)
 {
   /* USER CODE BEGIN StartControlTask */
   /* Control loop: 10ms period (100Hz) */
-  
-  app_inputs_t state_snapshot;
-  control_out_t control_output;
-  
-  for(;;)
-  {
-    // 1. Take snapshot of application state (thread-safe via mutex)
-    AppState_Snapshot(&state_snapshot);
-    
-    // 2. Execute control logic (10ms timestep)
-    Control_Step10ms(&state_snapshot, &control_output);
-    
-    // 3. Process CAN messages to send (if any)
-    for (uint8_t i = 0; i < control_output.count; i++) {
-      can_qitem16_t qitem;
-      CAN_Pack16(&control_output.msgs[i], &qitem);
-      osMessageQueuePut(canTxQueueHandle, &qitem, 0, 0);
-    }
-    
-    // 4. Sleep for 10ms (100Hz control loop)
-    osDelay(10);
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    AppRuntime_ControlStep();
+    APP_TASK_LOOP_DELAY(10);
+  APP_TASK_LOOP_END();
   /* USER CODE END StartControlTask */
 }
 
@@ -299,29 +286,11 @@ void StartCanRxTask(void *argument)
 {
   /* USER CODE BEGIN StartCanRxTask */
   /* CAN Receive task: 5ms period */
-  
-  can_qitem16_t rx_qitem;
-  can_msg_t rx_msg;
-  osStatus_t status;
-  app_inputs_t snapshot;
-  
-  for(;;)
-  {
-    // Check if messages in queue (non-blocking)
-    status = osMessageQueueGet(canRxQueueHandle, &rx_qitem, NULL, 0);
-    
-    if (status == osOK) {
-      // Unpack queue item to CAN message
-      CAN_Unpack16(&rx_qitem, &rx_msg);
-      
-      // Take snapshot, parse and update
-      AppState_Snapshot(&snapshot);
-      CanRx_ParseAndUpdate(&rx_msg, &snapshot);
-      // (Caller should update shared state under mutex)
-    }
-    
-    osDelay(5);  // 5ms polling rate (200Hz)
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    AppRuntime_CanRxStep();
+    APP_TASK_LOOP_DELAY(5);  // 5ms polling rate (200Hz)
+  APP_TASK_LOOP_END();
   /* USER CODE END StartCanRxTask */
 }
 
@@ -336,28 +305,11 @@ void StartCanTxTask(void *argument)
 {
   /* USER CODE BEGIN StartCanTxTask */
   /* CAN Transmit task: 20ms period (50Hz) */
-  
-  can_qitem16_t tx_qitem;
-  can_msg_t tx_msg;
-  osStatus_t status;
-  
-  for(;;)
-  {
-    // Check if messages pending in TX queue (non-blocking)
-    status = osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, 0);
-    
-    while (status == osOK) {
-      // Unpack and transmit
-      CAN_Unpack16(&tx_qitem, &tx_msg);
-      CanTx_SendHal(&tx_msg);
-      
-      // Check for next message (non-blocking)
-      status = osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, 0);
-    }
-    
-    // Sleep for 20ms (50Hz TX rate)
-    osDelay(20);
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    AppRuntime_CanTxStep();
+    APP_TASK_LOOP_DELAY(20);
+  APP_TASK_LOOP_END();
   /* USER CODE END StartCanTxTask */
 }
 
@@ -372,24 +324,11 @@ void StartTelemetryTask(void *argument)
 {
   /* USER CODE BEGIN StartTelemetryTask */
   /* Telemetry logging task: 100ms period (10Hz) */
-  
-  app_inputs_t state_snapshot;
-  uint8_t payload32[32];
-  
-  for(;;)
-  {
-    // Take snapshot of current state
-    AppState_Snapshot(&state_snapshot);
-    
-    // Build telemetry payload (32 bytes)
-    Telemetry_Build32(&state_snapshot, payload32);
-    
-    // Send telemetry (UART/nRF24/etc)
-    Telemetry_Send32(payload32);
-    
-    // Sleep for 100ms (10Hz logging rate)
-    osDelay(100);
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    AppRuntime_TelemetryStep();
+    APP_TASK_LOOP_DELAY(100);
+  APP_TASK_LOOP_END();
   /* USER CODE END StartTelemetryTask */
 }
 
@@ -403,12 +342,10 @@ void StartTelemetryTask(void *argument)
 void StartDiagTask(void *argument)
 {
   /* USER CODE BEGIN StartDiagTask */
-  /* Infinite loop */
-
-  for(;;)
-  {
-    osDelay(1);
-  }
+  (void)argument;
+  APP_TASK_LOOP_BEGIN()
+    APP_TASK_LOOP_DELAY(1);
+  APP_TASK_LOOP_END();
   /* USER CODE END StartDiagTask */
 }
 
@@ -441,6 +378,90 @@ void StartIntegrationTestTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+void AppRuntime_InitStep(void)
+{
+  Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
+
+  AppState_Init();
+  Diag_Log("State machine initialized (BOOT)\n");
+
+  Control_Init();
+  Diag_Log("Control module initialized\n");
+
+  Diag_Log("=== INITIALIZATION COMPLETE ===\n");
+}
+
+void AppRuntime_ControlStep(void)
+{
+  app_inputs_t state_snapshot;
+  control_out_t control_output;
+
+  AppState_Snapshot(&state_snapshot);
+  Control_Step10ms(&state_snapshot, &control_output);
+
+  if (g_inMutex) {
+    osMutexAcquire(g_inMutex, osWaitForever);
+  }
+  g_in.torque_total = control_output.torque_pct;
+  g_in.flag_EV_2_3 = control_output.flag_ev_2_3;
+  g_in.flag_T11_8_9 = control_output.flag_t11_8_9;
+  if (g_inMutex) {
+    osMutexRelease(g_inMutex);
+  }
+
+  for (uint8_t i = 0; i < control_output.count; i++) {
+    can_qitem16_t qitem;
+    CAN_Pack16(&control_output.msgs[i], &qitem);
+    (void)osMessageQueuePut(canTxQueueHandle, &qitem, 0, 0);
+  }
+}
+
+void AppRuntime_CanRxStep(void)
+{
+  can_qitem16_t rx_qitem;
+  can_msg_t rx_msg;
+  osStatus_t status;
+
+  status = osMessageQueueGet(canRxQueueHandle, &rx_qitem, NULL, 0);
+  while (status == osOK) {
+    CAN_Unpack16(&rx_qitem, &rx_msg);
+
+    if (g_inMutex) {
+      osMutexAcquire(g_inMutex, osWaitForever);
+    }
+    CanRx_ParseAndUpdate(&rx_msg, &g_in);
+    if (g_inMutex) {
+      osMutexRelease(g_inMutex);
+    }
+
+    status = osMessageQueueGet(canRxQueueHandle, &rx_qitem, NULL, 0);
+  }
+}
+
+void AppRuntime_CanTxStep(void)
+{
+  can_qitem16_t tx_qitem;
+  can_msg_t tx_msg;
+  osStatus_t status;
+
+  status = osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, 0);
+  while (status == osOK) {
+    CAN_Unpack16(&tx_qitem, &tx_msg);
+    (void)CanTx_SendHal(&tx_msg);
+    status = osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, 0);
+  }
+}
+
+void AppRuntime_TelemetryStep(void)
+{
+  app_inputs_t state_snapshot;
+  uint8_t payload32[32];
+
+  AppState_Snapshot(&state_snapshot);
+  Telemetry_Build32(&state_snapshot, payload32);
+  Telemetry_Send32(payload32);
+}
 
 /* USER CODE END Application */
 

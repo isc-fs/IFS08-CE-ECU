@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include <time.h>
 
+/* Ensure the results directory exists */
+int SIL_EnsureResultsDir(void);
+
 /* Initialize results file */
 void SIL_Results_Init(const char *filename);
 

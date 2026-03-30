@@ -43,7 +43,9 @@ typedef enum {
    ---------------------------------------------------------------------- */
 typedef int32_t osPriority_t;
 #define osPriorityLow       (-2)
+#define osPriorityBelowNormal (-1)
 #define osPriorityNormal    (0)
+#define osPriorityAboveNormal (1)
 #define osPriorityHigh      (2)
 
 /* -------------------------------------------------------------------------
@@ -66,6 +68,8 @@ typedef struct { const char *name; uint32_t attr_bits; void *cb_mem; uint32_t cb
    ---------------------------------------------------------------------- */
 uint32_t osKernelGetTickCount(void);
 uint32_t osKernelGetTickFreq(void);
+osStatus_t osKernelInitialize(void);
+osStatus_t osKernelStart(void);
 
 /* -------------------------------------------------------------------------
    API de Threads (stubs – SIL es single-threaded)
@@ -100,6 +104,9 @@ osStatus_t  osMessageQueueReset(osMessageQueueId_t mq_id);
 /* -------------------------------------------------------------------------
    Función de reset del tick SIL (solo para tests)
    ---------------------------------------------------------------------- */
+void SIL_RTOS_Init(void);
+void SIL_RTOS_ResetKernel(void);
+void SIL_RTOS_RunReadyThreads(void);
 void SIL_ResetTick(void);
 void SIL_AdvanceTick(uint32_t ms);
 

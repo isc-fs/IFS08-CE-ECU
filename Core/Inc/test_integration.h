@@ -47,9 +47,10 @@ extern "C" {
 /* CONSTANTES DE PROYECTO (alineadas con VCU.h / can.c)                      */
 /* -------------------------------------------------------------------------- */
 
-/* IDs CAN Inversor BAMOCAR (desde perspectiva ECU) */
+/* IDs CAN Inversor BAMOCAR (protocolo legado de main_polling.c) */
 #define TINT_RXID_INV          0x201u   /* ECU recibe desde el inversor       */
-#define TINT_TXID_INV          0x181u   /* ECU envía al inversor              */
+#define TINT_RX_SETPOINT_1     0x360u   /* ECU envia modo/enable al inversor  */
+#define TINT_RX_SETPOINT_3     0x362u   /* ECU envia consigna de par          */
 
 /* IDs CAN estados inversor (TX_STATE_x del inversor) */
 #define TINT_TX_STATE_2        0x461u

@@ -26,6 +26,9 @@
 #include "diag.h"
 #include "telemetry.h"
 #include "cmsis_os2.h"
+#ifdef TEST_MODE_SIL
+#include "sil_hal_mocks.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -41,6 +44,11 @@ static uint32_t g_suite_errors = 0;  /* fallos acumulados por suite         */
 /* Handles CAN (creados en freertos.c) */
 extern osMessageQueueId_t canRxQueueHandle;
 extern osMessageQueueId_t canTxQueueHandle;
+#ifdef TEST_MODE_SIL
+extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
+#endif
 
 /* ---- Macros de aserción -------------------------------------------------- */
 
@@ -111,9 +119,13 @@ static void drain_queues(void)
   can_qitem16_t tmp;
   while (osMessageQueueGet(canRxQueueHandle, &tmp, NULL, 0) == osOK) {}
   while (osMessageQueueGet(canTxQueueHandle, &tmp, NULL, 0) == osOK) {}
+#ifdef TEST_MODE_SIL
+  SIL_FDCAN_Reset();
+#endif
 }
 
 /** Construye un mensaje CAN mínimo para enviar al parser. */
+#ifndef TEST_MODE_SIL
 static can_msg_t make_can_msg(uint32_t id, can_bus_t bus,
                                const uint8_t *data, uint8_t dlc)
 {
@@ -125,6 +137,127 @@ static can_msg_t make_can_msg(uint32_t id, can_bus_t bus,
   m.ide = 0;
   if (data && dlc) memcpy(m.data, data, dlc > 8 ? 8 : dlc);
   return m;
+}
+#endif
+
+static uint8_t fdcan_dlc_to_len(uint32_t dlc)
+{
+  switch (dlc)
+  {
+    case FDCAN_DLC_BYTES_0: return 0u;
+    case FDCAN_DLC_BYTES_1: return 1u;
+    case FDCAN_DLC_BYTES_2: return 2u;
+    case FDCAN_DLC_BYTES_3: return 3u;
+    case FDCAN_DLC_BYTES_4: return 4u;
+    case FDCAN_DLC_BYTES_5: return 5u;
+    case FDCAN_DLC_BYTES_6: return 6u;
+    case FDCAN_DLC_BYTES_7: return 7u;
+    case FDCAN_DLC_BYTES_8: return 8u;
+    default:                return 8u;
+  }
+}
+
+static void pump_can_rx_queue(void)
+{
+  can_qitem16_t qi;
+  can_msg_t msg;
+
+  while (osMessageQueueGet(canRxQueueHandle, &qi, NULL, 0) == osOK)
+  {
+    CAN_Unpack16(&qi, &msg);
+    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
+    CanRx_ParseAndUpdate(&msg, &g_in);
+    if (g_inMutex) osMutexRelease(g_inMutex);
+  }
+}
+
+static void pump_can_tx_queue(void)
+{
+  can_qitem16_t qi;
+  can_msg_t msg;
+
+  while (osMessageQueueGet(canTxQueueHandle, &qi, NULL, 0) == osOK)
+  {
+    CAN_Unpack16(&qi, &msg);
+    (void)CanTx_SendHal(&msg);
+  }
+}
+
+static uint32_t enqueue_control_frames(const control_out_t *out)
+{
+  uint32_t enqueued = 0u;
+
+  if (!out) return 0u;
+
+  for (uint8_t i = 0; i < out->count && i < 8u; i++)
+  {
+    can_qitem16_t qi;
+    CAN_Pack16(&out->msgs[i], &qi);
+    if (osMessageQueuePut(canTxQueueHandle, &qi, 0, 0) == osOK) enqueued++;
+  }
+
+  return enqueued;
+}
+
+#ifdef TEST_MODE_SIL
+static FDCAN_HandleTypeDef *test_bus_to_handle(can_bus_t bus)
+{
+  switch (bus)
+  {
+    case CAN_BUS_INV:  return &hfdcan1;
+    case CAN_BUS_ACU:  return &hfdcan2;
+    case CAN_BUS_DASH: return &hfdcan3;
+    default:           return &hfdcan1;
+  }
+}
+#endif
+
+static HAL_StatusTypeDef inject_can_to_rx_queue(uint32_t id, can_bus_t bus,
+                                                const uint8_t *data, uint8_t dlc)
+{
+#ifdef TEST_MODE_SIL
+  FDCAN_HandleTypeDef *hfdcan = test_bus_to_handle(bus);
+  HAL_StatusTypeDef st = SIL_FDCAN_InjectRxFrame(hfdcan, id, FDCAN_STANDARD_ID, data, dlc);
+  if (st != HAL_OK) return st;
+  Can_ISR_PushRxFifo0(hfdcan);
+  return HAL_OK;
+#else
+  can_msg_t m = make_can_msg(id, bus, data, dlc);
+  can_qitem16_t qi;
+  CAN_Pack16(&m, &qi);
+  return (osMessageQueuePut(canRxQueueHandle, &qi, 0, 0) == osOK) ? HAL_OK : HAL_ERROR;
+#endif
+}
+
+static HAL_StatusTypeDef inject_can_and_process(uint32_t id, can_bus_t bus,
+                                                const uint8_t *data, uint8_t dlc)
+{
+  HAL_StatusTypeDef st = inject_can_to_rx_queue(id, bus, data, dlc);
+  if (st == HAL_OK) pump_can_rx_queue();
+  return st;
+}
+
+static HAL_StatusTypeDef pop_physical_tx(can_bus_t bus, can_msg_t *msg)
+{
+#ifdef TEST_MODE_SIL
+  FDCAN_TxHeaderTypeDef txh;
+  uint8_t data[8] = {0};
+
+  if (!msg) return HAL_ERROR;
+  if (SIL_FDCAN_PopTxFrame(test_bus_to_handle(bus), &txh, data) != HAL_OK) return HAL_ERROR;
+
+  memset(msg, 0, sizeof(*msg));
+  msg->bus = bus;
+  msg->id  = txh.Identifier;
+  msg->ide = (txh.IdType == FDCAN_EXTENDED_ID) ? 1u : 0u;
+  msg->dlc = fdcan_dlc_to_len(txh.DataLength);
+  memcpy(msg->data, data, 8);
+  return HAL_OK;
+#else
+  (void)bus;
+  (void)msg;
+  return HAL_ERROR;
+#endif
 }
 
 /* ============================================================================
@@ -197,69 +330,60 @@ uint32_t test_suite_inverter_state_machine(void)
   AppState_Snapshot(&st);
   ASSERT_EQUAL(st.inv_state, 0u, S, "2.1_inv_state_initial_zero");
 
-  /* S2.2 – Recibir TX_STATE_2 (0x461) → inv_state = byte0 */
+  /* S2.2 – Recibir TX_STATE_2 (0x461) → inv_state = nibble bajo de byte4 */
   {
-    uint8_t d[8] = {0x02, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_TX_STATE_2, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0, 0, 0, 0, 0x02, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_2, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "2.2_inv_state_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.inv_state, 0x02u, S, "2.2_inv_state_2");
   }
 
-  /* S2.3 – Recibir TX_STATE_4 (0x463) → inv_state = byte0 */
+  /* S2.3 – Recibir TX_STATE_4 (0x463) → inv_rpm desde bytes 5..7 */
   {
-    uint8_t d[8] = {0x04, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_TX_STATE_4, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0, 0, 0, 0, 0, 0x88, 0x13, 0x00}; /* 5000 rpm */
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_4, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "2.3_inv_rpm_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.inv_state, 0x04u, S, "2.3_inv_state_4");
+    ASSERT_EQUAL(st.inv_rpm, 5000u, S, "2.3_inv_rpm_parsed");
   }
 
-  /* S2.4 – Recibir TX_STATE_5 (0x464) → inv_state = byte0 */
+  /* S2.4 – Recibir TX_STATE_5 (0x464) → temperaturas */
   {
-    uint8_t d[8] = {0x05, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_TX_STATE_5, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {55, 48, 36, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_5, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "2.4_inv_temp_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.inv_state, 0x05u, S, "2.4_inv_state_5_ready");
+    ASSERT_EQUAL(st.inv_motor_temp, 55u, S, "2.4_inv_motor_temp");
+    ASSERT_EQUAL(st.inv_igbt_temp, 48u, S, "2.4_inv_igbt_temp");
+    ASSERT_EQUAL(st.inv_air_temp, 36u, S, "2.4_inv_air_temp");
   }
 
-  /* S2.5 – Recibir TX_STATE_6 (0x465) → inv_state = byte0 */
+  /* S2.5 – Recibir TX_STATE_6 (0x465) → velocidad/corriente */
   {
-    uint8_t d[8] = {0x06, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_TX_STATE_6, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0, 0, 0x20, 0x03, 0x34, 0x12, 0, 0}; /* 800 / 0x1234 */
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_6, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "2.5_inv_motion_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.inv_state, 0x06u, S, "2.5_inv_state_6_run");
+    ASSERT_EQUAL(st.inv_speed_actual, 800u, S, "2.5_inv_speed_actual");
+    ASSERT_EQUAL(st.inv_current_actual, 0x1234u, S, "2.5_inv_current_actual");
   }
 
-  /* S2.6 – Recibir TX_STATE_7 (0x466) → inv_state = byte0 */
+  /* S2.6 – Recibir TX_STATE_7 (0x466) → Vdc desde bytes 2..3 */
   {
-    uint8_t d[8] = {0x07, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_TX_STATE_7, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0, 0, 0x90, 0x01, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_7, CAN_BUS_INV, d, 6),
+                 (uint32_t)HAL_OK, S, "2.6_inv_vdc_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.inv_state, 0x07u, S, "2.6_inv_state_7_fault");
+    ASSERT_EQUAL(st.inv_dc_bus_voltage, 0x0190u, S, "2.6_inv_dc_bus_voltage");
   }
 
   /* S2.7 – DC Bus Voltage se decodifica correctamente (little-endian 2 bytes) */
   {
     /* Simular 400 V → 0x0190 = 400d */
     uint8_t d[8] = {0x90, 0x01, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_DC_BUS_V, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_DC_BUS_V, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "2.7_dc_bus_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.inv_dc_bus_voltage, 0x0190u, S, "2.7_dc_bus_voltage_400V");
   }
@@ -294,15 +418,15 @@ uint32_t test_suite_boot_sequence(void)
   Control_Step10ms(&in, &out);
   ASSERT_EQUAL(out.torque_pct, 0u, S, "3.1_boot_no_torque_without_precarga");
   /* En BOOT no se envían tramas de torque */
-  ASSERT_EQUAL(out.count, 0u, S, "3.1_boot_no_can_frames");
+  ASSERT_RANGE(out.count, 1u, 2u, S, "3.1_boot_precharge_can_frames");
+  ASSERT_EQUAL(out.msgs[0].id, 0x100u, S, "3.1_boot_dc_bus_frame_id");
+  ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_ACU, S, "3.1_boot_dc_bus_frame_bus");
 
   /* S3.2 – Precarga completada (ok_precarga=1), todavía sin botón ni freno */
   {
-    uint8_t d[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0x00, 0, 0, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1),
+                 (uint32_t)HAL_OK, S, "3.2_precharge_rx_ok");
     AppState_Snapshot(&in);
     ASSERT_EQUAL(in.ok_precarga, 0x01u, S, "3.2_precharge_ack_received");
   }
@@ -330,12 +454,24 @@ uint32_t test_suite_boot_sequence(void)
   Control_Step10ms(&in, &out);   /* RUN: genera trama CAN con torque */
   /* En estado RUN debe haber exactamente 1 trama CAN */
   ASSERT_RANGE(out.count, 1u, 8u, S, "3.4_post_r2d_sends_can_frame");
+  ASSERT_EQUAL(enqueue_control_frames(&out), (uint32_t)out.count, S, "3.4_post_r2d_tx_queue_ok");
+  pump_can_tx_queue();
   ASSERT_RANGE(out.torque_pct, 0u, 100u, S, "3.4_post_r2d_torque_valid");
 
-  /* S3.5 – En RUN: el ID de la trama es el del inversor (0x181) */
-  if (out.count > 0) {
-    ASSERT_EQUAL(out.msgs[0].id, TINT_TXID_INV, S, "3.5_inv_can_frame_id_correct");
+  /* S3.5 – En RUN: salen las tramas legacy 0x360 (modo) y 0x362 (torque) */
+  if (out.count > 1) {
+#ifdef TEST_MODE_SIL
+    can_msg_t tx0, tx1;
+    ASSERT_EQUAL((uint32_t)pop_physical_tx(CAN_BUS_INV, &tx0), (uint32_t)HAL_OK, S, "3.5_inv_mode_frame_present");
+    ASSERT_EQUAL((uint32_t)pop_physical_tx(CAN_BUS_INV, &tx1), (uint32_t)HAL_OK, S, "3.5_inv_torque_frame_present");
+    ASSERT_EQUAL(tx0.id, 0x360u, S, "3.5_inv_mode_frame_id_correct");
+    ASSERT_EQUAL(tx0.bus, (uint32_t)CAN_BUS_INV, S, "3.5_inv_can_bus_correct");
+    ASSERT_EQUAL(tx1.id, 0x362u, S, "3.5_inv_torque_frame_id_correct");
+#else
+    ASSERT_EQUAL(out.msgs[0].id, 0x360u, S, "3.5_inv_mode_frame_id_correct");
     ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_INV, S, "3.5_inv_can_bus_correct");
+    ASSERT_EQUAL(out.msgs[1].id, 0x362u, S, "3.5_inv_torque_frame_id_correct");
+#endif
   }
 
   AppState_Init();
@@ -357,11 +493,9 @@ uint32_t test_suite_can_rx_parsing(void)
 
   /* S4.1 – ACK precarga (0x020), byte0=1 */
   {
-    uint8_t d[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {0x00, 0, 0, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1),
+                 (uint32_t)HAL_OK, S, "4.1_ack_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.1_ack_precarga");
   }
@@ -370,10 +504,8 @@ uint32_t test_suite_can_rx_parsing(void)
   {
     uint16_t val = TINT_ADC_S1_50PCT;
     uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "4.2_s1_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.s1_aceleracion, TINT_ADC_S1_50PCT, S, "4.2_s1_acel_parsed");
   }
@@ -382,10 +514,8 @@ uint32_t test_suite_can_rx_parsing(void)
   {
     uint16_t val = TINT_ADC_S2_50PCT;
     uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_S2_ACEL, CAN_BUS_DASH, d, 2);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S2_ACEL, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "4.3_s2_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.s2_aceleracion, TINT_ADC_S2_50PCT, S, "4.3_s2_acel_parsed");
   }
@@ -394,10 +524,8 @@ uint32_t test_suite_can_rx_parsing(void)
   {
     uint16_t val = TINT_ADC_FRENO_ON;
     uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_S_FRENO, CAN_BUS_DASH, d, 2);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S_FRENO, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "4.4_brake_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.s_freno, TINT_ADC_FRENO_ON, S, "4.4_s_freno_parsed");
   }
@@ -405,11 +533,9 @@ uint32_t test_suite_can_rx_parsing(void)
   /* S4.5 – Tensión celda mínima (0x12C) */
   {
     uint16_t val = 3700u; /* 3.700V en raw */
-    uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_V_CELDA_MIN, CAN_BUS_ACU, d, 2);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    uint8_t d[8] = {(uint8_t)(val >> 8), (uint8_t)(val & 0xFF), 0, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_V_CELDA_MIN, CAN_BUS_ACU, d, 2),
+                 (uint32_t)HAL_OK, S, "4.5_cell_min_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.v_celda_min, 3700u, S, "4.5_v_celda_min_parsed");
   }
@@ -417,10 +543,8 @@ uint32_t test_suite_can_rx_parsing(void)
   /* S4.6 – ID desconocido no corrompe el estado */
   {
     uint8_t d[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    can_msg_t m = make_can_msg(0xFFFF, CAN_BUS_INV, d, 8);
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(0xFFFFu, CAN_BUS_INV, d, 8),
+                 (uint32_t)HAL_OK, S, "4.6_unknown_rx_ok");
     AppState_Snapshot(&st);
     /* Los valores anteriores deben mantenerse intactos */
     ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.6_unknown_id_no_corruption");
@@ -444,7 +568,7 @@ uint32_t test_suite_can_tx_packing(void)
   /* S5.1 – Pack → Unpack conserva id, dlc, bus, data */
   {
     can_msg_t orig, decoded;
-    orig.id      = TINT_TXID_INV;
+    orig.id      = TINT_RX_SETPOINT_1;
     orig.bus     = CAN_BUS_INV;
     orig.dlc     = 8;
     orig.ide     = 0;
@@ -469,48 +593,68 @@ uint32_t test_suite_can_tx_packing(void)
 
   /* S5.2 – Cola RX: put + get recupera datos intactos */
   {
-    can_qitem16_t put_item, get_item;
-    memset(&put_item, 0, sizeof(put_item));
-    put_item.w[0] = 0xDEADBEEF;
-    put_item.w[1] = 0xCAFEBABE;
+    uint8_t d[8] = {0x34, 0x12, 0x78, 0x56, 0, 0, 0, 0};
+    can_qitem16_t get_item;
+    can_msg_t got;
 
-    osStatus_t s = osMessageQueuePut(canRxQueueHandle, &put_item, 0, 0);
-    ASSERT_EQUAL((uint32_t)s, (uint32_t)osOK, S, "5.2_rx_queue_put_ok");
+    ASSERT_EQUAL((uint32_t)inject_can_to_rx_queue(0x123u, CAN_BUS_DASH, d, 4),
+                 (uint32_t)HAL_OK, S, "5.2_rx_physical_enqueue_ok");
 
-    s = osMessageQueueGet(canRxQueueHandle, &get_item, NULL, 10);
-    ASSERT_EQUAL((uint32_t)s,  (uint32_t)osOK,    S, "5.2_rx_queue_get_ok");
-    ASSERT_EQUAL(get_item.w[0], put_item.w[0],    S, "5.2_rx_data_w0_ok");
-    ASSERT_EQUAL(get_item.w[1], put_item.w[1],    S, "5.2_rx_data_w1_ok");
+    ASSERT_EQUAL((uint32_t)osMessageQueueGet(canRxQueueHandle, &get_item, NULL, 10),
+                 (uint32_t)osOK, S, "5.2_rx_queue_get_ok");
+    CAN_Unpack16(&get_item, &got);
+    ASSERT_EQUAL(got.id, 0x123u, S, "5.2_rx_data_id_ok");
+    ASSERT_EQUAL(got.data[0], 0x34u, S, "5.2_rx_data_w0_ok");
+    ASSERT_EQUAL(got.data[2], 0x78u, S, "5.2_rx_data_w1_ok");
   }
 
   /* S5.3 – Cola TX: put + get recupera datos intactos */
   {
+#ifdef TEST_MODE_SIL
+    control_out_t tx_out;
+    can_msg_t got;
+
+    memset(&tx_out, 0, sizeof(tx_out));
+    tx_out.count = 1u;
+    tx_out.msgs[0].id = 0x362u;
+    tx_out.msgs[0].bus = CAN_BUS_INV;
+    tx_out.msgs[0].dlc = 8u;
+    tx_out.msgs[0].data[0] = 0x78u;
+    tx_out.msgs[0].data[1] = 0x56u;
+
+    ASSERT_EQUAL(enqueue_control_frames(&tx_out), 1u, S, "5.3_tx_queue_put_ok");
+    pump_can_tx_queue();
+    ASSERT_EQUAL((uint32_t)pop_physical_tx(CAN_BUS_INV, &got), (uint32_t)HAL_OK, S, "5.3_tx_physical_get_ok");
+    ASSERT_EQUAL(got.id, 0x362u, S, "5.3_tx_data_w0_ok");
+    ASSERT_EQUAL(got.data[1], 0x56u, S, "5.3_tx_data_w3_ok");
+#else
     can_qitem16_t put_item, get_item;
     memset(&put_item, 0, sizeof(put_item));
     put_item.w[0] = 0x12345678;
     put_item.w[3] = 0xABCDEF01;
 
-    osStatus_t s = osMessageQueuePut(canTxQueueHandle, &put_item, 0, 0);
-    ASSERT_EQUAL((uint32_t)s, (uint32_t)osOK, S, "5.3_tx_queue_put_ok");
-
-    s = osMessageQueueGet(canTxQueueHandle, &get_item, NULL, 10);
-    ASSERT_EQUAL((uint32_t)s,  (uint32_t)osOK,    S, "5.3_tx_queue_get_ok");
-    ASSERT_EQUAL(get_item.w[0], put_item.w[0],    S, "5.3_tx_data_w0_ok");
-    ASSERT_EQUAL(get_item.w[3], put_item.w[3],    S, "5.3_tx_data_w3_ok");
+    ASSERT_EQUAL((uint32_t)osMessageQueuePut(canTxQueueHandle, &put_item, 0, 0),
+                 (uint32_t)osOK, S, "5.3_tx_queue_put_ok");
+    ASSERT_EQUAL((uint32_t)osMessageQueueGet(canTxQueueHandle, &get_item, NULL, 10),
+                 (uint32_t)osOK, S, "5.3_tx_queue_get_ok");
+    ASSERT_EQUAL(get_item.w[0], put_item.w[0], S, "5.3_tx_data_w0_ok");
+    ASSERT_EQUAL(get_item.w[3], put_item.w[3], S, "5.3_tx_data_w3_ok");
+#endif
   }
 
   /* S5.4 – FIFO ordering: 3 mensajes distintos se recuperan en orden */
   {
-    can_qitem16_t items[3];
+    uint8_t d[8] = {0};
     for (int i = 0; i < 3; i++) {
-      memset(&items[i], 0, sizeof(items[i]));
-      items[i].w[0] = (uint32_t)(0x100 + i);
-      osMessageQueuePut(canRxQueueHandle, &items[i], 0, 0);
+      ASSERT_EQUAL((uint32_t)inject_can_to_rx_queue((uint32_t)(0x100 + i), CAN_BUS_INV, d, 0),
+                   (uint32_t)HAL_OK, S, "5.4_fifo_enqueue_ok");
     }
     for (int i = 0; i < 3; i++) {
-      can_qitem16_t got;
-      osMessageQueueGet(canRxQueueHandle, &got, NULL, 5);
-      ASSERT_EQUAL(got.w[0], (uint32_t)(0x100 + i), S, "5.4_fifo_ordering");
+      can_qitem16_t got_qi;
+      can_msg_t got;
+      osMessageQueueGet(canRxQueueHandle, &got_qi, NULL, 5);
+      CAN_Unpack16(&got_qi, &got);
+      ASSERT_EQUAL(got.id, (uint32_t)(0x100 + i), S, "5.4_fifo_ordering");
     }
   }
 
@@ -716,9 +860,9 @@ uint32_t test_suite_full_pipeline(void)
   {
     uint16_t val = TINT_ADC_S1_50PCT;
     uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    can_msg_t m = make_can_msg(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2);
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "8.1_s1_rx_ok");
     if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    CanRx_ParseAndUpdate(&m, &g_in);
     g_in.s2_aceleracion = TINT_ADC_S2_50PCT;
     g_in.s_freno        = TINT_ADC_FRENO_OFF;
     g_in.ok_precarga    = 1;
@@ -732,15 +876,11 @@ uint32_t test_suite_full_pipeline(void)
 
   /* S8.3 – Mensajes CAN generados se encolan en TX */
   {
-    uint32_t enqueued = 0;
-    for (uint8_t i = 0; i < out.count && i < 8; i++) {
-      can_qitem16_t qi;
-      CAN_Pack16(&out.msgs[i], &qi);
-      if (osMessageQueuePut(canTxQueueHandle, &qi, 0, 0) == osOK) enqueued++;
-    }
+    uint32_t enqueued = enqueue_control_frames(&out);
     /* Si hay tramas generadas, deben haberse encolado todas */
     if (out.count > 0) {
       ASSERT_EQUAL(enqueued, (uint32_t)out.count, S, "8.3_all_can_frames_enqueued");
+      pump_can_tx_queue();
     } else {
       ASSERT_EQUAL(enqueued, 0u, S, "8.3_no_frames_no_enqueue");
     }

@@ -10,18 +10,21 @@ uint32_t mock_kernel_tick_ms = 0;
 app_inputs_t mock_input_nominal(void)
 {
     app_inputs_t in = {
-        .s1_aceleracion = 2100,      /* ~0% throttle */
+        .s1_aceleracion = 2100,
         .s2_aceleracion = 1960,
-        .s_freno = 2000,              /* Sin freno */
+        .s_freno = 2000,
         .boton_arranque = 0,
-        .inv_state = 0x02,            /* READY */
-        .inv_dc_bus_voltage = 400,    /* Nominal 400V */
+        .inv_state = 0x04,
+        .inv_dc_bus_voltage = 400,
         .inv_motor_temp = 20,
         .inv_igbt_temp = 25,
         .inv_air_temp = 30,
         .inv_rpm = 0,
-        .v_celda_min = 150,           /* Nominal celda */
-        .ok_precarga = 1,             /* ACK recibido */
+        .inv_speed_actual = 0,
+        .inv_current_actual = 0,
+        .inv_error = 0,
+        .v_celda_min = 3600,
+        .ok_precarga = 1,
         .flag_EV_2_3 = 0,
         .flag_T11_8_9 = 0,
         .torque_total = 0
@@ -32,37 +35,38 @@ app_inputs_t mock_input_nominal(void)
 app_inputs_t mock_input_brake_engaged(void)
 {
     app_inputs_t in = mock_input_nominal();
-    in.s_freno = 4500;  /* Freno activado (>UMBRAL_FRENO_APPS) */
+    in.s_freno = 4500;
     return in;
 }
 
 app_inputs_t mock_input_throttle_max(void)
 {
     app_inputs_t in = mock_input_nominal();
-    in.s1_aceleracion = 3100;  /* Máximo */
-    in.s2_aceleracion = 2600;
+    in.s1_aceleracion = 2950;
+    in.s2_aceleracion = 2570;
     return in;
 }
 
 app_inputs_t mock_input_throttle_50pct(void)
 {
     app_inputs_t in = mock_input_nominal();
-    in.s1_aceleracion = 2550;  /* ~50% */
-    in.s2_aceleracion = 2435;
+    in.s1_aceleracion = 2500;
+    in.s2_aceleracion = 2243;
     return in;
 }
 
 app_inputs_t mock_input_inverter_fault(void)
 {
     app_inputs_t in = mock_input_nominal();
-    in.inv_state = 0x99;  /* Estado inválido */
+    in.inv_state = 10;
+    in.inv_error = 1;
     return in;
 }
 
 app_inputs_t mock_input_vdc_oob(void)
 {
     app_inputs_t in = mock_input_nominal();
-    in.inv_dc_bus_voltage = 0xFFFF;  /* Out of bounds */
+    in.inv_dc_bus_voltage = 0xFFFF;
     return in;
 }
 
@@ -74,7 +78,7 @@ can_msg_t mock_can_frame(uint32_t id, const uint8_t data[8])
         .bus = CAN_BUS_INV,
         .id = id,
         .dlc = 8,
-        .ide = 0  /* Standard CAN ID */
+        .ide = 0
     };
     if (data) {
         memcpy(m.data, data, 8);
@@ -86,58 +90,91 @@ can_msg_t mock_can_frame(uint32_t id, const uint8_t data[8])
 
 can_msg_t mock_can_precarga_ack(uint8_t ack)
 {
-    uint8_t data[8] = {ack, 0, 0, 0, 0, 0, 0, 0};
-    return mock_can_frame(0x20, data);
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_ACU;
+    m.id = 0x20;
+    m.dlc = 8;
+    m.data[0] = ack;
+    return m;
 }
 
 can_msg_t mock_can_dc_bus_voltage(uint16_t voltage_raw)
 {
-    uint8_t data[8];
+    uint8_t data[8] = {0};
     data[0] = (uint8_t)(voltage_raw & 0xFF);
     data[1] = (uint8_t)((voltage_raw >> 8) & 0xFF);
-    data[2] = 0;
-    data[3] = 0;
-    data[4] = 0;
-    data[5] = 0;
-    data[6] = 0;
-    data[7] = 0;
     return mock_can_frame(0x100, data);
 }
 
 can_msg_t mock_can_throttle_s1(uint16_t adc_value)
 {
-    uint8_t data[8];
+    uint8_t data[8] = {0};
     data[0] = (uint8_t)(adc_value & 0xFF);
     data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    memset(&data[2], 0, 6);
     return mock_can_frame(0x101, data);
 }
 
 can_msg_t mock_can_throttle_s2(uint16_t adc_value)
 {
-    uint8_t data[8];
+    uint8_t data[8] = {0};
     data[0] = (uint8_t)(adc_value & 0xFF);
     data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    memset(&data[2], 0, 6);
     return mock_can_frame(0x102, data);
 }
 
 can_msg_t mock_can_brake(uint16_t adc_value)
 {
-    uint8_t data[8];
+    uint8_t data[8] = {0};
     data[0] = (uint8_t)(adc_value & 0xFF);
     data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    memset(&data[2], 0, 6);
     return mock_can_frame(0x103, data);
 }
 
 can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw)
 {
-    uint8_t data[8];
-    data[0] = (uint8_t)(voltage_raw & 0xFF);
-    data[1] = (uint8_t)((voltage_raw >> 8) & 0xFF);
-    memset(&data[2], 0, 6);
-    return mock_can_frame(0x12C, data);
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_ACU;
+    m.id = 0x12C;
+    m.dlc = 8;
+    m.data[0] = (uint8_t)((voltage_raw >> 8) & 0xFF);
+    m.data[1] = (uint8_t)(voltage_raw & 0xFF);
+    return m;
+}
+
+can_msg_t mock_can_dash_pedals(uint16_t s1_adc, uint16_t s2_adc)
+{
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_DASH;
+    m.id = 0x101;
+    m.dlc = 8;
+    m.data[0] = (uint8_t)((s1_adc >> 8) & 0xFF);
+    m.data[1] = (uint8_t)(s1_adc & 0xFF);
+    m.data[2] = (uint8_t)((s2_adc >> 8) & 0xFF);
+    m.data[3] = (uint8_t)(s2_adc & 0xFF);
+    return m;
+}
+
+can_msg_t mock_can_inv_state(uint8_t state, uint8_t error_code)
+{
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_INV;
+    m.id = 0x461;
+    m.dlc = 8;
+    m.data[2] = error_code;
+    m.data[4] = (uint8_t)(state & 0x0F);
+    return m;
+}
+
+can_msg_t mock_can_inv_temps(uint8_t motor, uint8_t igbt, uint8_t air)
+{
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_INV;
+    m.id = 0x464;
+    m.dlc = 8;
+    m.data[0] = motor;
+    m.data[1] = igbt;
+    m.data[2] = air;
+    return m;
 }
 
 /* ===== Mock RTOS ===== */
@@ -162,7 +199,7 @@ void mock_tick_reset(void)
 int mock_can_frames_equal(const can_msg_t *a, const can_msg_t *b)
 {
     if (!a || !b) return 0;
-    
+
     return (a->id == b->id &&
             a->bus == b->bus &&
             a->dlc == b->dlc &&
@@ -173,7 +210,7 @@ int mock_can_frames_equal(const can_msg_t *a, const can_msg_t *b)
 int mock_app_inputs_equal(const app_inputs_t *a, const app_inputs_t *b)
 {
     if (!a || !b) return 0;
-    
+
     return (a->s1_aceleracion == b->s1_aceleracion &&
             a->s2_aceleracion == b->s2_aceleracion &&
             a->s_freno == b->s_freno &&
@@ -184,7 +221,6 @@ int mock_app_inputs_equal(const app_inputs_t *a, const app_inputs_t *b)
 
 /* ===== Mock stubs para no-op RTOS calls ===== */
 
-/* Stub: osMutexId_t y amigos (no operacionales en host) */
 osMutexId_t g_inMutex = NULL;
 osMessageQueueId_t canRxQueueHandle = NULL;
 osMessageQueueId_t canTxQueueHandle = NULL;
@@ -194,6 +230,5 @@ app_inputs_t g_in = {0};
 
 void AppState_Init(void)
 {
-    /* No-op en tests */
     memset(&g_in, 0, sizeof(g_in));
 }

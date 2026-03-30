@@ -4,16 +4,57 @@
  */
 
 #include "sil_results.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#define SIL_MKDIR(path) _mkdir(path)
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#define SIL_MKDIR(path) mkdir(path, 0777)
+#endif
 
 static FILE *results_file = NULL;
 static char results_path[256] = {0};
 
+static int sil_mkdir_if_needed(const char *path)
+{
+    if (SIL_MKDIR(path) == 0 || errno == EEXIST) {
+        return 0;
+    }
+
+    return -1;
+}
+
+int SIL_EnsureResultsDir(void)
+{
+    if (sil_mkdir_if_needed("tests") != 0) {
+        return -1;
+    }
+
+    if (sil_mkdir_if_needed("tests/sil") != 0) {
+        return -1;
+    }
+
+    if (sil_mkdir_if_needed("tests/sil/results") != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 void SIL_Results_Init(const char *filename)
 {
     snprintf(results_path, sizeof(results_path), "tests/sil/results/%s", filename);
-    
+
+    if (SIL_EnsureResultsDir() != 0) {
+        printf("[ERROR] Could not ensure results directory exists: tests/sil/results\n");
+        return;
+    }
+
     results_file = fopen(results_path, "w");
     if (!results_file) {
         printf("[ERROR] Could not open results file: %s\n", results_path);

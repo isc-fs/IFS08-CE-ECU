@@ -80,6 +80,21 @@ can_msg_t mock_can_brake(uint16_t adc_value);
  */
 can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw);
 
+/**
+ * Frame legado del BUS DASH con S1/S2 empaquetados en el mismo ID 0x101.
+ */
+can_msg_t mock_can_dash_pedals(uint16_t s1_adc, uint16_t s2_adc);
+
+/**
+ * Frame legado TX_STATE_2 del inversor (estado en byte4, error en byte2).
+ */
+can_msg_t mock_can_inv_state(uint8_t state, uint8_t error_code);
+
+/**
+ * Frame legado TX_STATE_5 con temperaturas del inversor.
+ */
+can_msg_t mock_can_inv_temps(uint8_t motor, uint8_t igbt, uint8_t air);
+
 /* ===== Mocks de RTOS ===== */
 
 /**

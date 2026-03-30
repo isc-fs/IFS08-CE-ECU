@@ -10,6 +10,8 @@ typedef struct
   can_msg_t msgs[8];
   uint8_t  count;
   uint16_t torque_pct; /* 0..100 */
+  uint8_t  flag_ev_2_3;
+  uint8_t  flag_t11_8_9;
 } control_out_t;
 
 void Control_Init(void);

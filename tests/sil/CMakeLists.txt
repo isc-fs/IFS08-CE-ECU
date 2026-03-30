@@ -19,6 +19,7 @@ set(APP_SOURCES
     ../../Core/Src/app_state.c
     ../../Core/Src/can.c
     ../../Core/Src/control.c
+    ../../Core/Src/freertos.c
     ../../Core/Src/telemetry.c
     ../../Core/Src/test_integration.c   # suites de integración S1-S10
 )
@@ -66,6 +67,8 @@ target_compile_options(ecu08_sil PRIVATE
 
 target_compile_definitions(ecu08_sil PRIVATE
     SIL_BUILD=1
+    SIL_USE_FREERTOS_RUNTIME=1
+    SIL_USE_THREAD_SCHEDULER=1
     TEST_MODE_SIL=1        # activa guardas de compilación en test_integration.h
     SIL_ANSI_COLORS=1      # colores ANSI en stdout (quitar si el terminal no los soporta)
 )
@@ -79,24 +82,24 @@ enable_testing()
 add_test(
     NAME SIL_Boot
     COMMAND ecu08_sil --test-boot
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
 add_test(
     NAME SIL_Integration
     COMMAND ecu08_sil --test-integration
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
 add_test(
     NAME SIL_All
     COMMAND ecu08_sil --test-all
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
 add_test(
     NAME SILFullCycle
     COMMAND ecu08_sil --test-full-cycle
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
