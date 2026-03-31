@@ -27,6 +27,10 @@
 extern void SIL_DiagSetFile(FILE *f);
 extern void MX_FREERTOS_Init(void);
 
+/* Integration test suites (tests/sil/integration/) */
+extern int run_boot_sequence_tests(void);   /* returns failure count */
+extern int run_full_cycle_tests(void);      /* returns failure count */
+
 /* ===== Global state for SIL ===== */
 static volatile uint32_t sil_tick_ms = 0;
 static volatile int sil_simulation_running = 0;
@@ -561,39 +565,28 @@ uint32_t sil_get_time_ms(void)
  */
 static void test_boot_sequence(void)
 {
-    app_inputs_t snapshot = {0};
+    int failures;
 
     printf("\n");
     printf("╔══════════════════════════════════════════╗\n");
     printf("║  SIL TEST: Boot Sequence Verification   ║\n");
     printf("╚══════════════════════════════════════════╝\n\n");
-    
+
     SIL_Results_Init("boot_sequence_test.log");
-    SIL_Results_Log("BOOT_TEST", "STARTED", "Boot sequence verification");
-    
-    /* Initialize application */
-    printf("[BOOT] ➜ Initializing application\n");
-    SIL_Results_LogEvent(0, "INIT", "Application startup");
+    SIL_Results_Log("BOOT_TEST", "STARTED", "Boot sequence real-assertion suite");
+    SIL_Results_LogEvent(0, "INIT", "Initialising RTOS mock");
+
+    /* Initialise RTOS mock and create queues/mutex via MX_FREERTOS_Init */
     sil_runtime_init();
-    sil_set_start_button(1);
-    SIL_CAN_InjectBrake(100);
-    
-    printf("[BOOT] ➜ Simulating boot sequence (2.5 seconds)\n");
-    sil_run_simulation(2500);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.ok_precarga == 1u, "precarga reconocida");
-    sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "se enviaron tramas al inversor");
-    sil_check(sil_heartbeat_count > 0u, "telemetria heartbeat generada en arranque");
-    
-    /* Report results */
-    printf("\n[BOOT] %s Boot sequence simulation complete\n",
-           (sil_test_failures == 0) ? "✅" : "⚠️");
+
+    /* Run the real assertion suite */
+    failures = run_boot_sequence_tests();
+    sil_test_failures += failures;
+
     SIL_Results_Log("BOOT_TEST",
-                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
-                    (sil_test_failures == 0) ? "Boot sequence completed without errors"
-                                             : "Boot sequence checks failed");
-    SIL_Results_LogEvent(sil_get_time_ms(), "COMPLETE", "Boot sequence finished");
-    
+                    (failures == 0) ? "SUCCESS" : "FAIL",
+                    (failures == 0) ? "All boot sequence assertions passed"
+                                    : "Boot sequence assertions FAILED");
     SIL_Results_Close();
 }
 
@@ -602,79 +595,26 @@ static void test_boot_sequence(void)
  */
 static void test_full_cycle(void)
 {
-    app_inputs_t snapshot = {0};
+    int failures;
 
     printf("\n");
     printf("╔══════════════════════════════════════════╗\n");
-    printf("║  SIL TEST: Full Operating Cycle         ║\n");
+    printf("��  SIL TEST: Full Operating Cycle         ║\n");
     printf("╚══════════════════════════════════════════╝\n\n");
-    
+
     SIL_Results_Init("full_cycle_test.log");
-    SIL_Results_Log("CYCLE_TEST", "STARTED", "Full operating cycle verification");
-    
-    printf("[CYCLE] ➜ Initializing system\n");
-    SIL_Results_LogEvent(0, "INIT", "System initialization");
+    SIL_Results_Log("CYCLE_TEST", "STARTED", "Full cycle real-assertion suite");
+    SIL_Results_LogEvent(0, "INIT", "Initialising RTOS mock");
+
     sil_runtime_init();
-    sil_set_start_button(1);
-    SIL_CAN_InjectBrake(100);
-    SIL_CAN_InjectThrottle(0);
-    SIL_CAN_InjectInverterState(3);
-    
-    printf("[CYCLE] ➜ Phase 1: Boot + R2D (0-2.5s)\n");
-    SIL_Results_LogEvent(0, "PHASE1", "Boot sequence");
-    sil_run_simulation(2500);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.ok_precarga == 1u, "ACK de precarga procesado");
-    sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "mando al inversor capturado tras R2D");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1_END", "Boot complete");
 
-    printf("[CYCLE] -> Phase 1b: Inverter READY handshake\n");
-    SIL_CAN_InjectInverterState(4);
-    sil_run_simulation(200);
-    
-    printf("[CYCLE] ➜ Phase 2: 50%% throttle in RUN\n");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "50pct throttle");
-    SIL_CAN_InjectBrake(0);
-    SIL_CAN_InjectThrottle(50);
-    SIL_CAN_InjectInverterState(6);
-    sil_run_simulation(400);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.torque_total > 0u, "par positivo con 50% de acelerador");
-    sil_check(sil_heartbeat_count > 0u, "telemetria heartbeat publicada");
-    sil_check(sil_last_heartbeat[1] == (uint8_t)snapshot.torque_total, "telemetria heartbeat refleja torque");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2_END", "50pct throttle complete");
-    
-    printf("[CYCLE] ➜ Phase 3: 100%% throttle\n");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "100pct throttle");
-    SIL_CAN_InjectThrottle(100);
-    sil_run_simulation(300);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.torque_total >= 80u, "par alto con 100% de acelerador");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3_END", "100pct throttle complete");
+    failures = run_full_cycle_tests();
+    sil_test_failures += failures;
 
-    printf("[CYCLE] ➜ Phase 4: EV 2.3 brake + throttle\n");
-    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE4", "EV2.3 fault");
-    SIL_CAN_InjectBrake(80);
-    sil_run_simulation(300);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.flag_EV_2_3 == 1u, "EV2.3 latched");
-    sil_check(snapshot.torque_total == 0u, "par inhibido con EV2.3");
-
-    printf("[CYCLE] ➜ Phase 5: Release controls\n");
-    SIL_CAN_InjectThrottle(0);
-    SIL_CAN_InjectBrake(0);
-    sil_run_simulation(300);
-    AppState_Snapshot(&snapshot);
-    sil_check(snapshot.flag_EV_2_3 == 0u, "EV2.3 liberado al soltar controles");
-    
-    printf("\n[CYCLE] %s Full cycle simulation complete\n",
-           (sil_test_failures == 0) ? "✅" : "⚠️");
     SIL_Results_Log("CYCLE_TEST",
-                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
-                    (sil_test_failures == 0) ? "Full operating cycle completed without errors"
-                                             : "Full operating cycle checks failed");
-    SIL_Results_LogEvent(sil_get_time_ms(), "COMPLETE", "Full cycle finished");
-    
+                    (failures == 0) ? "SUCCESS" : "FAIL",
+                    (failures == 0) ? "All full-cycle assertions passed"
+                                    : "Full-cycle assertions FAILED");
     SIL_Results_Close();
 }
 
