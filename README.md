@@ -23,8 +23,9 @@ incrementally as the CE-ECU codebase is organized.
 - `Middlewares/`: FreeRTOS sources.
 - `tests/unit/`: unit tests.
 - `tests/sil/`: SIL harness and integration scenarios.
-- `ECU_LOGIC_REPORT.md`: control-logic overview.
-- `INTEGRATION_TESTS_EXPLAINED.md`: SIL test documentation.
+- `docs/ECU_LOGIC_REPORT.md`: control-logic overview.
+- `docs/INTEGRATION_TESTS_EXPLAINED.md`: SIL test documentation.
+- `docs/MAIN_POLLING_MIGRATION_COMPARISON.md`: migration status versus `main_polling.c`.
 
 ## Migration Notes
 

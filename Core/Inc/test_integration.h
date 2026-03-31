@@ -62,9 +62,6 @@ extern "C" {
 /* IDs CAN sensores / ACU */
 #define TINT_ID_ACK_PRECARGA   0x020u
 #define TINT_ID_DC_BUS_V       0x100u
-#define TINT_ID_S1_ACEL        0x101u
-#define TINT_ID_S2_ACEL        0x102u
-#define TINT_ID_S_FRENO        0x103u
 #define TINT_ID_V_CELDA_MIN    0x12Cu
 
 /* Umbrales ADC (del sensor físico, alineados con Control_ComputeTorque) */

@@ -29,7 +29,7 @@ TEST(AppState, init_sets_default_values)
     /* Act */
     AppState_Snapshot(&snapshot);
     
-    /* Assert: todos los campos deben estar en valores por defecto (0) */
+    /* Assert: defaults aligned with legacy startup assumptions */
     TEST_ASSERT_EQUAL_INT(0, snapshot.s1_aceleracion);
     TEST_ASSERT_EQUAL_INT(0, snapshot.s2_aceleracion);
     TEST_ASSERT_EQUAL_INT(0, snapshot.s_freno);
@@ -38,6 +38,7 @@ TEST(AppState, init_sets_default_values)
     TEST_ASSERT_EQUAL_INT(0, snapshot.ok_precarga);
     TEST_ASSERT_EQUAL_INT(0, snapshot.flag_EV_2_3);
     TEST_ASSERT_EQUAL_INT(0, snapshot.flag_T11_8_9);
+    TEST_ASSERT_EQUAL_INT(3600, snapshot.v_celda_min);
 }
 
 /**

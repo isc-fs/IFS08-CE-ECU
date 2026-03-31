@@ -37,7 +37,6 @@ extern FDCAN_HandleTypeDef hfdcan3;
 static FDCAN_HandleTypeDef *guess_fdcan_from_id(uint32_t id)
 {
     if (id == 0x020u || id == 0x12Cu) return &hfdcan2;
-    if (id == 0x101u || id == 0x102u || id == 0x103u) return &hfdcan3;
     return &hfdcan1;
 }
 

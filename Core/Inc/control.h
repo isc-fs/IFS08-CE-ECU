@@ -12,6 +12,7 @@ typedef struct
   uint16_t torque_pct; /* 0..100 */
   uint8_t  flag_ev_2_3;
   uint8_t  flag_t11_8_9;
+  uint8_t  rtds_active;
 } control_out_t;
 
 void Control_Init(void);

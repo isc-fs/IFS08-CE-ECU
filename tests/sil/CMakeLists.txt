@@ -20,6 +20,7 @@ set(APP_SOURCES
     ../../Core/Src/can.c
     ../../Core/Src/control.c
     ../../Core/Src/freertos.c
+    ../../Core/Src/io_signals.c
     ../../Core/Src/telemetry.c
     ../../Core/Src/test_integration.c   # suites de integración S1-S10
 )

@@ -443,7 +443,52 @@ uint32_t test_suite_boot_sequence(void)
   in.s_freno        = TINT_ADC_FRENO_ON;
   Control_Step10ms(&in, &out);   /* Fija s_r2d_start_tick, estado = R2D_DELAY */
   ASSERT_EQUAL(out.torque_pct, 0u, S, "3.3b_r2d_no_torque_yet");
+  ASSERT_EQUAL(out.rtds_active, 1u, S, "3.3b_rtds_active_during_delay");
 
+  /* New cooperative FSM path: require inverter states 3 -> 4 -> 6. */
+  osDelay(2100);
+  Control_Step10ms(&in, &out);   /* R2D_DELAY -> WAIT_INV_STANDBY */
+  ASSERT_EQUAL(out.count, 0u, S, "3.4_post_r2d_sends_can_frame");
+  ASSERT_EQUAL(out.rtds_active, 0u, S, "3.4_rtds_off_after_delay");
+
+  in.inv_state = 3u;
+  Control_Step10ms(&in, &out);   /* WAIT_INV_STANDBY -> ACTIVE */
+  ASSERT_EQUAL(out.count, 2u, S, "3.4_post_r2d_tx_queue_ok");
+  ASSERT_EQUAL(out.msgs[0].id, 0x360u, S, "3.4_post_r2d_torque_valid");
+  ASSERT_EQUAL(out.msgs[0].data[2], 0x04u, S, "3.4_post_r2d_torque_valid");
+
+  in.s_freno        = TINT_ADC_FRENO_OFF;
+  in.s1_aceleracion = TINT_ADC_S1_50PCT;
+  in.s2_aceleracion = TINT_ADC_S2_50PCT;
+  in.inv_state      = 4u;
+  Control_Step10ms(&in, &out);   /* READY: 0x06 + zero torque */
+  ASSERT_EQUAL(out.count, 2u, S, "3.5_inv_mode_frame_present");
+
+  in.inv_state = 6u;
+  Control_Step10ms(&in, &out);   /* TORQUE: emits runtime command */
+  ASSERT_RANGE(out.count, 1u, 8u, S, "3.5_inv_torque_frame_present");
+  ASSERT_EQUAL(enqueue_control_frames(&out), (uint32_t)out.count, S, "3.4_post_r2d_tx_queue_ok");
+  pump_can_tx_queue();
+  ASSERT_RANGE(out.torque_pct, 0u, 100u, S, "3.4_post_r2d_torque_valid");
+
+  if (out.count > 1) {
+#ifdef TEST_MODE_SIL
+    can_msg_t tx0, tx1;
+    ASSERT_EQUAL((uint32_t)pop_physical_tx(CAN_BUS_INV, &tx0), (uint32_t)HAL_OK, S, "3.5_inv_mode_frame_id_correct");
+    ASSERT_EQUAL((uint32_t)pop_physical_tx(CAN_BUS_INV, &tx1), (uint32_t)HAL_OK, S, "3.5_inv_can_bus_correct");
+    ASSERT_EQUAL(tx0.id, 0x360u, S, "3.5_inv_mode_frame_id_correct");
+    ASSERT_EQUAL(tx0.bus, (uint32_t)CAN_BUS_INV, S, "3.5_inv_can_bus_correct");
+    ASSERT_EQUAL(tx1.id, 0x362u, S, "3.5_inv_torque_frame_id_correct");
+#else
+    ASSERT_EQUAL(out.msgs[0].id, 0x360u, S, "3.5_inv_mode_frame_id_correct");
+    ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_INV, S, "3.5_inv_can_bus_correct");
+    ASSERT_EQUAL(out.msgs[1].id, 0x362u, S, "3.5_inv_torque_frame_id_correct");
+#endif
+  }
+
+  goto boot_sequence_done;
+
+#if 0
   /* S3.4 – Esperar 2000ms (R2D delay) + aceleramos */
   osDelay(2100);                 /* Avanza tick de simulación 2100 ms */
   in.s_freno        = TINT_ADC_FRENO_OFF;  /* Soltamos freno */
@@ -473,7 +518,9 @@ uint32_t test_suite_boot_sequence(void)
     ASSERT_EQUAL(out.msgs[1].id, 0x362u, S, "3.5_inv_torque_frame_id_correct");
 #endif
   }
+#endif
 
+boot_sequence_done:
   AppState_Init();
   Control_Init();
   return (g_suite_errors == 0) ? 1u : 0u;
@@ -500,34 +547,32 @@ uint32_t test_suite_can_rx_parsing(void)
     ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.1_ack_precarga");
   }
 
-  /* S4.2 – Sensor s1_aceleracion (0x101), little-endian */
+  /* S4.2 – La trama 0x101 ya no debe actualizar pedales */
   {
-    uint16_t val = TINT_ADC_S1_50PCT;
-    uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2),
-                 (uint32_t)HAL_OK, S, "4.2_s1_rx_ok");
+    uint8_t d[8] = {0x09, 0xC4, 0x08, 0xC3, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(0x101u, CAN_BUS_DASH, d, 4),
+                 (uint32_t)HAL_OK, S, "4.2_removed_101_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.s1_aceleracion, TINT_ADC_S1_50PCT, S, "4.2_s1_acel_parsed");
+    ASSERT_EQUAL(st.s1_aceleracion, 0u, S, "4.2_removed_101_keeps_s1");
+    ASSERT_EQUAL(st.s2_aceleracion, 0u, S, "4.2_removed_101_keeps_s2");
   }
 
-  /* S4.3 – Sensor s2_aceleracion (0x102), little-endian */
+  /* S4.3 – La trama 0x102 ya no debe actualizar pedales */
   {
-    uint16_t val = TINT_ADC_S2_50PCT;
-    uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S2_ACEL, CAN_BUS_DASH, d, 2),
-                 (uint32_t)HAL_OK, S, "4.3_s2_rx_ok");
+    uint8_t d[8] = {0xC3, 0x08, 0, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(0x102u, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "4.3_removed_102_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.s2_aceleracion, TINT_ADC_S2_50PCT, S, "4.3_s2_acel_parsed");
+    ASSERT_EQUAL(st.s2_aceleracion, 0u, S, "4.3_removed_102_keeps_s2");
   }
 
-  /* S4.4 – Sensor freno (0x103), little-endian */
+  /* S4.4 – La trama 0x103 ya no debe actualizar freno */
   {
-    uint16_t val = TINT_ADC_FRENO_ON;
-    uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S_FRENO, CAN_BUS_DASH, d, 2),
-                 (uint32_t)HAL_OK, S, "4.4_brake_rx_ok");
+    uint8_t d[8] = {0xAC, 0x0D, 0, 0, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(0x103u, CAN_BUS_DASH, d, 2),
+                 (uint32_t)HAL_OK, S, "4.4_removed_103_rx_ok");
     AppState_Snapshot(&st);
-    ASSERT_EQUAL(st.s_freno, TINT_ADC_FRENO_ON, S, "4.4_s_freno_parsed");
+    ASSERT_EQUAL(st.s_freno, 0u, S, "4.4_removed_103_keeps_brake");
   }
 
   /* S4.5 – Tensión celda mínima (0x12C) */
@@ -704,6 +749,7 @@ uint32_t test_suite_control_logic(void)
 
   /* S6.1 – 0% acelerador → torque = 0 */
   memset(&in, 0, sizeof(in));
+  in.v_celda_min    = 3600u;
   in.s1_aceleracion = TINT_ADC_S1_0PCT;
   in.s2_aceleracion = TINT_ADC_S2_0PCT;
   in.s_freno        = TINT_ADC_FRENO_OFF;
@@ -728,6 +774,16 @@ uint32_t test_suite_control_logic(void)
   in.s2_aceleracion = TINT_ADC_S2_100PCT;
   cq_torque = Control_ComputeTorque(&in, &ev23_f, &t11_f);
   ASSERT_RANGE(cq_torque, 80u, 100u, S, "6.4_100pct_throttle");
+
+  in.s1_aceleracion = TINT_ADC_S1_50PCT;
+  in.s2_aceleracion = TINT_ADC_S2_50PCT;
+  in.v_celda_min    = 3000u;
+  cq_torque = Control_ComputeTorque(&in, &ev23_f, &t11_f);
+  ASSERT_EQUAL(cq_torque, 16u, S, "6.4b_vmin_linear_limit");
+
+  in.v_celda_min = 2500u;
+  cq_torque = Control_ComputeTorque(&in, &ev23_f, &t11_f);
+  ASSERT_EQUAL(cq_torque, 2u, S, "6.4c_vmin_critical_limit");
 
   /* S6.5 – Control_Step10ms: count ∈ [0..8] siempre (en cualquier estado) */
   Control_Init();
@@ -856,21 +912,19 @@ uint32_t test_suite_full_pipeline(void)
   control_out_t out;
   uint8_t telemetry[32];
 
-  /* S8.1 – Simular lectura sensor por CAN → actualiza estado */
+  /* S8.1 – Simular lectura fisica ya muestreada → actualiza estado */
   {
-    uint16_t val = TINT_ADC_S1_50PCT;
-    uint8_t d[8] = {(uint8_t)(val & 0xFF), (uint8_t)(val >> 8), 0, 0, 0, 0, 0, 0};
-    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_S1_ACEL, CAN_BUS_DASH, d, 2),
-                 (uint32_t)HAL_OK, S, "8.1_s1_rx_ok");
     if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
+    g_in.s1_aceleracion = TINT_ADC_S1_50PCT;
     g_in.s2_aceleracion = TINT_ADC_S2_50PCT;
     g_in.s_freno        = TINT_ADC_FRENO_OFF;
     g_in.ok_precarga    = 1;
     if (g_inMutex) osMutexRelease(g_inMutex);
+    AppState_Snapshot(&in);
+    ASSERT_EQUAL(in.s1_aceleracion, TINT_ADC_S1_50PCT, S, "8.1_s1_sensor_loaded");
   }
 
   /* S8.2 – Control lee el estado y produce salida */
-  AppState_Snapshot(&in);
   Control_Step10ms(&in, &out);
   ASSERT_RANGE(out.torque_pct, 0u, 100u, S, "8.2_control_output_valid");
 

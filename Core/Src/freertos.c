@@ -32,6 +32,11 @@
 #include "app_state.h"
 #include "app_runtime.h"
 #include "control.h"
+#include "io_signals.h"
+#ifndef SIL_BUILD
+extern HAL_StatusTypeDef FDCAN_RuntimeBringUp(void);
+extern HAL_StatusTypeDef TIM16_RuntimeBringUp(void);
+#endif
 
 /* USER CODE END Includes */
 
@@ -304,11 +309,11 @@ void StartCanRxTask(void *argument)
 void StartCanTxTask(void *argument)
 {
   /* USER CODE BEGIN StartCanTxTask */
-  /* CAN Transmit task: 20ms period (50Hz) */
+  /* CAN Transmit task: 10ms period (100Hz), aligned with control cadence */
   (void)argument;
   APP_TASK_LOOP_BEGIN()
     AppRuntime_CanTxStep();
-    APP_TASK_LOOP_DELAY(20);
+    APP_TASK_LOOP_DELAY(10);
   APP_TASK_LOOP_END();
   /* USER CODE END StartCanTxTask */
 }
@@ -389,6 +394,23 @@ void AppRuntime_InitStep(void)
   Control_Init();
   Diag_Log("Control module initialized\n");
 
+  IoSignals_Init();
+  Diag_Log("Physical IO signal bridge initialized\n");
+
+#ifndef SIL_BUILD
+  if (FDCAN_RuntimeBringUp() != HAL_OK) {
+    Diag_Log("FDCAN runtime bring-up failed\n");
+    Error_Handler();
+  }
+  Diag_Log("FDCAN runtime bring-up complete\n");
+
+  if (TIM16_RuntimeBringUp() != HAL_OK) {
+    Diag_Log("TIM16 runtime bring-up failed\n");
+    Error_Handler();
+  }
+  Diag_Log("TIM16 runtime bring-up complete\n");
+#endif
+
   Diag_Log("=== INITIALIZATION COMPLETE ===\n");
 }
 
@@ -397,6 +419,7 @@ void AppRuntime_ControlStep(void)
   app_inputs_t state_snapshot;
   control_out_t control_output;
 
+  IoSignals_InputStep();
   AppState_Snapshot(&state_snapshot);
   Control_Step10ms(&state_snapshot, &control_output);
 
@@ -409,6 +432,8 @@ void AppRuntime_ControlStep(void)
   if (g_inMutex) {
     osMutexRelease(g_inMutex);
   }
+
+  IoSignals_ApplyOutputs(&control_output);
 
   for (uint8_t i = 0; i < control_output.count; i++) {
     can_qitem16_t qitem;

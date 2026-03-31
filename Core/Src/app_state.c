@@ -8,6 +8,7 @@ app_inputs_t g_in;
 void AppState_Init(void)
 {
   memset(&g_in, 0, sizeof(g_in));
+  g_in.v_celda_min = 3600u;
 }
 
 void AppState_Snapshot(app_inputs_t *out)

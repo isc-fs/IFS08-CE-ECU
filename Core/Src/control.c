@@ -3,10 +3,18 @@
 
 /* Thresholds from your VCU header */
 #define UMBRAL_FRENO_APPS 3000u
+#define UMBRAL_FRENO_ARRANQUE 900u
+#define UMBRAL_DC_BUS_PRECARGA 300u
 #define ID_DC_BUS_VOLTAGE 0x100u
 #define ID_PRECHARGE_CMD  0x600u
 #define RX_SETPOINT_1     0x360u
 #define RX_SETPOINT_3     0x362u
+#define INV_MODE_STANDBY  0x01u
+#define INV_MODE_READY    0x04u
+#define INV_MODE_TORQUE   0x06u
+#define INV_MODE_RESET    0x13u
+#define VMIN_FULL_TORQUE  3500u
+#define VMIN_MIN_TORQUE   2800u
 
 /* Very small helper */
 static void out_push(control_out_t *out, const can_msg_t *m)
@@ -23,19 +31,23 @@ typedef enum
   CTRL_ST_WAIT_PRECHARGE_ACK,
   CTRL_ST_WAIT_START_BRAKE,
   CTRL_ST_R2D_DELAY,
-  CTRL_ST_READY,
-  CTRL_ST_RUN
+  CTRL_ST_WAIT_INV_STANDBY,
+  CTRL_ST_ACTIVE
 } ctrl_state_t;
 
 static ctrl_state_t s_state;
 static uint32_t s_r2d_start_tick;
 static uint8_t s_ev23_latched;
+static uint8_t s_flag_r2d;
+static uint8_t s_flag_react;
 
 void Control_Init(void)
 {
   s_state = CTRL_ST_BOOT;
   s_r2d_start_tick = 0;
   s_ev23_latched = 0u;
+  s_flag_r2d = 0u;
+  s_flag_react = 0u;
 }
 
 static uint16_t saturate_pct(float value)
@@ -97,6 +109,108 @@ static void build_acu_precharge_cmd(uint8_t button_pressed, can_msg_t *m)
   m->data[0] = button_pressed ? 1u : 0u;
 }
 
+static uint8_t precharge_complete(const app_inputs_t *in)
+{
+  if (!in) return 0u;
+  return (uint8_t)((in->ok_precarga != 0u) || (in->inv_dc_bus_voltage >= UMBRAL_DC_BUS_PRECARGA));
+}
+
+static void emit_inv_mode(control_out_t *out, uint8_t mode)
+{
+  can_msg_t msg;
+  build_inv_mode_cmd(mode, &msg);
+  out_push(out, &msg);
+}
+
+static void emit_inv_torque(control_out_t *out, uint16_t legacy_torque)
+{
+  can_msg_t msg;
+  build_inv_torque_cmd(legacy_torque, &msg);
+  out_push(out, &msg);
+}
+
+static void emit_inv_zero_torque(control_out_t *out)
+{
+  emit_inv_torque(out, 0u);
+}
+
+static uint16_t apply_vmin_torque_limit(uint16_t torque_pct, uint16_t v_celda_min)
+{
+  float limited = (float)torque_pct;
+
+  if (torque_pct == 0u)
+  {
+    return 0u;
+  }
+
+  if (v_celda_min >= VMIN_FULL_TORQUE)
+  {
+    return torque_pct;
+  }
+
+  if (v_celda_min > VMIN_MIN_TORQUE)
+  {
+    limited *= ((1.357f * (float)v_celda_min) - 3750.0f) / 1000.0f;
+  }
+  else
+  {
+    limited *= 0.05f;
+  }
+
+  return saturate_pct(limited);
+}
+
+static void emit_legacy_inverter_runtime(const app_inputs_t *in, control_out_t *out, uint16_t torque_pct)
+{
+  if (!in || !out || !s_flag_r2d) return;
+
+  if (in->inv_state == 4u || in->inv_state == 6u)
+  {
+    emit_inv_mode(out, INV_MODE_TORQUE);
+  }
+
+  switch (in->inv_state)
+  {
+    case 0u:
+      emit_inv_mode(out, INV_MODE_STANDBY);
+      /* Legacy switch fell through to standby/ready handling. */
+      /* fallthrough */
+
+    case 3u:
+      s_flag_react = 0u;
+      emit_inv_mode(out, INV_MODE_READY);
+      /* Legacy switch also fell through to zero-torque handling. */
+      /* fallthrough */
+
+    case 4u:
+      emit_inv_zero_torque(out);
+      s_flag_react = 0u;
+      break;
+
+    case 6u:
+      out->torque_pct = torque_pct;
+      emit_inv_torque(out, torque_pct_to_legacy_command(torque_pct));
+      break;
+
+    case 10u:
+      emit_inv_mode(out, INV_MODE_RESET);
+      /* Legacy soft-fault path fell through into hard fault/shutdown commands. */
+      /* fallthrough */
+
+    case 11u:
+      s_flag_react = 1u;
+      emit_inv_mode(out, INV_MODE_RESET);
+      /* fallthrough */
+
+    case 13u:
+      emit_inv_mode(out, INV_MODE_STANDBY);
+      break;
+
+    default:
+      break;
+  }
+}
+
 /* Port of legacy main_polling.c torque mapping, but exposed here as 0..100%. */
 uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uint8_t *flag_t11_8_9)
 {
@@ -132,6 +246,10 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
     torque = 0u;
   }
 
+  /* Legacy code computed torque_limitado from v_celda_min but never consumed it.
+   * Here we apply the intended limiter to the returned torque percentage. */
+  torque = apply_vmin_torque_limit(torque, in->v_celda_min);
+
   return torque;
 }
 
@@ -146,12 +264,12 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
   uint16_t torque = Control_ComputeTorque(in, &ev23, &t1189);
   out->flag_ev_2_3 = ev23;
   out->flag_t11_8_9 = t1189;
-  /* out->torque_pct stays 0 until state reaches CTRL_ST_RUN */
+  /* out->torque_pct stays 0 until the inverter reaches torque state */
 
   switch (s_state)
   {
     case CTRL_ST_BOOT:
-      if (in->ok_precarga)
+      if (precharge_complete(in))
       {
         s_state = CTRL_ST_WAIT_START_BRAKE;
       }
@@ -171,7 +289,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
       break;
 
     case CTRL_ST_WAIT_PRECHARGE_ACK:
-      if (in->ok_precarga)
+      if (precharge_complete(in))
       {
         s_state = CTRL_ST_WAIT_START_BRAKE;
       }
@@ -190,9 +308,11 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
       break;
 
     case CTRL_ST_WAIT_START_BRAKE:
-      if (in->boton_arranque && in->s_freno > UMBRAL_FRENO_APPS)
+      if (in->boton_arranque && in->s_freno > UMBRAL_FRENO_ARRANQUE)
       {
         s_r2d_start_tick = osKernelGetTickCount();
+        s_flag_r2d = 1u;
+        out->rtds_active = 1u;
         s_state = CTRL_ST_R2D_DELAY;
       }
       break;
@@ -200,32 +320,25 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
     case CTRL_ST_R2D_DELAY:
       if ((osKernelGetTickCount() - s_r2d_start_tick) >= 2000u)
       {
-        s_state = CTRL_ST_READY;
+        s_state = CTRL_ST_WAIT_INV_STANDBY;
+      }
+      else
+      {
+        out->rtds_active = 1u;
       }
       break;
 
-    case CTRL_ST_READY:
-    {
-      can_msg_t mode_cmd, torque_cmd;
-      build_inv_mode_cmd(0x04u, &mode_cmd);
-      build_inv_torque_cmd(0u, &torque_cmd);
-      out_push(out, &mode_cmd);
-      out_push(out, &torque_cmd);
-      s_state = CTRL_ST_RUN;
+    case CTRL_ST_WAIT_INV_STANDBY:
+      if (in->inv_state == 3u)
+      {
+        s_state = CTRL_ST_ACTIVE;
+        emit_legacy_inverter_runtime(in, out, torque);
+      }
       break;
-    }
 
-    case CTRL_ST_RUN:
+    case CTRL_ST_ACTIVE:
     default:
-    {
-      uint16_t legacy_torque = torque_pct_to_legacy_command(torque);
-      out->torque_pct = torque;   /* Only propagate torque in RUN state */
-      can_msg_t mode_cmd, torque_cmd;
-      build_inv_mode_cmd(0x06u, &mode_cmd);
-      build_inv_torque_cmd(legacy_torque, &torque_cmd);
-      out_push(out, &mode_cmd);
-      out_push(out, &torque_cmd);
+      emit_legacy_inverter_runtime(in, out, torque);
       break;
-    }
   }
 }

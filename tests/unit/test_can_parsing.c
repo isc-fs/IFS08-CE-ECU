@@ -45,35 +45,44 @@ TEST(CAN_Parsing, parse_dc_bus_voltage_compat_frame)
     TEST_ASSERT_EQUAL_INT(0x0190, st.inv_dc_bus_voltage);
 }
 
-TEST(CAN_Parsing, parse_legacy_dash_combined_pedals)
+TEST(CAN_Parsing, ignore_removed_101_frame)
 {
-    can_msg_t frame = mock_can_dash_pedals(2500, 2243);
+    uint8_t data[8] = {0x09, 0xC4, 0x08, 0xC3, 0, 0, 0, 0};
+    can_msg_t frame = mock_can_frame(0x101, data);
     app_inputs_t st = {0};
+    frame.bus = CAN_BUS_DASH;
+    frame.dlc = 4;
 
     CanRx_ParseAndUpdate(&frame, &st);
 
-    TEST_ASSERT_EQUAL_INT(2500, st.s1_aceleracion);
-    TEST_ASSERT_EQUAL_INT(2243, st.s2_aceleracion);
+    TEST_ASSERT_EQUAL_INT(0, st.s1_aceleracion);
+    TEST_ASSERT_EQUAL_INT(0, st.s2_aceleracion);
 }
 
-TEST(CAN_Parsing, parse_compat_s2_frame)
+TEST(CAN_Parsing, ignore_removed_102_frame)
 {
-    can_msg_t frame = mock_can_throttle_s2(1960);
+    uint8_t data[8] = {0xA8, 0x07, 0, 0, 0, 0, 0, 0};
+    can_msg_t frame = mock_can_frame(0x102, data);
     app_inputs_t st = {0};
+    frame.bus = CAN_BUS_DASH;
+    frame.dlc = 2;
 
     CanRx_ParseAndUpdate(&frame, &st);
 
-    TEST_ASSERT_EQUAL_INT(1960, st.s2_aceleracion);
+    TEST_ASSERT_EQUAL_INT(0, st.s2_aceleracion);
 }
 
-TEST(CAN_Parsing, parse_compat_brake_frame)
+TEST(CAN_Parsing, ignore_removed_103_frame)
 {
-    can_msg_t frame = mock_can_brake(3500);
+    uint8_t data[8] = {0xAC, 0x0D, 0, 0, 0, 0, 0, 0};
+    can_msg_t frame = mock_can_frame(0x103, data);
     app_inputs_t st = {0};
+    frame.bus = CAN_BUS_DASH;
+    frame.dlc = 2;
 
     CanRx_ParseAndUpdate(&frame, &st);
 
-    TEST_ASSERT_EQUAL_INT(3500, st.s_freno);
+    TEST_ASSERT_EQUAL_INT(0, st.s_freno);
 }
 
 TEST(CAN_Parsing, parse_legacy_cell_min_voltage_big_endian)
@@ -130,10 +139,9 @@ TEST(CAN_Parsing, multiple_frames_sequential)
     CanRx_ParseAndUpdate(&f1, &st);
     TEST_ASSERT_EQUAL_INT(1, st.ok_precarga);
 
-    can_msg_t f2 = mock_can_dash_pedals(2500, 2243);
+    can_msg_t f2 = mock_can_cell_min_voltage(3600);
     CanRx_ParseAndUpdate(&f2, &st);
-    TEST_ASSERT_EQUAL_INT(2500, st.s1_aceleracion);
-    TEST_ASSERT_EQUAL_INT(2243, st.s2_aceleracion);
+    TEST_ASSERT_EQUAL_INT(3600, st.v_celda_min);
 
     can_msg_t f3 = mock_can_inv_state(4, 0);
     CanRx_ParseAndUpdate(&f3, &st);
@@ -187,9 +195,9 @@ TEST_GROUP_RUNNER(CAN_Parsing)
     RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_zero_means_ok);
     RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_nonzero_means_pending);
     RUN_TEST_CASE(CAN_Parsing, parse_dc_bus_voltage_compat_frame);
-    RUN_TEST_CASE(CAN_Parsing, parse_legacy_dash_combined_pedals);
-    RUN_TEST_CASE(CAN_Parsing, parse_compat_s2_frame);
-    RUN_TEST_CASE(CAN_Parsing, parse_compat_brake_frame);
+    RUN_TEST_CASE(CAN_Parsing, ignore_removed_101_frame);
+    RUN_TEST_CASE(CAN_Parsing, ignore_removed_102_frame);
+    RUN_TEST_CASE(CAN_Parsing, ignore_removed_103_frame);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_cell_min_voltage_big_endian);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_state_and_error);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_temps);

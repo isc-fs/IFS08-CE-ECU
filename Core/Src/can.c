@@ -9,9 +9,6 @@ extern FDCAN_HandleTypeDef hfdcan3;
 /* ==== Project CAN IDs (from your VCU header; keep as defines) ==== */
 #define ID_ACK_PRECARGA        0x20u
 #define ID_DC_BUS_VOLTAGE      0x100u
-#define ID_S1_ACELERACION      0x101u
-#define ID_S2_ACELERACION      0x102u
-#define ID_S_FRENO             0x103u
 #define ID_V_CELDA_MIN         0x12Cu
 
 #define TX_STATE_2             0x461u
@@ -84,27 +81,6 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
     case ID_DC_BUS_VOLTAGE:
       /* Compatibility path kept for the simplified tests/protocol. */
       st->inv_dc_bus_voltage = read_u16_le(m->data);
-      break;
-
-    case ID_S1_ACELERACION:
-      /* Legacy DASH frame packs S1/S2 together in big-endian bytes 0..3. */
-      if (m->bus == CAN_BUS_DASH && m->dlc >= 4u)
-      {
-        st->s1_aceleracion = read_u16_be(&m->data[0]);
-        st->s2_aceleracion = read_u16_be(&m->data[2]);
-      }
-      else
-      {
-        st->s1_aceleracion = read_u16_le(m->data);
-      }
-      break;
-
-    case ID_S2_ACELERACION:
-      st->s2_aceleracion = read_u16_le(m->data);
-      break;
-
-    case ID_S_FRENO:
-      st->s_freno = read_u16_le(m->data);
       break;
 
     case ID_V_CELDA_MIN:

@@ -62,9 +62,7 @@ static void sil_reset_captured_outputs(void)
 
 static void sil_set_start_button(uint8_t pressed)
 {
-    if (g_inMutex) osMutexAcquire(g_inMutex, osWaitForever);
-    g_in.boton_arranque = pressed ? 1u : 0u;
-    if (g_inMutex) osMutexRelease(g_inMutex);
+    SIL_IO_SetStartButton(pressed);
 }
 
 static void sil_runtime_init(void)
@@ -276,6 +274,7 @@ static void test_full_cycle(void)
     sil_set_start_button(1);
     SIL_CAN_InjectBrake(100);
     SIL_CAN_InjectThrottle(0);
+    SIL_CAN_InjectInverterState(3);
     
     printf("[CYCLE] ➜ Phase 1: Boot + R2D (0-2.5s)\n");
     SIL_Results_LogEvent(0, "PHASE1", "Boot sequence");
@@ -284,11 +283,16 @@ static void test_full_cycle(void)
     sil_check(snapshot.ok_precarga == 1u, "ACK de precarga procesado");
     sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "mando al inversor capturado tras R2D");
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1_END", "Boot complete");
+
+    printf("[CYCLE] -> Phase 1b: Inverter READY handshake\n");
+    SIL_CAN_InjectInverterState(4);
+    sil_run_simulation(200);
     
     printf("[CYCLE] ➜ Phase 2: 50%% throttle in RUN\n");
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "50pct throttle");
     SIL_CAN_InjectBrake(0);
     SIL_CAN_InjectThrottle(50);
+    SIL_CAN_InjectInverterState(6);
     sil_run_simulation(400);
     AppState_Snapshot(&snapshot);
     sil_check(snapshot.torque_total > 0u, "par positivo con 50% de acelerador");

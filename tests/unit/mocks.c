@@ -106,30 +106,6 @@ can_msg_t mock_can_dc_bus_voltage(uint16_t voltage_raw)
     return mock_can_frame(0x100, data);
 }
 
-can_msg_t mock_can_throttle_s1(uint16_t adc_value)
-{
-    uint8_t data[8] = {0};
-    data[0] = (uint8_t)(adc_value & 0xFF);
-    data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    return mock_can_frame(0x101, data);
-}
-
-can_msg_t mock_can_throttle_s2(uint16_t adc_value)
-{
-    uint8_t data[8] = {0};
-    data[0] = (uint8_t)(adc_value & 0xFF);
-    data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    return mock_can_frame(0x102, data);
-}
-
-can_msg_t mock_can_brake(uint16_t adc_value)
-{
-    uint8_t data[8] = {0};
-    data[0] = (uint8_t)(adc_value & 0xFF);
-    data[1] = (uint8_t)((adc_value >> 8) & 0xFF);
-    return mock_can_frame(0x103, data);
-}
-
 can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw)
 {
     can_msg_t m = {0};
@@ -138,19 +114,6 @@ can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw)
     m.dlc = 8;
     m.data[0] = (uint8_t)((voltage_raw >> 8) & 0xFF);
     m.data[1] = (uint8_t)(voltage_raw & 0xFF);
-    return m;
-}
-
-can_msg_t mock_can_dash_pedals(uint16_t s1_adc, uint16_t s2_adc)
-{
-    can_msg_t m = {0};
-    m.bus = CAN_BUS_DASH;
-    m.id = 0x101;
-    m.dlc = 8;
-    m.data[0] = (uint8_t)((s1_adc >> 8) & 0xFF);
-    m.data[1] = (uint8_t)(s1_adc & 0xFF);
-    m.data[2] = (uint8_t)((s2_adc >> 8) & 0xFF);
-    m.data[3] = (uint8_t)(s2_adc & 0xFF);
     return m;
 }
 

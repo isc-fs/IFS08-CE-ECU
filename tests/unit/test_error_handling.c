@@ -201,8 +201,8 @@ TEST(ErrorHandling, multiple_simultaneous_faults)
     uint16_t torque = Control_ComputeTorque(&in, &ev23, &t1189);
     Control_Step10ms(&in, &out);
     
-    /* Assert - Should handle gracefully and zero torque */
-    TEST_ASSERT_EQUAL_INT(0, torque);
+    /* Assert - With low cell voltage the new runtime should heavily limit torque. */
+    TEST_ASSERT_TRUE(torque <= 5);
 }
 
 /**

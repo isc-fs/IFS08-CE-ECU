@@ -225,4 +225,22 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
 
 /* USER CODE BEGIN 1 */
 
+HAL_StatusTypeDef TIM16_RuntimeBringUp(void)
+{
+  static uint8_t bringup_done = 0U;
+
+  if (bringup_done != 0U)
+  {
+    return HAL_OK;
+  }
+
+  if (HAL_TIM_Base_Start_IT(&htim16) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  bringup_done = 1U;
+  return HAL_OK;
+}
+
 /* USER CODE END 1 */

@@ -21,6 +21,20 @@
 #include "fdcan.h"
 
 /* USER CODE BEGIN 0 */
+static HAL_StatusTypeDef fdcan_start_with_fifo0_irq(FDCAN_HandleTypeDef *hfdcan)
+{
+  if (HAL_FDCAN_Start(hfdcan) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  if (HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0U) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  return HAL_OK;
+}
 
 /* USER CODE END 0 */
 
@@ -72,6 +86,19 @@ void MX_FDCAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
+  FDCAN_FilterTypeDef sFilterConfig = {0};
+
+  sFilterConfig.IdType = FDCAN_STANDARD_ID;
+  sFilterConfig.FilterIndex = 0;
+  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  sFilterConfig.FilterID1 = 0x0;
+  sFilterConfig.FilterID2 = 0x0;
+
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END FDCAN1_Init 2 */
 
@@ -120,6 +147,19 @@ void MX_FDCAN2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN2_Init 2 */
+  FDCAN_FilterTypeDef sFilterConfig = {0};
+
+  sFilterConfig.IdType = FDCAN_EXTENDED_ID;
+  sFilterConfig.FilterIndex = 0;
+  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  sFilterConfig.FilterID1 = 0x0;
+  sFilterConfig.FilterID2 = 0x0;
+
+  if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END FDCAN2_Init 2 */
 
@@ -168,6 +208,19 @@ void MX_FDCAN3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN3_Init 2 */
+  FDCAN_FilterTypeDef sFilterConfig = {0};
+
+  sFilterConfig.IdType = FDCAN_EXTENDED_ID;
+  sFilterConfig.FilterIndex = 0;
+  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  sFilterConfig.FilterID1 = 0x0;
+  sFilterConfig.FilterID2 = 0x0;
+
+  if (HAL_FDCAN_ConfigFilter(&hfdcan3, &sFilterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END FDCAN3_Init 2 */
 
@@ -377,5 +430,33 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef* fdcanHandle)
 }
 
 /* USER CODE BEGIN 1 */
+
+HAL_StatusTypeDef FDCAN_RuntimeBringUp(void)
+{
+  static uint8_t bringup_done = 0U;
+
+  if (bringup_done != 0U)
+  {
+    return HAL_OK;
+  }
+
+  if (fdcan_start_with_fifo0_irq(&hfdcan1) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  if (fdcan_start_with_fifo0_irq(&hfdcan2) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  if (fdcan_start_with_fifo0_irq(&hfdcan3) != HAL_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  bringup_done = 1U;
+  return HAL_OK;
+}
 
 /* USER CODE END 1 */

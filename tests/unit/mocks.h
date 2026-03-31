@@ -61,29 +61,9 @@ can_msg_t mock_can_precarga_ack(uint8_t ack);
 can_msg_t mock_can_dc_bus_voltage(uint16_t voltage_raw);
 
 /**
- * Frame de sensor S1 aceleración (ID 0x101)
- */
-can_msg_t mock_can_throttle_s1(uint16_t adc_value);
-
-/**
- * Frame de sensor S2 aceleración (ID 0x102)
- */
-can_msg_t mock_can_throttle_s2(uint16_t adc_value);
-
-/**
- * Frame de sensor freno (ID 0x103)
- */
-can_msg_t mock_can_brake(uint16_t adc_value);
-
-/**
  * Frame de tensión mínima celda (ID 0x12C)
  */
 can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw);
-
-/**
- * Frame legado del BUS DASH con S1/S2 empaquetados en el mismo ID 0x101.
- */
-can_msg_t mock_can_dash_pedals(uint16_t s1_adc, uint16_t s2_adc);
 
 /**
  * Frame legado TX_STATE_2 del inversor (estado en byte4, error en byte2).
