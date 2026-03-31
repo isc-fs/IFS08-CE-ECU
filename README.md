@@ -1,11 +1,6 @@
 # IFS08 - CE-ECU
 
-This branch contains an initial firmware base migrated from
-`jbmata/VCU08-NSIL-Software`.
 
-It is intentionally a first import: naming, directory layout, and some
-project files still reflect the source repository and will be cleaned up
-incrementally as the CE-ECU codebase is organized.
 
 ## What This Base Does
 
