@@ -118,10 +118,10 @@ void SIL_CAN_Process(void)
 
         SIL_CAN_SendFrame(0x20, data, 8);
         
-        /* Send DC bus voltage (ID 0x100) */
-        data[0] = (uint8_t)(sim_state.dc_voltage & 0xFF);
-        data[1] = (uint8_t)((sim_state.dc_voltage >> 8) & 0xFF);
-        SIL_CAN_SendFrame(0x100, data, 8);
+        /* Send inverter DC bus voltage feedback (legacy TX_STATE_7 / 0x466). */
+        data[2] = (uint8_t)(sim_state.dc_voltage & 0xFF);
+        data[3] = (uint8_t)((sim_state.dc_voltage >> 8) & 0xFF);
+        SIL_CAN_SendFrame(0x466, data, 6);
 
         /* Inverter state feedback (legacy TX_STATE_2). */
         memset(data, 0, sizeof(data));

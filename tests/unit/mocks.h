@@ -56,7 +56,7 @@ can_msg_t mock_can_frame(uint32_t id, const uint8_t data[8]);
 can_msg_t mock_can_precarga_ack(uint8_t ack);
 
 /**
- * Frame de tensión DC del bus (ID 0x100, 400V = 0x0190 LE)
+ * Frame legado TX_STATE_7 del inversor (ID 0x466, Vdc en bytes 2..3 LE)
  */
 can_msg_t mock_can_dc_bus_voltage(uint16_t voltage_raw);
 

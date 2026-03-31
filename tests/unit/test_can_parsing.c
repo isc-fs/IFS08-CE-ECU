@@ -35,7 +35,7 @@ TEST(CAN_Parsing, parse_precarga_ack_nonzero_means_pending)
     TEST_ASSERT_EQUAL_INT(0, st.ok_precarga);
 }
 
-TEST(CAN_Parsing, parse_dc_bus_voltage_compat_frame)
+TEST(CAN_Parsing, parse_inverter_dc_bus_voltage_frame)
 {
     can_msg_t frame = mock_can_dc_bus_voltage(0x0190);
     app_inputs_t st = {0};
@@ -43,9 +43,21 @@ TEST(CAN_Parsing, parse_dc_bus_voltage_compat_frame)
     CanRx_ParseAndUpdate(&frame, &st);
 
     TEST_ASSERT_EQUAL_INT(0x0190, st.inv_dc_bus_voltage);
+    TEST_ASSERT_EQUAL_INT(1, st.inv_vdc_ready);
 }
 
-TEST(CAN_Parsing, ignore_removed_101_frame)
+TEST(CAN_Parsing, ignore_valid_id_on_wrong_bus)
+{
+    can_msg_t frame = mock_can_cell_min_voltage(3700);
+    app_inputs_t st = {0};
+
+    frame.bus = CAN_BUS_INV;
+    CanRx_ParseAndUpdate(&frame, &st);
+
+    TEST_ASSERT_EQUAL_INT(0, st.v_celda_min);
+}
+
+TEST(CAN_Parsing, ignore_dash_apps_frame_in_production)
 {
     uint8_t data[8] = {0x09, 0xC4, 0x08, 0xC3, 0, 0, 0, 0};
     can_msg_t frame = mock_can_frame(0x101, data);
@@ -59,7 +71,7 @@ TEST(CAN_Parsing, ignore_removed_101_frame)
     TEST_ASSERT_EQUAL_INT(0, st.s2_aceleracion);
 }
 
-TEST(CAN_Parsing, ignore_removed_102_frame)
+TEST(CAN_Parsing, ignore_dash_aux_apps_frame_in_production)
 {
     uint8_t data[8] = {0xA8, 0x07, 0, 0, 0, 0, 0, 0};
     can_msg_t frame = mock_can_frame(0x102, data);
@@ -72,7 +84,7 @@ TEST(CAN_Parsing, ignore_removed_102_frame)
     TEST_ASSERT_EQUAL_INT(0, st.s2_aceleracion);
 }
 
-TEST(CAN_Parsing, ignore_removed_103_frame)
+TEST(CAN_Parsing, ignore_dash_brake_frame_in_production)
 {
     uint8_t data[8] = {0xAC, 0x0D, 0, 0, 0, 0, 0, 0};
     can_msg_t frame = mock_can_frame(0x103, data);
@@ -194,10 +206,11 @@ TEST_GROUP_RUNNER(CAN_Parsing)
 {
     RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_zero_means_ok);
     RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_nonzero_means_pending);
-    RUN_TEST_CASE(CAN_Parsing, parse_dc_bus_voltage_compat_frame);
-    RUN_TEST_CASE(CAN_Parsing, ignore_removed_101_frame);
-    RUN_TEST_CASE(CAN_Parsing, ignore_removed_102_frame);
-    RUN_TEST_CASE(CAN_Parsing, ignore_removed_103_frame);
+    RUN_TEST_CASE(CAN_Parsing, parse_inverter_dc_bus_voltage_frame);
+    RUN_TEST_CASE(CAN_Parsing, ignore_valid_id_on_wrong_bus);
+    RUN_TEST_CASE(CAN_Parsing, ignore_dash_apps_frame_in_production);
+    RUN_TEST_CASE(CAN_Parsing, ignore_dash_aux_apps_frame_in_production);
+    RUN_TEST_CASE(CAN_Parsing, ignore_dash_brake_frame_in_production);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_cell_min_voltage_big_endian);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_state_and_error);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_temps);

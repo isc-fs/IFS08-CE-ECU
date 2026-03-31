@@ -24,7 +24,7 @@
 #include "cmsis_os.h"
 #include "can.h"        /* can_qitem16_t, CAN_Pack16, etc.          */
 #include "diag.h"        /* Diag_Log                                  */
-#include "telemetry.h"   /* Telemetry_Build32, Telemetry_Send32       */
+#include "telemetry.h"   /* Telemetry task + frame/event plumbing     */
 #include "test_integration.h"  /* Integration tests – modo HIL (hardware)  */
 
 /* Private includes ----------------------------------------------------------*/
@@ -35,7 +35,6 @@
 #include "io_signals.h"
 #ifndef SIL_BUILD
 extern HAL_StatusTypeDef FDCAN_RuntimeBringUp(void);
-extern HAL_StatusTypeDef TIM16_RuntimeBringUp(void);
 #endif
 
 /* USER CODE END Includes */
@@ -52,15 +51,45 @@ extern HAL_StatusTypeDef TIM16_RuntimeBringUp(void);
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#ifdef SIL_USE_THREAD_SCHEDULER
-#define APP_TASK_LOOP_BEGIN() do {
-#define APP_TASK_LOOP_DELAY(ms) do { osDelay((ms)); return; } while (0)
-#define APP_TASK_LOOP_END() } while (0)
-#else
-#define APP_TASK_LOOP_BEGIN() for(;;) {
-#define APP_TASK_LOOP_DELAY(ms) osDelay((ms))
-#define APP_TASK_LOOP_END() }
-#endif
+typedef struct
+{
+  uint32_t generation;
+  uint32_t next_release;
+} app_periodic_state_t;
+
+static uint32_t s_periodic_generation;
+
+static uint32_t app_ms_to_ticks(uint32_t ms)
+{
+  uint32_t tick_freq = osKernelGetTickFreq();
+  uint32_t ticks = (ms * tick_freq + 999u) / 1000u;
+  return (ticks == 0u) ? 1u : ticks;
+}
+
+static void app_periodic_delay_until(app_periodic_state_t *state, uint32_t period_ms)
+{
+  uint32_t period_ticks = app_ms_to_ticks(period_ms);
+
+  if (!state)
+  {
+    (void)osDelayUntil(osKernelGetTickCount() + period_ticks);
+    return;
+  }
+
+  if (state->generation != s_periodic_generation)
+  {
+    state->generation = s_periodic_generation;
+    state->next_release = osKernelGetTickCount();
+  }
+
+  state->next_release += period_ticks;
+  (void)osDelayUntil(state->next_release);
+}
+
+static uint8_t app_tick_reached(uint32_t now, uint32_t deadline)
+{
+  return (uint8_t)(((int32_t)(now - deadline)) >= 0);
+}
 
 /* USER CODE END PM */
 
@@ -108,7 +137,7 @@ osThreadId_t TelemetryTaskHandle;
 const osThreadAttr_t TelemetryTask_attributes = {
   .name = "TelemetryTask",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for DiagTask */
 osThreadId_t DiagTaskHandle;
@@ -117,6 +146,7 @@ const osThreadAttr_t DiagTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+#ifdef APP_ENABLE_INTEGRATION_TEST_TASK
 /* Definitions for IntegrationTestTask */
 osThreadId_t IntegrationTestTaskHandle;
 const osThreadAttr_t IntegrationTestTask_attributes = {
@@ -124,6 +154,7 @@ const osThreadAttr_t IntegrationTestTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+#endif
 /* Definitions for canRxQueue */
 osMessageQueueId_t canRxQueueHandle;
 const osMessageQueueAttr_t canRxQueue_attributes = {
@@ -133,6 +164,11 @@ const osMessageQueueAttr_t canRxQueue_attributes = {
 osMessageQueueId_t canTxQueueHandle;
 const osMessageQueueAttr_t canTxQueue_attributes = {
   .name = "canTxQueue"
+};
+/* Definitions for telemetryEventQueue */
+osMessageQueueId_t telemetryEventQueueHandle;
+const osMessageQueueAttr_t telemetryEventQueue_attributes = {
+  .name = "telemetryEventQueue"
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -147,7 +183,9 @@ void StartCanRxTask(void *argument);
 void StartCanTxTask(void *argument);
 void StartTelemetryTask(void *argument);
 void StartDiagTask(void *argument);
+#ifdef APP_ENABLE_INTEGRATION_TEST_TASK
 void StartIntegrationTestTask(void *argument);
+#endif
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -160,6 +198,12 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
+
+  s_periodic_generation++;
+  if (s_periodic_generation == 0u)
+  {
+    s_periodic_generation = 1u;
+  }
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* Mutex global de acceso a g_in (app_state). DEBE crearse antes de
@@ -181,6 +225,7 @@ void MX_FREERTOS_Init(void) {
 
 canRxQueueHandle = osMessageQueueNew(128, sizeof(can_qitem16_t), NULL);
 canTxQueueHandle = osMessageQueueNew(64,  sizeof(can_qitem16_t), NULL);
+telemetryEventQueueHandle = osMessageQueueNew(32, sizeof(telemetry_event_t), NULL);
 
 
   /* USER CODE BEGIN RTOS_QUEUES */
@@ -210,10 +255,12 @@ canTxQueueHandle = osMessageQueueNew(64,  sizeof(can_qitem16_t), NULL);
   DiagTaskHandle = osThreadNew(StartDiagTask, NULL, &DiagTask_attributes);
 
   /* creation of IntegrationTestTask */
+#ifdef APP_ENABLE_INTEGRATION_TEST_TASK
 #ifndef SIL_USE_THREAD_SCHEDULER
   IntegrationTestTaskHandle = osThreadNew(StartIntegrationTestTask, NULL, &IntegrationTestTask_attributes);
 #else
   IntegrationTestTaskHandle = NULL;
+#endif
 #endif
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -237,9 +284,15 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
-    APP_TASK_LOOP_DELAY(1);
-  APP_TASK_LOOP_END();
+#ifdef SIL_USE_THREAD_SCHEDULER
+  osDelay(1);
+  return;
+#else
+  for (;;)
+  {
+    osDelay(1);
+  }
+#endif
   /* USER CODE END StartDefaultTask */
 }
 
@@ -273,10 +326,21 @@ void StartControlTask(void *argument)
   /* USER CODE BEGIN StartControlTask */
   /* Control loop: 10ms period (100Hz) */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
+#ifdef SIL_USE_THREAD_SCHEDULER
+  static app_periodic_state_t s_control_periodic = {0};
+  AppRuntime_ControlStep();
+  app_periodic_delay_until(&s_control_periodic, 10u);
+  return;
+#else
+  uint32_t next_release = osKernelGetTickCount();
+  uint32_t period_ticks = app_ms_to_ticks(10u);
+  for (;;)
+  {
     AppRuntime_ControlStep();
-    APP_TASK_LOOP_DELAY(10);
-  APP_TASK_LOOP_END();
+    next_release += period_ticks;
+    (void)osDelayUntil(next_release);
+  }
+#endif
   /* USER CODE END StartControlTask */
 }
 
@@ -292,10 +356,21 @@ void StartCanRxTask(void *argument)
   /* USER CODE BEGIN StartCanRxTask */
   /* CAN Receive task: 5ms period */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
+#ifdef SIL_USE_THREAD_SCHEDULER
+  static app_periodic_state_t s_can_rx_periodic = {0};
+  AppRuntime_CanRxStep();
+  app_periodic_delay_until(&s_can_rx_periodic, 5u);
+  return;
+#else
+  uint32_t next_release = osKernelGetTickCount();
+  uint32_t period_ticks = app_ms_to_ticks(5u);
+  for (;;)
+  {
     AppRuntime_CanRxStep();
-    APP_TASK_LOOP_DELAY(5);  // 5ms polling rate (200Hz)
-  APP_TASK_LOOP_END();
+    next_release += period_ticks;
+    (void)osDelayUntil(next_release);
+  }
+#endif
   /* USER CODE END StartCanRxTask */
 }
 
@@ -311,10 +386,21 @@ void StartCanTxTask(void *argument)
   /* USER CODE BEGIN StartCanTxTask */
   /* CAN Transmit task: 10ms period (100Hz), aligned with control cadence */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
+#ifdef SIL_USE_THREAD_SCHEDULER
+  static app_periodic_state_t s_can_tx_periodic = {0};
+  AppRuntime_CanTxStep();
+  app_periodic_delay_until(&s_can_tx_periodic, 10u);
+  return;
+#else
+  uint32_t next_release = osKernelGetTickCount();
+  uint32_t period_ticks = app_ms_to_ticks(10u);
+  for (;;)
+  {
     AppRuntime_CanTxStep();
-    APP_TASK_LOOP_DELAY(10);
-  APP_TASK_LOOP_END();
+    next_release += period_ticks;
+    (void)osDelayUntil(next_release);
+  }
+#endif
   /* USER CODE END StartCanTxTask */
 }
 
@@ -328,12 +414,59 @@ void StartCanTxTask(void *argument)
 void StartTelemetryTask(void *argument)
 {
   /* USER CODE BEGIN StartTelemetryTask */
-  /* Telemetry logging task: 100ms period (10Hz) */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
+#ifdef SIL_USE_THREAD_SCHEDULER
+  static uint32_t s_next_release = 0u;
+  telemetry_event_t event;
+  uint32_t now = osKernelGetTickCount();
+  uint32_t period_ticks = app_ms_to_ticks(100u);
+
+  if (s_next_release == 0u)
+  {
     AppRuntime_TelemetryStep();
-    APP_TASK_LOOP_DELAY(100);
-  APP_TASK_LOOP_END();
+    s_next_release = now + period_ticks;
+  }
+  else if (telemetryEventQueueHandle &&
+           osMessageQueueGet(telemetryEventQueueHandle, &event, NULL, 0u) == osOK)
+  {
+    AppRuntime_TelemetryEventStep(&event);
+  }
+  else if (app_tick_reached(now, s_next_release))
+  {
+    AppRuntime_TelemetryStep();
+    s_next_release += period_ticks;
+  }
+
+  (void)osDelayUntil((s_next_release > now + 1u) ? (now + 1u) : s_next_release);
+  return;
+#else
+  telemetry_event_t event;
+  uint32_t next_release = osKernelGetTickCount();
+  uint32_t period_ticks = app_ms_to_ticks(100u);
+  AppRuntime_TelemetryStep();
+  next_release += period_ticks;
+
+  for (;;)
+  {
+    uint32_t now = osKernelGetTickCount();
+
+    if (app_tick_reached(now, next_release))
+    {
+      AppRuntime_TelemetryStep();
+      next_release += period_ticks;
+      continue;
+    }
+
+    if (telemetryEventQueueHandle &&
+        osMessageQueueGet(telemetryEventQueueHandle, &event, NULL, next_release - now) == osOK)
+    {
+      AppRuntime_TelemetryEventStep(&event);
+      continue;
+    }
+
+    (void)osDelayUntil(next_release);
+  }
+#endif
   /* USER CODE END StartTelemetryTask */
 }
 
@@ -348,12 +481,19 @@ void StartDiagTask(void *argument)
 {
   /* USER CODE BEGIN StartDiagTask */
   (void)argument;
-  APP_TASK_LOOP_BEGIN()
-    APP_TASK_LOOP_DELAY(1);
-  APP_TASK_LOOP_END();
+#ifdef SIL_USE_THREAD_SCHEDULER
+  osDelay(1);
+  return;
+#else
+  for (;;)
+  {
+    osDelay(1);
+  }
+#endif
   /* USER CODE END StartDiagTask */
 }
 
+#ifdef APP_ENABLE_INTEGRATION_TEST_TASK
 /* USER CODE BEGIN Header_StartIntegrationTestTask */
 /**
 * @brief Function implementing the IntegrationTestTask thread.
@@ -380,6 +520,7 @@ void StartIntegrationTestTask(void *argument)
   
   /* USER CODE END StartIntegrationTestTask */
 }
+#endif
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
@@ -389,7 +530,10 @@ void AppRuntime_InitStep(void)
   Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
 
   AppState_Init();
-  Diag_Log("State machine initialized (BOOT)\n");
+  Diag_Log("State machine initialized (WAIT_INV_VDC_CONFIG)\n");
+
+  Telemetry_Init();
+  Diag_Log("Telemetry subsystem initialized\n");
 
   Control_Init();
   Diag_Log("Control module initialized\n");
@@ -403,12 +547,6 @@ void AppRuntime_InitStep(void)
     Error_Handler();
   }
   Diag_Log("FDCAN runtime bring-up complete\n");
-
-  if (TIM16_RuntimeBringUp() != HAL_OK) {
-    Diag_Log("TIM16 runtime bring-up failed\n");
-    Error_Handler();
-  }
-  Diag_Log("TIM16 runtime bring-up complete\n");
 #endif
 
   Diag_Log("=== INITIALIZATION COMPLETE ===\n");
@@ -450,12 +588,18 @@ void AppRuntime_CanRxStep(void)
 
   status = osMessageQueueGet(canRxQueueHandle, &rx_qitem, NULL, 0);
   while (status == osOK) {
+    uint8_t previous_inv_state = 0u;
+    uint8_t previous_inv_error = 0u;
+
     CAN_Unpack16(&rx_qitem, &rx_msg);
 
     if (g_inMutex) {
       osMutexAcquire(g_inMutex, osWaitForever);
     }
+    previous_inv_state = g_in.inv_state;
+    previous_inv_error = g_in.inv_error;
     CanRx_ParseAndUpdate(&rx_msg, &g_in);
+    (void)Telemetry_PublishStateEvent(previous_inv_state, previous_inv_error, &g_in);
     if (g_inMutex) {
       osMutexRelease(g_inMutex);
     }
@@ -481,11 +625,23 @@ void AppRuntime_CanTxStep(void)
 void AppRuntime_TelemetryStep(void)
 {
   app_inputs_t state_snapshot;
-  uint8_t payload32[32];
+  telemetry_frame_t frame;
 
   AppState_Snapshot(&state_snapshot);
-  Telemetry_Build32(&state_snapshot, payload32);
-  Telemetry_Send32(payload32);
+  Telemetry_BuildFrame(&state_snapshot, NULL, &frame);
+  Telemetry_TransportSend(&frame);
+}
+
+void AppRuntime_TelemetryEventStep(const telemetry_event_t *event)
+{
+  app_inputs_t state_snapshot;
+  telemetry_frame_t frame;
+
+  if (!event) return;
+
+  AppState_Snapshot(&state_snapshot);
+  Telemetry_BuildFrame(&state_snapshot, event, &frame);
+  Telemetry_TransportSend(&frame);
 }
 
 /* USER CODE END Application */

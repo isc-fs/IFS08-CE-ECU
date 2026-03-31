@@ -32,16 +32,32 @@ static volatile uint32_t sil_tick_ms = 0;
 static volatile int sil_simulation_running = 0;
 static volatile uint32_t sil_test_duration_ms = 0;
 static uint8_t sil_last_telemetry[32] = {0};
+static uint8_t sil_last_heartbeat[32] = {0};
+static uint8_t sil_last_event[32] = {0};
 static uint32_t sil_telemetry_count = 0;
+static uint32_t sil_heartbeat_count = 0;
+static uint32_t sil_event_count = 0;
 static int sil_test_failures = 0;
 
+uint32_t sil_get_time_ms(void);
+
 extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 
 void Telemetry_Send32(const uint8_t payload[32])
 {
     if (!payload) return;
     memcpy(sil_last_telemetry, payload, sizeof(sil_last_telemetry));
     sil_telemetry_count++;
+
+    if (payload[17] == (uint8_t)TELEMETRY_FRAME_EVENT) {
+        memcpy(sil_last_event, payload, sizeof(sil_last_event));
+        sil_event_count++;
+    } else {
+        memcpy(sil_last_heartbeat, payload, sizeof(sil_last_heartbeat));
+        sil_heartbeat_count++;
+    }
 }
 
 static void sil_check(int condition, const char *message)
@@ -57,7 +73,11 @@ static void sil_check(int condition, const char *message)
 static void sil_reset_captured_outputs(void)
 {
     memset(sil_last_telemetry, 0, sizeof(sil_last_telemetry));
+    memset(sil_last_heartbeat, 0, sizeof(sil_last_heartbeat));
+    memset(sil_last_event, 0, sizeof(sil_last_event));
     sil_telemetry_count = 0;
+    sil_heartbeat_count = 0;
+    sil_event_count = 0;
 }
 
 static void sil_set_start_button(uint8_t pressed)
@@ -87,6 +107,330 @@ static void sil_runtime_step_1ms(void)
     SIL_AdvanceTick(1);
     SIL_CAN_Process();
     SIL_RTOS_RunReadyThreads();
+}
+
+static void sil_runtime_step_manual_1ms(uint8_t process_can_sim)
+{
+    sil_tick_ms++;
+    SIL_AdvanceTick(1);
+    if (process_can_sim) {
+        SIL_CAN_Process();
+    }
+    SIL_RTOS_RunReadyThreads();
+}
+
+static void sil_run_manual(uint32_t duration_ms, uint8_t process_can_sim)
+{
+    uint32_t end_tick = sil_tick_ms + duration_ms;
+
+    while (sil_tick_ms < end_tick) {
+        sil_runtime_step_manual_1ms(process_can_sim);
+    }
+}
+
+static void sil_run_until_tick(uint32_t target_tick, uint8_t process_can_sim)
+{
+    while (sil_tick_ms < target_tick) {
+        sil_runtime_step_manual_1ms(process_can_sim);
+    }
+}
+
+static void sil_run_until_next_control_cycle_after_rx(void)
+{
+    uint32_t now = osKernelGetTickCount();
+    uint32_t rx_tick = ((now / 5u) + 1u) * 5u;
+    uint32_t control_tick = ((rx_tick / 10u) + 1u) * 10u;
+    sil_run_until_tick(control_tick, 0u);
+}
+
+static can_bus_t sil_bus_from_handle(FDCAN_HandleTypeDef *hfdcan)
+{
+    if (hfdcan == &hfdcan1) return CAN_BUS_INV;
+    if (hfdcan == &hfdcan2) return CAN_BUS_ACU;
+    if (hfdcan == &hfdcan3) return CAN_BUS_DASH;
+    return CAN_BUS_INV;
+}
+
+static uint8_t sil_pop_tx_can_msg(FDCAN_HandleTypeDef *hfdcan, can_msg_t *msg)
+{
+    FDCAN_TxHeaderTypeDef txh;
+    uint8_t payload[8] = {0};
+
+    if (!msg) return 0u;
+    if (SIL_FDCAN_PopTxFrame(hfdcan, &txh, payload) != HAL_OK) {
+        return 0u;
+    }
+
+    memset(msg, 0, sizeof(*msg));
+    msg->bus = sil_bus_from_handle(hfdcan);
+    msg->id = txh.Identifier;
+    msg->ide = (txh.IdType == FDCAN_EXTENDED_ID) ? 1u : 0u;
+    msg->dlc = (uint8_t)((txh.DataLength >> 16) & 0xFu);
+    memcpy(msg->data, payload, sizeof(msg->data));
+    return 1u;
+}
+
+static void sil_drain_tx_bus(FDCAN_HandleTypeDef *hfdcan)
+{
+    can_msg_t dummy;
+
+    while (sil_pop_tx_can_msg(hfdcan, &dummy)) {
+    }
+}
+
+static HAL_StatusTypeDef sil_inject_rx_frame(FDCAN_HandleTypeDef *hfdcan,
+                                             uint32_t id,
+                                             uint32_t id_type,
+                                             const uint8_t *data,
+                                             uint8_t dlc)
+{
+    HAL_StatusTypeDef st = SIL_FDCAN_InjectRxFrame(hfdcan, id, id_type, data, dlc);
+
+    if (st == HAL_OK) {
+        Can_ISR_PushRxFifo0(hfdcan);
+    }
+
+    return st;
+}
+
+static void sil_check_bus_empty(FDCAN_HandleTypeDef *hfdcan, const char *message)
+{
+    sil_check(SIL_FDCAN_GetTxCount(hfdcan) == 0u, message);
+    if (SIL_FDCAN_GetTxCount(hfdcan) != 0u) {
+        sil_drain_tx_bus(hfdcan);
+    }
+}
+
+static void sil_expect_tx_frame(FDCAN_HandleTypeDef *hfdcan,
+                                uint32_t expected_id,
+                                uint8_t expected_ide,
+                                uint8_t expected_dlc,
+                                const uint8_t *expected_data,
+                                uint8_t expected_data_len,
+                                const char *label)
+{
+    can_msg_t msg;
+    char detail[160];
+    uint8_t has_msg = 0u;
+
+    memset(&msg, 0, sizeof(msg));
+
+    snprintf(detail, sizeof(detail), "%s -> trama presente", label);
+    has_msg = sil_pop_tx_can_msg(hfdcan, &msg);
+    sil_check(has_msg == 1u, detail);
+    if (!has_msg) {
+        return;
+    }
+
+    snprintf(detail, sizeof(detail), "%s -> ID 0x%03lX", label, (unsigned long)expected_id);
+    sil_check(msg.id == expected_id, detail);
+
+    snprintf(detail, sizeof(detail), "%s -> IDE %u", label, (unsigned)expected_ide);
+    sil_check(msg.ide == expected_ide, detail);
+
+    snprintf(detail, sizeof(detail), "%s -> DLC %u", label, (unsigned)expected_dlc);
+    sil_check(msg.dlc == expected_dlc, detail);
+
+    if (expected_data && expected_data_len > 0u) {
+        snprintf(detail, sizeof(detail), "%s -> payload", label);
+        sil_check(memcmp(msg.data, expected_data, expected_data_len) == 0, detail);
+    }
+}
+
+static uint16_t sil_legacy_torque_command(uint16_t torque_pct)
+{
+    uint16_t scaled = torque_pct;
+
+    if (scaled >= 10u) {
+        scaled = (uint16_t)(((uint32_t)scaled * 240u) / 90u - (2400u / 90u));
+    }
+
+    return (uint16_t)(~scaled + 1u);
+}
+
+static void test_legacy_compat_harness(void)
+{
+    app_inputs_t snapshot = {0};
+    uint8_t data[8] = {0};
+    uint8_t expected[8] = {0};
+    uint16_t expected_torque_cmd = 0u;
+
+    printf("\n");
+    printf("╔══════════════════════════════════════════════════════╗\n");
+    printf("║  SIL TEST: Legacy Compatibility Harness            ║\n");
+    printf("╚══════════════════════════════════════════════════════╝\n\n");
+
+    SIL_Results_Init("legacy_compat_harness.log");
+    SIL_Results_Log("LEGACY_COMPAT", "STARTED",
+                    "Polling-compatible startup and inverter-write harness");
+
+    sil_runtime_init();
+    sil_set_start_button(0u);
+    SIL_CAN_InjectBrake(0u);
+    SIL_CAN_InjectThrottle(0u);
+    sil_drain_tx_bus(&hfdcan1);
+    sil_drain_tx_bus(&hfdcan2);
+    sil_drain_tx_bus(&hfdcan3);
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1", "WAIT_INV_VDC_CONFIG");
+    sil_run_manual(30u, 0u);
+    sil_check_bus_empty(&hfdcan1, "P1: sin escritura al inversor antes de TX_STATE_7");
+    sil_check_bus_empty(&hfdcan2, "P1: sin precarga antes de TX_STATE_7");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "PRECHARGE_REQUEST");
+    sil_set_start_button(1u);
+    memset(data, 0, sizeof(data));
+    data[2] = 0x00u;
+    data[3] = 0x00u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_7, FDCAN_STANDARD_ID, data, 6u) == HAL_OK,
+              "P2: RX TX_STATE_7 inyectada");
+    sil_run_until_next_control_cycle_after_rx();
+
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 1u, 2u, expected, 2u,
+                        "P2: reenvio DC bus al ACU");
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 1u;
+    sil_expect_tx_frame(&hfdcan2, 0x600u, 1u, 2u, expected, 2u,
+                        "P2: peticion de precarga");
+    sil_check_bus_empty(&hfdcan1, "P2: sin escritura al inversor durante precarga");
+    sil_check_bus_empty(&hfdcan2, "P2: solo dos tramas ACU esperadas en el ciclo");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "PRECHARGE_ACK");
+    memset(data, 0, sizeof(data));
+    data[0] = 0x00u;
+    sil_check(sil_inject_rx_frame(&hfdcan2, TINT_ID_ACK_PRECARGA, FDCAN_STANDARD_ID, data, 1u) == HAL_OK,
+              "P3: ACK precarga inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    sil_check_bus_empty(&hfdcan1, "P3: tras ACK aun no se escribe al inversor");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE4", "WAIT_START_BRAKE");
+    sil_run_manual(40u, 0u);
+    sil_check_bus_empty(&hfdcan1, "P4: sin escritura al inversor esperando freno");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE5", "R2D_DELAY");
+    SIL_CAN_InjectBrake(100u);
+    sil_run_manual(1990u, 0u);
+    sil_check_bus_empty(&hfdcan1, "P5: sin escritura al inversor durante RTDS");
+    sil_run_manual(20u, 0u);
+    sil_check_bus_empty(&hfdcan1, "P5: sin escritura hasta recibir state=3");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE6", "INV_STATE_3");
+    memset(data, 0, sizeof(data));
+    data[4] = 3u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P6: state=3 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x04u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P6: state=3 -> modo READY");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_3, 0u, 4u, expected, 4u,
+                        "P6: state=3 -> torque cero");
+    sil_check_bus_empty(&hfdcan1, "P6: solo READY + torque cero en state=3");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE7", "INV_STATE_3_REPEAT");
+    sil_run_manual(10u, 0u);
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x04u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P7: state=3 persistente -> READY");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_3, 0u, 4u, expected, 4u,
+                        "P7: state=3 persistente -> torque cero");
+    sil_check_bus_empty(&hfdcan1, "P7: secuencia repetida en state=3");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE8", "INV_STATE_4");
+    memset(data, 0, sizeof(data));
+    data[4] = 4u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P8: state=4 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x06u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P8: state=4 -> modo TORQUE");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_3, 0u, 4u, expected, 4u,
+                        "P8: state=4 -> torque cero");
+    sil_check_bus_empty(&hfdcan1, "P8: solo TORQUE + torque cero en state=4");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE9", "INV_STATE_6_TORQUE");
+    SIL_CAN_InjectBrake(0u);
+    SIL_CAN_InjectThrottle(50u);
+    memset(data, 0, sizeof(data));
+    data[4] = 6u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P9: state=6 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    AppState_Snapshot(&snapshot);
+    expected_torque_cmd = sil_legacy_torque_command(snapshot.torque_total);
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x06u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P9: state=6 -> modo TORQUE");
+    memset(expected, 0, sizeof(expected));
+    expected[2] = (uint8_t)(expected_torque_cmd & 0xFFu);
+    expected[3] = (uint8_t)((expected_torque_cmd >> 8) & 0xFFu);
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_3, 0u, 4u, expected, 4u,
+                        "P9: state=6 -> torque legado");
+    sil_check_bus_empty(&hfdcan1, "P9: solo modo + torque en state=6");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE10", "INV_STATE_10_SOFT_FAULT");
+    SIL_CAN_InjectThrottle(0u);
+    memset(data, 0, sizeof(data));
+    data[2] = 3u;
+    data[4] = 10u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P10: state=10 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x13u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P10: state=10 -> reset 1");
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P10: state=10 -> reset 2");
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x01u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P10: state=10 -> standby final");
+    sil_check_bus_empty(&hfdcan1, "P10: secuencia exacta soft fault");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE11", "INV_STATE_11_HARD_FAULT");
+    memset(data, 0, sizeof(data));
+    data[4] = 11u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P11: state=11 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x13u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P11: state=11 -> reset");
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x01u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P11: state=11 -> standby");
+    sil_check_bus_empty(&hfdcan1, "P11: secuencia exacta hard fault");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE12", "INV_STATE_13_SHUTDOWN");
+    memset(data, 0, sizeof(data));
+    data[4] = 13u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "P12: state=13 inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    memset(expected, 0, sizeof(expected));
+    expected[2] = 0x01u;
+    sil_expect_tx_frame(&hfdcan1, TINT_RX_SETPOINT_1, 0u, 3u, expected, 3u,
+                        "P12: state=13 -> standby");
+    sil_check_bus_empty(&hfdcan1, "P12: una sola trama en shutdown");
+
+    SIL_Results_Log("LEGACY_COMPAT",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    (sil_test_failures == 0)
+                        ? "Startup and inverter write sequence matches polling contract"
+                        : "Legacy compatibility harness found sequence mismatches");
+    SIL_Results_Close();
 }
 
 /* ===== Test: Suites de integración S1-S10 (test_integration.c) ===== */
@@ -239,7 +583,7 @@ static void test_boot_sequence(void)
     AppState_Snapshot(&snapshot);
     sil_check(snapshot.ok_precarga == 1u, "precarga reconocida");
     sil_check(SIL_FDCAN_GetTxCount(&hfdcan1) >= 2u, "se enviaron tramas al inversor");
-    sil_check(sil_telemetry_count > 0u, "telemetria generada en arranque");
+    sil_check(sil_heartbeat_count > 0u, "telemetria heartbeat generada en arranque");
     
     /* Report results */
     printf("\n[BOOT] %s Boot sequence simulation complete\n",
@@ -296,8 +640,8 @@ static void test_full_cycle(void)
     sil_run_simulation(400);
     AppState_Snapshot(&snapshot);
     sil_check(snapshot.torque_total > 0u, "par positivo con 50% de acelerador");
-    sil_check(sil_telemetry_count > 0u, "telemetria publicada");
-    sil_check(sil_last_telemetry[1] == (uint8_t)snapshot.torque_total, "telemetria refleja torque");
+    sil_check(sil_heartbeat_count > 0u, "telemetria heartbeat publicada");
+    sil_check(sil_last_heartbeat[1] == (uint8_t)snapshot.torque_total, "telemetria heartbeat refleja torque");
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2_END", "50pct throttle complete");
     
     printf("[CYCLE] ➜ Phase 3: 100%% throttle\n");
@@ -546,6 +890,7 @@ static void print_usage(const char *prog)
     printf("  --test-error-temp        High temperature fault test\n");
     printf("  --test-safety-brake      EV 2.3 brake+throttle test\n");
     printf("  --test-dynamic-states    Dynamic state transition test\n");
+    printf("  --test-legacy-compat     Polling-compatible startup/inverter harness\n");
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
@@ -581,6 +926,8 @@ int main(int argc, char *argv[])
         test_safety_brake_throttle();
     } else if (strcmp(test_name, "--test-dynamic-states") == 0) {
         test_dynamic_state_transitions();
+    } else if (strcmp(test_name, "--test-legacy-compat") == 0) {
+        test_legacy_compat_harness();
     } else if (strcmp(test_name, "--test-integration") == 0) {
         test_integration_suite();
     } else if (strcmp(test_name, "--test-all") == 0) {
@@ -591,6 +938,7 @@ int main(int argc, char *argv[])
         test_error_high_temperature();
         test_safety_brake_throttle();
         test_dynamic_state_transitions();
+        test_legacy_compat_harness();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);

@@ -11,6 +11,7 @@
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "can.h"
+#include "telemetry.h"
 #include "sil_hal_mocks.h"
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,7 @@ typedef struct { int dummy; } sil_mutex_t;
 
 extern osMessageQueueId_t canRxQueueHandle;
 extern osMessageQueueId_t canTxQueueHandle;
+extern osMessageQueueId_t telemetryEventQueueHandle;
 extern osMutexId_t g_inMutex;
 
 static uint32_t s_tick_ms = 0;
@@ -305,6 +307,7 @@ void SIL_RTOS_ResetKernel(void)
 {
     sil_queue_destroy(&canRxQueueHandle);
     sil_queue_destroy(&canTxQueueHandle);
+    sil_queue_destroy(&telemetryEventQueueHandle);
 
     if (g_inMutex) {
         (void)osMutexDelete(g_inMutex);
@@ -325,6 +328,7 @@ void SIL_RTOS_Init(void)
 
     canRxQueueHandle = osMessageQueueNew(128u, sizeof(can_qitem16_t), NULL);
     canTxQueueHandle = osMessageQueueNew(64u, sizeof(can_qitem16_t), NULL);
+    telemetryEventQueueHandle = osMessageQueueNew(32u, sizeof(telemetry_event_t), NULL);
     g_inMutex = osMutexNew(NULL);
 
     SIL_FDCAN_Reset();

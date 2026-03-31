@@ -378,14 +378,14 @@ uint32_t test_suite_inverter_state_machine(void)
     ASSERT_EQUAL(st.inv_dc_bus_voltage, 0x0190u, S, "2.6_inv_dc_bus_voltage");
   }
 
-  /* S2.7 – DC Bus Voltage se decodifica correctamente (little-endian 2 bytes) */
+  /* S2.7 – TX_STATE_7 (0x466) deja la Vdc lista para arranque */
   {
-    /* Simular 400 V → 0x0190 = 400d */
-    uint8_t d[8] = {0x90, 0x01, 0, 0, 0, 0, 0, 0};
-    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_DC_BUS_V, CAN_BUS_INV, d, 8),
+    uint8_t d[8] = {0, 0, 0x90, 0x01, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_7, CAN_BUS_INV, d, 6),
                  (uint32_t)HAL_OK, S, "2.7_dc_bus_rx_ok");
     AppState_Snapshot(&st);
     ASSERT_EQUAL(st.inv_dc_bus_voltage, 0x0190u, S, "2.7_dc_bus_voltage_400V");
+    ASSERT_EQUAL(st.inv_vdc_ready, 1u, S, "2.7_dc_bus_ready");
   }
 
   AppState_Init();
@@ -408,8 +408,9 @@ uint32_t test_suite_boot_sequence(void)
   app_inputs_t in;
   control_out_t out;
 
-  /* S3.1 – Estado BOOT: sin precarga, sin botón → NO envía torque */
+  /* S3.1 – Antes de ver TX_STATE_7 el control no entra en precarga */
   AppState_Snapshot(&in);
+  in.inv_vdc_ready    = 0;
   in.ok_precarga     = 0;
   in.boton_arranque  = 0;
   in.s_freno         = TINT_ADC_FRENO_OFF;
@@ -417,8 +418,13 @@ uint32_t test_suite_boot_sequence(void)
   in.s2_aceleracion  = TINT_ADC_S2_50PCT;
   Control_Step10ms(&in, &out);
   ASSERT_EQUAL(out.torque_pct, 0u, S, "3.1_boot_no_torque_without_precarga");
-  /* En BOOT no se envían tramas de torque */
-  ASSERT_RANGE(out.count, 1u, 2u, S, "3.1_boot_precharge_can_frames");
+  ASSERT_EQUAL(out.count, 0u, S, "3.1_boot_precharge_can_frames");
+
+  /* S3.1b – Con TX_STATE_7 ya recibido, la FSM entra en precarga */
+  in.inv_vdc_ready      = 1;
+  in.inv_dc_bus_voltage = 0u;
+  Control_Step10ms(&in, &out);
+  ASSERT_RANGE(out.count, 1u, 2u, S, "3.1b_boot_precharge_can_frames");
   ASSERT_EQUAL(out.msgs[0].id, 0x100u, S, "3.1_boot_dc_bus_frame_id");
   ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_ACU, S, "3.1_boot_dc_bus_frame_bus");
 
@@ -547,7 +553,7 @@ uint32_t test_suite_can_rx_parsing(void)
     ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.1_ack_precarga");
   }
 
-  /* S4.2 – La trama 0x101 ya no debe actualizar pedales */
+  /* S4.2 – En producción, la trama 0x101 no debe actualizar pedales */
   {
     uint8_t d[8] = {0x09, 0xC4, 0x08, 0xC3, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(0x101u, CAN_BUS_DASH, d, 4),
@@ -557,7 +563,7 @@ uint32_t test_suite_can_rx_parsing(void)
     ASSERT_EQUAL(st.s2_aceleracion, 0u, S, "4.2_removed_101_keeps_s2");
   }
 
-  /* S4.3 – La trama 0x102 ya no debe actualizar pedales */
+  /* S4.3 – En producción, la trama 0x102 no debe actualizar pedales */
   {
     uint8_t d[8] = {0xC3, 0x08, 0, 0, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(0x102u, CAN_BUS_DASH, d, 2),
@@ -566,7 +572,7 @@ uint32_t test_suite_can_rx_parsing(void)
     ASSERT_EQUAL(st.s2_aceleracion, 0u, S, "4.3_removed_102_keeps_s2");
   }
 
-  /* S4.4 – La trama 0x103 ya no debe actualizar freno */
+  /* S4.4 – En producción, la trama 0x103 no debe actualizar freno */
   {
     uint8_t d[8] = {0xAC, 0x0D, 0, 0, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(0x103u, CAN_BUS_DASH, d, 2),
@@ -585,14 +591,23 @@ uint32_t test_suite_can_rx_parsing(void)
     ASSERT_EQUAL(st.v_celda_min, 3700u, S, "4.5_v_celda_min_parsed");
   }
 
-  /* S4.6 – ID desconocido no corrompe el estado */
+  /* S4.6 – Un ID correcto en bus incorrecto no debe corromper el estado */
+  {
+    uint8_t d[8] = {0, 0, 0x90, 0x01, 0, 0, 0, 0};
+    ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_TX_STATE_7, CAN_BUS_ACU, d, 6),
+                 (uint32_t)HAL_OK, S, "4.6_wrong_bus_rx_ok");
+    AppState_Snapshot(&st);
+    ASSERT_EQUAL(st.inv_vdc_ready, 0u, S, "4.6_wrong_bus_ignored");
+  }
+
+  /* S4.7 – ID desconocido no corrompe el estado */
   {
     uint8_t d[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(0xFFFFu, CAN_BUS_INV, d, 8),
-                 (uint32_t)HAL_OK, S, "4.6_unknown_rx_ok");
+                 (uint32_t)HAL_OK, S, "4.7_unknown_rx_ok");
     AppState_Snapshot(&st);
     /* Los valores anteriores deben mantenerse intactos */
-    ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.6_unknown_id_no_corruption");
+    ASSERT_EQUAL(st.ok_precarga, 1u, S, "4.7_unknown_id_no_corruption");
   }
 
   AppState_Init();
@@ -919,6 +934,7 @@ uint32_t test_suite_full_pipeline(void)
     g_in.s2_aceleracion = TINT_ADC_S2_50PCT;
     g_in.s_freno        = TINT_ADC_FRENO_OFF;
     g_in.ok_precarga    = 1;
+    g_in.inv_vdc_ready  = 1;
     if (g_inMutex) osMutexRelease(g_inMutex);
     AppState_Snapshot(&in);
     ASSERT_EQUAL(in.s1_aceleracion, TINT_ADC_S1_50PCT, S, "8.1_s1_sensor_loaded");

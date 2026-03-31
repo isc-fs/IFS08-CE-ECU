@@ -16,6 +16,7 @@ app_inputs_t mock_input_nominal(void)
         .boton_arranque = 0,
         .inv_state = 0x04,
         .inv_dc_bus_voltage = 400,
+        .inv_vdc_ready = 1,
         .inv_motor_temp = 20,
         .inv_igbt_temp = 25,
         .inv_air_temp = 30,
@@ -100,10 +101,13 @@ can_msg_t mock_can_precarga_ack(uint8_t ack)
 
 can_msg_t mock_can_dc_bus_voltage(uint16_t voltage_raw)
 {
-    uint8_t data[8] = {0};
-    data[0] = (uint8_t)(voltage_raw & 0xFF);
-    data[1] = (uint8_t)((voltage_raw >> 8) & 0xFF);
-    return mock_can_frame(0x100, data);
+    can_msg_t m = {0};
+    m.bus = CAN_BUS_INV;
+    m.id = 0x466;
+    m.dlc = 6;
+    m.data[2] = (uint8_t)(voltage_raw & 0xFF);
+    m.data[3] = (uint8_t)((voltage_raw >> 8) & 0xFF);
+    return m;
 }
 
 can_msg_t mock_can_cell_min_voltage(uint16_t voltage_raw)
@@ -187,6 +191,7 @@ int mock_app_inputs_equal(const app_inputs_t *a, const app_inputs_t *b)
 osMutexId_t g_inMutex = NULL;
 osMessageQueueId_t canRxQueueHandle = NULL;
 osMessageQueueId_t canTxQueueHandle = NULL;
+osMessageQueueId_t telemetryEventQueueHandle = NULL;
 
 /* Stubs de app_state.c */
 app_inputs_t g_in = {0};
@@ -194,4 +199,21 @@ app_inputs_t g_in = {0};
 void AppState_Init(void)
 {
     memset(&g_in, 0, sizeof(g_in));
+    g_in.v_celda_min = 3600u;
+}
+
+osStatus_t osMessageQueuePut(osMessageQueueId_t mq_id, const void *msg_ptr,
+                             uint8_t msg_prio, uint32_t timeout)
+{
+    (void)mq_id;
+    (void)msg_ptr;
+    (void)msg_prio;
+    (void)timeout;
+    return osErrorResource;
+}
+
+osStatus_t osMessageQueueReset(osMessageQueueId_t mq_id)
+{
+    (void)mq_id;
+    return osOK;
 }

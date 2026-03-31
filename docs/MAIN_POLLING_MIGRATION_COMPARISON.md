@@ -7,21 +7,23 @@ Objetivo: comparar el proyecto actual contra `main_polling.c`, tratando `main_po
 
 ## 1. Resumen ejecutivo
 
-La migracion actual sigue siendo **parcial**, no 1:1, pero ya no esta en el mismo punto que al inicio del dia.
+La migracion actual sigue siendo **parcial**, no 1:1, pero el nucleo de arranque y runtime del inversor ya esta bastante mas cerca del contrato legacy.
 
 Estimacion actual de paridad funcional:
-- **68-72%** si medimos parser CAN + control principal + secuencia cooperativa de arranque del inversor.
-- Menos si incluimos telemetria legacy, IO fisica, bring-up real de hardware y validacion HIL.
+- **78-82%** si medimos parser CAN + control principal + secuencia cooperativa de arranque del inversor + separacion real de buses + harness de compatibilidad de arranque.
+- Menos si incluimos equivalencia estricta de telemetria legacy, IO fisica en placa, bring-up real de hardware y validacion HIL.
 
 Esta estimacion es una inferencia a partir del codigo y de la cobertura SIL disponible; no es una medida formal en placa.
 
 Conclusion corta:
-- El parser CAN legacy principal esta bien migrado.
-- La FSM de arranque ya espera la secuencia real del inversor `3 -> 4 -> 6` en un modelo compatible con FreeRTOS.
+- El parser CAN legacy principal ya discrimina por bus y queda alineado con la topologia `FDCAN1=inversor`, `FDCAN2=ACU`, `FDCAN3=reserva/misc`.
+- La FSM de arranque ya espera `TX_STATE_7/0x466` antes de entrar en precarga y respeta la secuencia real del inversor `3 -> 4 -> 6` en un modelo compatible con FreeRTOS.
 - Las ramas legacy de runtime `0/3/4/6/10/11/13` ya existen en la logica cooperativa.
 - EV2.3, T11.8.9 y la limitacion por `v_celda_min` ya estan portadas en `Control_ComputeTorque()`.
-- La cadencia observable de TX en runtime ya esta alineada a 10 ms en la tarea de CAN TX.
-- Aun asi, la telemetria legacy y la validacion en placa de IO fisica, RTDS y bring-up FDCAN/TIM siguen fuera de equivalencia completa.
+- La cadencia observable de TX en runtime ya esta alineada a 10 ms con tareas periodicas de fase fija.
+- La telemetria ya no es un stub monolitico: hoy existe una `TelemetryTask` dedicada con heartbeat periodico y eventos urgentes, pero todavia no es equivalente al `TelFrame` legacy sobre nRF24.
+- Existe un harness SIL especifico que comprueba secuencia de arranque y escrituras al inversor contra el contrato de `main_polling.c`.
+- Aun asi, la equivalencia completa sigue bloqueada por telemetria legacy, validacion en placa de IO fisica/RTDS y bring-up real de FDCAN/TIM.
 
 ### Si dejamos telemetria fuera por ahora
 
@@ -35,10 +37,10 @@ Los gaps principales que quedan respecto a `main_polling.c` son estos:
 
 Los 5 gaps mas importantes ahora son:
 
-1. **La telemetria legacy no esta migrada.**
-   El legacy rota `TelFrame` `0x600/0x610/0x620/0x630` y lo manda por `nrf24_tx32()` con logging UART.
-   Hoy solo hay un buffer simple de 32 bytes y `Telemetry_Send32()` es `weak`/no-op en firmware real.
-   Referencias: `main_polling.c:2326`, `main_polling.c:2440`, `Core/Src/telemetry.c:4`, `Core/Src/telemetry.c:33`.
+1. **La telemetria ya esta redisenada para FreeRTOS, pero no es 1:1 con la legacy.**
+   El runtime nuevo ya tiene `TelemetryTask` dedicada, heartbeat fijo, builder/serializer desacoplados y cola de eventos urgentes.
+   Lo que falta para equivalencia es el `TelFrame` legacy rotativo `0x600/0x610/0x620/0x630`, la cadencia final esperada y el transporte real `nrf24_tx32()`.
+   Referencias: `main_polling.c:2326`, `main_polling.c:2440`, `Core/Src/telemetry.c:56`, `Core/Src/freertos.c:414`.
 
 2. **La IO fisica de arranque/freno ya esta puenteada, pero falta validarla en placa.**
    El legacy lee freno por ADC y boton por GPIO en la secuencia de arranque.
@@ -55,22 +57,23 @@ Los 5 gaps mas importantes ahora son:
    La ruta nueva ya expone `rtds_active` desde la FSM y conmuta el GPIO fisico desde `io_signals.c`.
    Referencias: `main_polling.c:662`, `Core/Src/control.c:315`, `Core/Src/io_signals.c:129`, `Core/Src/freertos.c:436`.
 
-5. **Falta validacion golden/HIL de la ruta nueva.**
-   SIL ya cubre la secuencia nominal `3 -> 4 -> 6`, pero aun no hay comparacion de trazas contra `main_polling.c` ni validacion en placa.
-   Referencias: `Core/Src/test_integration.c:447`, `Core/Src/test_integration.c:782`, `tests/sil/sil_main.c:279`, `tests/sil/sil_main.c:297`.
+5. **Falta cerrar validacion golden/HIL de la ruta nueva.**
+   SIL ya cubre la secuencia nominal `3 -> 4 -> 6` y existe un harness de compatibilidad de arranque/inversor, pero aun no hay comparacion golden completa de trazas ni validacion en placa.
+   Referencias: `Core/Src/test_integration.c:447`, `Core/Src/test_integration.c:782`, `tests/sil/sil_main.c:235`, `tests/sil/sil_main.c:926`.
 
 ## 2. Mapa de migracion
 
 | Bloque legacy en `main_polling.c` | Equivalente actual | Estado | Comentario |
 |---|---|---|---|
-| `HAL_FDCAN_RxFifo0Callback` monolitico | `CanRx_ParseAndUpdate()` + `Can_ISR_PushRxFifo0()` | Migrado | El parser principal activo `0x20/0x12C/0x461..0x466` esta portado y las rutas legacy de pedales por CAN ya se retiraron del runtime nuevo. Referencias: `main_polling.c:1738`, `Core/Src/can.c:73`. |
-| Bucle de precarga `while (precarga_inv == 0 && inv_dc_bus_voltage < 300)` | `CTRL_ST_BOOT` y `CTRL_ST_WAIT_PRECHARGE_ACK` | Parcial | Ya replica la salida por `ok_precarga || inv_dc_bus_voltage >= 300`, pero no la pauta temporal exacta del legacy. Referencias: `main_polling.c:534`, `Core/Src/control.c:112`, `Core/Src/control.c:272`, `Core/Src/control.c:292`. |
+| `HAL_FDCAN_RxFifo0Callback` monolitico | `CanRx_ParseAndUpdate()` + `Can_ISR_PushRxFifo0()` | Migrado | El parser principal activo `0x20/0x12C/0x461..0x466` esta portado, ahora discrimina por bus, y las rutas legacy de pedales por CAN ya se retiraron del runtime nuevo. Referencias: `main_polling.c:1738`, `Core/Src/can.c:70`. |
+| Espera inicial a configuracion Vdc del inversor | `CTRL_ST_WAIT_INV_VDC_CONFIG` | Migrado | Antes de entrar en precarga la FSM espera `TX_STATE_7/0x466`, como en el contrato legacy de arranque. Referencias: `main_polling.c:508`, `Core/Src/control.c:26`, `Core/Src/can.c:111`. |
+| Bucle de precarga `while (precarga_inv == 0 && inv_dc_bus_voltage < 300)` | `CTRL_ST_BOOT` y `CTRL_ST_WAIT_PRECHARGE_ACK` | Parcial avanzado | Ya replica la salida por `ok_precarga || inv_dc_bus_voltage >= 300` y arranca solo tras `inv_vdc_ready`, pero no la pauta temporal exacta del legacy. Referencias: `main_polling.c:534`, `Core/Src/control.c:116`, `Core/Src/control.c:287`, `Core/Src/control.c:303`. |
 | Espera boton + freno fisico | `CTRL_ST_WAIT_START_BRAKE` + `io_signals.c` | Parcial avanzado | Ya usa el umbral legacy `>900` y la ruta runtime alimenta `g_in` desde ADC/GPIO reales; falta validacion en placa y ajuste final del `.ioc` si algun pin cambia. Referencias: `main_polling.c:622`, `main_polling.c:645`, `Core/Src/control.c:6`, `Core/Src/io_signals.c:91`, `Core/Src/freertos.c:422`. |
 | RTDS 2 s por GPIO | `CTRL_ST_R2D_DELAY` + `io_signals.c` | Parcial avanzado | Ya se mantiene el retardo de 2 s y se conmuta la salida fisica a traves de `rtds_active`; falta validarla en hardware real. Referencias: `main_polling.c:662`, `Core/Src/control.c:315`, `Core/Src/io_signals.c:129`, `Core/Src/freertos.c:436`. |
 | Espera estados del inversor `3/4` y ramas `0/10/11/13` | FSM cooperativa en `Control_Step10ms()` | Migrado en logica | La FSM ya espera `inv_state == 3` antes de activar runtime y maneja `0/3/4/6/10/11/13` sin bloqueos. Referencias: `main_polling.c:682`, `main_polling.c:696`, `main_polling.c:2135`, `Core/Src/control.c:163`, `Core/Src/control.c:326`, `Core/Src/control.c:334`. |
 | `setTorque()` | `Control_ComputeTorque()` | Parcial avanzado | EV2.3, T11.8.9 y `v_celda_min` ya estan portados; siguen fuera del calculo otras protecciones aspiracionales no equivalentes al legacy. Referencias: `main_polling.c:1876`, `main_polling.c:1995`, `Core/Src/control.c:137`, `Core/Src/control.c:216`, `Core/Src/control.c:251`. |
-| ISR periodica TIM16 que emite CAN | `StartControlTask` + `StartCanTxTask` | Parcial avanzado | La logica existe, SIL ejecuta las tareas reales y TX ya va a 10 ms, pero sigue sin ser una ISR TIM16 real. Referencias: `main_polling.c:2041`, `Core/Src/freertos.c:307`, `Core/Src/freertos.c:311`. |
-| `TelFrame` + `tel_build_packet()` + `nrf24_tx32()` | `Telemetry_Build32()` + `Telemetry_Send32()` | No migrado | Formato, cadencia y transporte no coinciden. Referencias: `main_polling.c:2326`, `main_polling.c:2440`, `Core/Src/telemetry.c:4`, `Core/Src/telemetry.c:33`. |
+| ISR periodica TIM16 que emite CAN | `StartControlTask` + `StartCanTxTask` con `osDelayUntil` | Parcial avanzado | La logica existe, SIL ejecuta las tareas reales y TX ya va a 10 ms con fase fija, pero sigue sin ser una ISR TIM16 real. Referencias: `main_polling.c:2041`, `Core/Src/freertos.c:324`, `Core/Src/freertos.c:384`. |
+| `TelFrame` + `tel_build_packet()` + `nrf24_tx32()` | `TelemetryTask` + `Telemetry_BuildFrame()` + `Telemetry_TransportSend()` | Redisenado, no equivalente | La arquitectura RTOS ya esta separada en scheduler/builder/transport y eventos urgentes, pero formato, cadencia final y transporte legacy no coinciden todavia. Referencias: `main_polling.c:2326`, `main_polling.c:2440`, `Core/Src/telemetry.c:65`, `Core/Src/freertos.c:414`. |
 | ADC1/ADC2/DMA + GPIO start/brake | `io_signals.c` + `g_in` | Parcial avanzado | Ya existe adquisicion runtime equivalente basica sobre ADC3 y GPIO, desacoplada del `.ioc`; falta validarla en placa y decidir si hace falta DMA/filtrado adicional para paridad fina. Referencias: `main_polling.c:417`, `main_polling.c:625`, `main_polling.c:635`, `Core/Src/io_signals.c:24`, `Core/Src/io_signals.c:91`. |
 | Bring-up FDCAN/TIM real | `fdcan.c` + `tim.c` + `AppRuntime_InitStep()` | Parcial avanzado | Ya configura filtros en init y hace `Start/Notification/Start_IT` desde la `InitTask`; falta validarlo en placa y decidir si la emision periodica final debe quedar solo en tareas RTOS o tambien colgar de TIM16. Referencias: `main_polling.c:430`, `main_polling.c:438`, `main_polling.c:508`, `main_polling.c:1115`, `Core/Src/fdcan.c:32`, `Core/Src/fdcan.c:249`, `Core/Src/tim.c:228`, `Core/Src/freertos.c:433`. |
 
@@ -88,15 +91,15 @@ Los 5 gaps mas importantes ahora son:
    - Para igualarlo:
      validar en hardware real la secuencia ya portada y decidir el rol final de TIM16 en runtime.
 
-2. **La telemetria legacy no existe en el runtime actual.**
+2. **La telemetria legacy no existe 1:1 en el runtime actual.**
    - Legacy:
      empaqueta `TelFrame` y lo transmite por nRF24 con apoyo UART.
    - Actual:
-     solo empaqueta un buffer simple y `Telemetry_Send32()` es vacio en firmware real.
+     existe una tarea dedicada de baja prioridad con heartbeat fijo, serializacion propia y cola de eventos urgentes, pero `Telemetry_Send32()` sigue siendo el hook vacio en firmware real y el formato no es el `TelFrame` legacy.
    - Riesgo:
-     no hay equivalencia operativa ni observabilidad real.
+     no hay equivalencia operativa con el receptor legacy aunque la arquitectura interna ya sea mejor para FreeRTOS.
    - Para igualarlo:
-     portar `tel_build_packet()` y `tel_send_now()` como modo legacy.
+     decidir si se quiere modo legacy (`TelFrame` + nRF24) o consolidar el formato nuevo y migrar tambien al receptor.
 
 3. **La IO fisica de arranque/freno ya esta portada en una ruta base, pero falta validarla en placa.**
    - Legacy:
@@ -148,23 +151,23 @@ Los 5 gaps mas importantes ahora son:
    - Para igualarlo:
      validar en placa o mover la emision critica a la ruta hardware esperada.
 
-3. **La telemetria tiene otra cadencia.**
+3. **La telemetria ya tiene otra semantica, no solo otra cadencia.**
    - Legacy:
-     500 ms.
+     `TelFrame` rotativo cada 500 ms.
    - Actual:
-     100 ms.
+     heartbeat periodico a 100 ms y eventos inmediatos por cambio de estado/fault/shutdown.
    - Riesgo:
-     no rompe control, pero si integracion y ancho de banda.
+     si hay consumidores legacy, no basta con tocar el periodo: cambia tambien el contrato.
    - Para igualarlo:
-     restaurar 500 ms o introducir un modo `legacy_telemetry_period`.
+     o bien restaurar el modo legacy completo, o bien versionar el protocolo nuevo y migrar consumidores.
 
-4. **Sigue existiendo al menos una ruta compat CAN que no es 1:1 estricta.**
+4. **La equivalencia temporal exacta de precarga aun no esta cerrada.**
    - Ejemplo:
-     `0x100` todavia se acepta como RX compat para `inv_dc_bus_voltage`.
+     hoy la FSM ya espera `0x466` antes de precarga, pero la pauta exacta de emision `0x100/0x600` sigue siendo por tareas periodicas y no por la misma mecanica legacy.
    - Riesgo:
-     algun test puede seguir pasando por compatibilidad y no por equivalencia estricta.
+     un ACU muy sensible al ritmo exacto puede ver una secuencia distinta.
    - Para igualarlo:
-     decidir mas adelante si `0x100` debe mantenerse o retirarse cuando exista cobertura golden.
+     decidir si la pauta final debe ser solo RTOS o volver a colgar la emision critica del camino hardware legacy.
 
 ### Baja
 
@@ -194,7 +197,7 @@ Los 5 gaps mas importantes ahora son:
 | `0x464` | INV / FDCAN1 | RX | Temperaturas | Igual en `Core/Src/can.c:137` | OK |
 | `0x465` | INV / FDCAN1 | RX | Velocidad/corriente LE bytes `2..5` | Igual en `Core/Src/can.c:146` | OK |
 | `0x466` | INV / FDCAN1 | RX | Vdc LE bytes `2..3`, `dlc == 6` | Igual en `Core/Src/can.c:154` | OK |
-| `0x100` | ACU / FDCAN2 | TX | Vdc al AMS, ext ID, LE, 2 bytes | Emitido desde control, pero aun aceptado como RX compat | Parcial |
+| `0x100` | ACU / FDCAN2 | TX | Vdc al AMS, ext ID, LE, 2 bytes | Emitido desde control; la compat RX ya se retiro y la entrada real vuelve a ser `0x466` del inversor | Parcial avanzado |
 | `0x600` | ACU / FDCAN2 | TX | Boton de precarga, ext ID, 2 bytes | Emitido en `BOOT`/`WAIT_PRECHARGE_ACK`; falta pauta exacta legacy | Parcial |
 | `0x360` | INV / FDCAN1 | TX | Modo `0x01/0x04/0x06/0x13` segun estado | Ya emite `0x01/0x04/0x06/0x13` segun la FSM cooperativa | Parcial avanzado |
 | `0x362` | INV / FDCAN1 | TX | Torque cero o comando legacy bytes `2..3` | Formato portado; ahora el torque ya sale limitado por `v_celda_min` | Parcial avanzado |
@@ -215,14 +218,17 @@ Nota:
 - La logica EV2.3, T11.8.9 y la emision `0x360`/`0x362` estan cubiertas en tests.
 - La limitacion por `v_celda_min` ya tiene cobertura en zona lineal y zona critica.
   Referencias: `Core/Src/test_integration.c:782`, `Core/Src/test_integration.c:786`.
+- Existe un harness SIL especifico que valida la secuencia de arranque y las escrituras exactas al inversor para `state 3/4/6/10/11/13`.
+  Referencias: `tests/sil/sil_main.c:235`, `tests/sil/sil_main.c:926`.
 
 ### Que no demuestran
 
 - No validan el firmware completo ni el bring-up real de placa.
 - No prueban telemetria legacy `TelFrame` ni `nrf24_tx32()`.
 - No validan en placa la IO fisica real de arranque/freno ni RTDS por GPIO.
-- No existe aun comparacion golden de trazas contra `main_polling.c`.
+- No existe aun comparacion golden completa de trazas contra `main_polling.c`.
 - Las ramas de fault `10/11/13` existen en la logica, pero aun no tienen la misma profundidad de validacion que la secuencia nominal `3 -> 4 -> 6`.
+- Los unit tests siguen bloqueados en este entorno porque `tests/unit` depende de descargar Unity desde GitHub.
 
 ### Casos golden que faltan
 
@@ -239,10 +245,12 @@ Verificado localmente en SIL:
 - `cmake --build build-sil`
 - `.\build-sil\tests\sil\ecu08_sil.exe --test-integration`
 - `.\build-sil\tests\sil\ecu08_sil.exe --test-full-cycle`
+- `.\build-sil\tests\sil\ecu08_sil.exe --test-legacy-compat`
 
 Resultado:
-- `130/130` tests de integracion OK.
+- `134/134` tests de integracion OK.
 - `full-cycle` OK.
+- `legacy-compat` OK.
 
 Limite importante:
 - Los unit tests no se pudieron ejecutar aqui porque `tests/unit/CMakeLists.txt` descarga Unity desde GitHub y el entorno actual no tiene acceso de red.
@@ -258,8 +266,8 @@ Limite importante:
 ### Fase 2: cerrar perifericos, telemetria y hardware
 
 1. Validar en placa el bring-up real de FDCAN y TIM16 ya portado.
-2. Sustituir `Telemetry_Build32` por el `TelFrame` legacy y dar implementacion real a `Telemetry_Send32`.
-3. Recuperar, si forma parte del 1:1 esperado, UART de diagnostico y ruta nRF24/SD.
+2. Decidir contrato final de telemetria: mantener el formato nuevo con heartbeat+eventos o introducir un modo legacy `TelFrame` sobre nRF24.
+3. Dar implementacion real a `Telemetry_Send32` y, si aplica, recuperar UART de diagnostico y ruta nRF24/SD.
 
 ### Fase 3: validacion final
 
@@ -279,13 +287,15 @@ Limite importante:
 6. Alinear la tarea de CAN TX a 10 ms.
 7. Portar `HAL_FDCAN_ConfigFilter`, `HAL_FDCAN_Start`, `HAL_FDCAN_ActivateNotification` y `HAL_TIM_Base_Start_IT` dentro de zonas protegidas.
 8. Portar un puente fisico `ADC/GPIO -> g_in` y `rtds_active -> RTDS` sin tocar el `.ioc`.
+9. Separar telemetria en `TelemetryTask` dedicada con heartbeat periodico, serializacion propia y cola de eventos urgentes.
+10. Anadir un harness SIL de compatibilidad de arranque y escrituras al inversor.
 
 ### Pendiente
 
 1. Portar la salida de precarga exacta `0x100/0x600` con su cadencia legacy.
 2. Validar en placa la lectura real de freno, `START_FIL`, `APPS_1` y `APPS_2`.
 3. Validar en placa la salida RTDS y su polaridad.
-4. Portar `tel_build_packet()` y `tel_send_now()` al modulo nuevo y dar implementacion real a `Telemetry_Send32()`.
+4. Cerrar el contrato final de telemetria y, segun la decision, portar `tel_build_packet()`/`tel_send_now()` o migrar al nuevo formato versionado.
 5. Crear tests golden que comparen la nueva ruta con `main_polling.c` usando la misma secuencia de entradas.
 6. Revisar si `0x100 RX` debe seguir existiendo como compat o retirarse cuando haya cobertura golden.
 7. Vendorizar Unity o anadir mirror local para ejecutar `tests/unit` sin red.

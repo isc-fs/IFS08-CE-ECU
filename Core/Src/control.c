@@ -20,14 +20,15 @@
 static void out_push(control_out_t *out, const can_msg_t *m)
 {
   if (!out || !m) return;
-  if (out->count >= (uint8_t)(sizeof(out->msgs)/sizeof(out->msgs[0]))) return;
+  if (out->count >= (uint8_t)(sizeof(out->msgs) / sizeof(out->msgs[0]))) return;
   out->msgs[out->count++] = *m;
 }
 
 /* Control states: cooperative replacement for blocking while-loops in main.c */
 typedef enum
 {
-  CTRL_ST_BOOT = 0,
+  CTRL_ST_WAIT_INV_VDC_CONFIG = 0,
+  CTRL_ST_BOOT,
   CTRL_ST_WAIT_PRECHARGE_ACK,
   CTRL_ST_WAIT_START_BRAKE,
   CTRL_ST_R2D_DELAY,
@@ -43,8 +44,8 @@ static uint8_t s_flag_react;
 
 void Control_Init(void)
 {
-  s_state = CTRL_ST_BOOT;
-  s_r2d_start_tick = 0;
+  s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
+  s_r2d_start_tick = 0u;
   s_ev23_latched = 0u;
   s_flag_r2d = 0u;
   s_flag_react = 0u;
@@ -73,8 +74,8 @@ static void build_inv_mode_cmd(uint8_t mode, can_msg_t *m)
 {
   memset(m, 0, sizeof(*m));
   m->bus = CAN_BUS_INV;
-  m->id  = RX_SETPOINT_1;
-  m->dlc = 3;
+  m->id = RX_SETPOINT_1;
+  m->dlc = 3u;
   m->data[2] = mode;
 }
 
@@ -82,8 +83,8 @@ static void build_inv_torque_cmd(uint16_t legacy_torque, can_msg_t *m)
 {
   memset(m, 0, sizeof(*m));
   m->bus = CAN_BUS_INV;
-  m->id  = RX_SETPOINT_3;
-  m->dlc = 4;
+  m->id = RX_SETPOINT_3;
+  m->dlc = 4u;
   m->data[2] = (uint8_t)(legacy_torque & 0xFFu);
   m->data[3] = (uint8_t)((legacy_torque >> 8) & 0xFFu);
 }
@@ -92,9 +93,9 @@ static void build_acu_dc_bus_frame(uint16_t dc_bus_voltage, can_msg_t *m)
 {
   memset(m, 0, sizeof(*m));
   m->bus = CAN_BUS_ACU;
-  m->id  = ID_DC_BUS_VOLTAGE;
-  m->dlc = 2;
-  m->ide = 1;
+  m->id = ID_DC_BUS_VOLTAGE;
+  m->dlc = 2u;
+  m->ide = 1u;
   m->data[0] = (uint8_t)(dc_bus_voltage & 0xFFu);
   m->data[1] = (uint8_t)((dc_bus_voltage >> 8) & 0xFFu);
 }
@@ -103,9 +104,9 @@ static void build_acu_precharge_cmd(uint8_t button_pressed, can_msg_t *m)
 {
   memset(m, 0, sizeof(*m));
   m->bus = CAN_BUS_ACU;
-  m->id  = ID_PRECHARGE_CMD;
-  m->dlc = 2;
-  m->ide = 1;
+  m->id = ID_PRECHARGE_CMD;
+  m->dlc = 2u;
+  m->ide = 1u;
   m->data[0] = button_pressed ? 1u : 0u;
 }
 
@@ -113,6 +114,12 @@ static uint8_t precharge_complete(const app_inputs_t *in)
 {
   if (!in) return 0u;
   return (uint8_t)((in->ok_precarga != 0u) || (in->inv_dc_bus_voltage >= UMBRAL_DC_BUS_PRECARGA));
+}
+
+static uint8_t inverter_vdc_configured(const app_inputs_t *in)
+{
+  if (!in) return 0u;
+  return (uint8_t)(in->inv_vdc_ready != 0u);
 }
 
 static void emit_inv_mode(control_out_t *out, uint8_t mode)
@@ -214,13 +221,20 @@ static void emit_legacy_inverter_runtime(const app_inputs_t *in, control_out_t *
 /* Port of legacy main_polling.c torque mapping, but exposed here as 0..100%. */
 uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uint8_t *flag_t11_8_9)
 {
-  if (!in) return 0;
+  uint16_t s1_pct;
+  uint16_t s2_pct;
+  uint16_t torque;
 
-  uint16_t s1_pct = saturate_pct(((float)in->s1_aceleracion - 2050.0f) / (29.5f - 20.5f));
-  uint16_t s2_pct = saturate_pct(((float)in->s2_aceleracion - 1915.0f) / (25.70f - 19.15f));
+  if (!in) return 0u;
 
-  uint16_t torque = 0;
-  if (s1_pct > 8u && s2_pct > 8u) torque = (uint16_t)((s1_pct + s2_pct) / 2u);
+  s1_pct = saturate_pct(((float)in->s1_aceleracion - 2050.0f) / (29.5f - 20.5f));
+  s2_pct = saturate_pct(((float)in->s2_aceleracion - 1915.0f) / (25.70f - 19.15f));
+
+  torque = 0u;
+  if (s1_pct > 8u && s2_pct > 8u)
+  {
+    torque = (uint16_t)((s1_pct + s2_pct) / 2u);
+  }
 
   if (torque < 10u) torque = 0u;
   else if (torque > 90u) torque = 100u;
@@ -256,89 +270,115 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 /* Main 10ms step */
 void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
 {
+  uint8_t ev23 = 0u;
+  uint8_t t1189 = 0u;
+  uint8_t rerun = 0u;
+  uint8_t guard = 0u;
+  uint16_t torque = 0u;
+
   if (!in || !out) return;
   memset(out, 0, sizeof(*out));
 
   /* Torque computation from inputs (used only in RUN state) */
-  uint8_t ev23 = 0, t1189 = 0;
-  uint16_t torque = Control_ComputeTorque(in, &ev23, &t1189);
+  torque = Control_ComputeTorque(in, &ev23, &t1189);
   out->flag_ev_2_3 = ev23;
   out->flag_t11_8_9 = t1189;
   /* out->torque_pct stays 0 until the inverter reaches torque state */
 
-  switch (s_state)
+  for (guard = 0u; guard < 4u; guard++)
   {
-    case CTRL_ST_BOOT:
-      if (precharge_complete(in))
-      {
-        s_state = CTRL_ST_WAIT_START_BRAKE;
-      }
-      else
-      {
-        can_msg_t dc_bus_cmd;
-        build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
-        out_push(out, &dc_bus_cmd);
-        if (in->boton_arranque)
+    rerun = 0u;
+
+    switch (s_state)
+    {
+      case CTRL_ST_WAIT_INV_VDC_CONFIG:
+        if (inverter_vdc_configured(in))
         {
-          can_msg_t precharge_cmd;
-          build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
-          out_push(out, &precharge_cmd);
+          s_state = CTRL_ST_BOOT;
+          rerun = 1u;
         }
-        s_state = CTRL_ST_WAIT_PRECHARGE_ACK;
-      }
-      break;
+        break;
 
-    case CTRL_ST_WAIT_PRECHARGE_ACK:
-      if (precharge_complete(in))
-      {
-        s_state = CTRL_ST_WAIT_START_BRAKE;
-      }
-      else
-      {
-        can_msg_t dc_bus_cmd;
-        build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
-        out_push(out, &dc_bus_cmd);
-        if (in->boton_arranque)
+      case CTRL_ST_BOOT:
+        if (precharge_complete(in))
         {
-          can_msg_t precharge_cmd;
-          build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
-          out_push(out, &precharge_cmd);
+          s_state = CTRL_ST_WAIT_START_BRAKE;
+          rerun = 1u;
         }
-      }
-      break;
+        else
+        {
+          can_msg_t dc_bus_cmd;
+          build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
+          out_push(out, &dc_bus_cmd);
+          if (in->boton_arranque)
+          {
+            can_msg_t precharge_cmd;
+            build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
+            out_push(out, &precharge_cmd);
+          }
+          s_state = CTRL_ST_WAIT_PRECHARGE_ACK;
+        }
+        break;
 
-    case CTRL_ST_WAIT_START_BRAKE:
-      if (in->boton_arranque && in->s_freno > UMBRAL_FRENO_ARRANQUE)
-      {
-        s_r2d_start_tick = osKernelGetTickCount();
-        s_flag_r2d = 1u;
-        out->rtds_active = 1u;
-        s_state = CTRL_ST_R2D_DELAY;
-      }
-      break;
+      case CTRL_ST_WAIT_PRECHARGE_ACK:
+        if (precharge_complete(in))
+        {
+          s_state = CTRL_ST_WAIT_START_BRAKE;
+          rerun = 1u;
+        }
+        else
+        {
+          can_msg_t dc_bus_cmd;
+          build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
+          out_push(out, &dc_bus_cmd);
+          if (in->boton_arranque)
+          {
+            can_msg_t precharge_cmd;
+            build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
+            out_push(out, &precharge_cmd);
+          }
+        }
+        break;
 
-    case CTRL_ST_R2D_DELAY:
-      if ((osKernelGetTickCount() - s_r2d_start_tick) >= 2000u)
-      {
-        s_state = CTRL_ST_WAIT_INV_STANDBY;
-      }
-      else
-      {
-        out->rtds_active = 1u;
-      }
-      break;
+      case CTRL_ST_WAIT_START_BRAKE:
+        if (in->boton_arranque && in->s_freno > UMBRAL_FRENO_ARRANQUE)
+        {
+          s_r2d_start_tick = osKernelGetTickCount();
+          s_flag_r2d = 1u;
+          out->rtds_active = 1u;
+          s_state = CTRL_ST_R2D_DELAY;
+        }
+        break;
 
-    case CTRL_ST_WAIT_INV_STANDBY:
-      if (in->inv_state == 3u)
-      {
-        s_state = CTRL_ST_ACTIVE;
+      case CTRL_ST_R2D_DELAY:
+        if ((osKernelGetTickCount() - s_r2d_start_tick) >= 2000u)
+        {
+          s_state = CTRL_ST_WAIT_INV_STANDBY;
+          rerun = 1u;
+        }
+        else
+        {
+          out->rtds_active = 1u;
+        }
+        break;
+
+      case CTRL_ST_WAIT_INV_STANDBY:
+        if (in->inv_state == 3u)
+        {
+          s_state = CTRL_ST_ACTIVE;
+          emit_legacy_inverter_runtime(in, out, torque);
+        }
+        break;
+
+      case CTRL_ST_ACTIVE:
+      default:
         emit_legacy_inverter_runtime(in, out, torque);
-      }
-      break;
+        break;
+    }
 
-    case CTRL_ST_ACTIVE:
-    default:
-      emit_legacy_inverter_runtime(in, out, torque);
+    if (rerun == 0u)
+    {
       break;
+    }
   }
 }

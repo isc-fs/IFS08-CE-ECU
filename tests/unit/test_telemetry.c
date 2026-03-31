@@ -8,6 +8,7 @@ TEST_GROUP(Telemetry);
 void setUp(void)
 {
     mock_tick_reset();
+    Telemetry_Init();
 }
 
 void tearDown(void)
@@ -221,6 +222,48 @@ TEST(Telemetry, build32_multiple_calls)
     TEST_ASSERT_EQUAL_MEMORY(out1, out2, 32);
 }
 
+TEST(Telemetry, build_frame_heartbeat_metadata)
+{
+    app_inputs_t in = mock_input_nominal();
+    telemetry_frame_t frame;
+
+    Telemetry_BuildFrame(&in, NULL, &frame);
+
+    TEST_ASSERT_EQUAL_INT(TELEMETRY_FRAME_HEARTBEAT, frame.kind);
+    TEST_ASSERT_EQUAL_INT(0, frame.sequence);
+    TEST_ASSERT_EQUAL_INT(in.inv_state, frame.snapshot.inv_state);
+    TEST_ASSERT_EQUAL_INT(in.inv_dc_bus_voltage, frame.snapshot.inv_dc_bus_voltage);
+    TEST_ASSERT_EQUAL_INT(TELEMETRY_EVENT_NONE, frame.event.type);
+}
+
+TEST(Telemetry, serialize_event_frame_metadata)
+{
+    app_inputs_t in = mock_input_inverter_fault();
+    telemetry_event_t event = {
+        .type = TELEMETRY_EVENT_FAULT,
+        .previous_inv_state = 6,
+        .current_inv_state = 10,
+        .inv_error = 7,
+        .tick_ms = 1234
+    };
+    telemetry_frame_t frame;
+    uint8_t out[32];
+
+    Telemetry_BuildFrame(&in, &event, &frame);
+    Telemetry_SerializeFrame(&frame, out);
+
+    TEST_ASSERT_EQUAL_INT(1, out[16]);                         /* version */
+    TEST_ASSERT_EQUAL_INT(TELEMETRY_FRAME_EVENT, out[17]);     /* kind */
+    TEST_ASSERT_EQUAL_INT(TELEMETRY_EVENT_FAULT, out[18]);     /* event type */
+    TEST_ASSERT_EQUAL_INT(6, out[19]);                         /* previous state */
+    TEST_ASSERT_EQUAL_INT(10, out[20]);                        /* current state */
+    TEST_ASSERT_EQUAL_INT(7, out[21]);                         /* error code */
+    TEST_ASSERT_EQUAL_INT(0, out[22]);                         /* sequence low */
+    TEST_ASSERT_EQUAL_INT(0, out[23]);                         /* sequence high */
+    TEST_ASSERT_EQUAL_INT(0xD2, out[24]);                      /* tick low */
+    TEST_ASSERT_EQUAL_INT(0x04, out[25]);                      /* tick high */
+}
+
 TEST_GROUP_RUNNER(Telemetry)
 {
     RUN_TEST_CASE(Telemetry, build32_nominal);
@@ -232,4 +275,6 @@ TEST_GROUP_RUNNER(Telemetry)
     RUN_TEST_CASE(Telemetry, build32_unused_fields_zeroed);
     RUN_TEST_CASE(Telemetry, build32_little_endian_verification);
     RUN_TEST_CASE(Telemetry, build32_multiple_calls);
+    RUN_TEST_CASE(Telemetry, build_frame_heartbeat_metadata);
+    RUN_TEST_CASE(Telemetry, serialize_event_frame_metadata);
 }

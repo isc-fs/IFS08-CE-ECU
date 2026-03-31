@@ -141,6 +141,20 @@ TEST(ControlLogic, control_step_boot_to_precharge)
     TEST_ASSERT_EQUAL_HEX8((uint8_t)((in.inv_dc_bus_voltage >> 8) & 0xFFu), out.msgs[0].data[1]);
 }
 
+TEST(ControlLogic, control_step_waits_for_vdc_config_before_precharge)
+{
+    app_inputs_t in = mock_input_nominal();
+    control_out_t out = {0};
+
+    in.inv_vdc_ready = 0;
+    in.ok_precarga = 0;
+
+    Control_Step10ms(&in, &out);
+
+    TEST_ASSERT_EQUAL_INT(0, out.count);
+    TEST_ASSERT_EQUAL_INT(0, out.torque_pct);
+}
+
 TEST(ControlLogic, control_step_precharge_button_emits_request_frame)
 {
     app_inputs_t in = mock_input_nominal();
@@ -306,6 +320,7 @@ TEST_GROUP_RUNNER(ControlLogic)
     RUN_TEST_CASE(ControlLogic, ev23_brake_throttle_release_latch);
     RUN_TEST_CASE(ControlLogic, t1189_sensor_mismatch_zeroes_torque);
     RUN_TEST_CASE(ControlLogic, control_step_boot_to_precharge);
+    RUN_TEST_CASE(ControlLogic, control_step_waits_for_vdc_config_before_precharge);
     RUN_TEST_CASE(ControlLogic, control_step_precharge_button_emits_request_frame);
     RUN_TEST_CASE(ControlLogic, control_step_waits_for_inverter_standby_before_runtime_commands);
     RUN_TEST_CASE(ControlLogic, control_step_enables_rtds_during_r2d_delay);

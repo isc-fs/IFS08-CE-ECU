@@ -16,6 +16,7 @@ typedef struct
   /* Inverter feedback */
   uint8_t  inv_state;        /* e.g. standby/ready/fault (project-specific) */
   uint16_t inv_dc_bus_voltage; /* raw / scaled, project-specific */
+  uint8_t  inv_vdc_ready;    /* legacy TX_STATE_7 (0x466) already observed */
   int16_t  inv_motor_temp;
   int16_t  inv_igbt_temp;
   int16_t  inv_air_temp;

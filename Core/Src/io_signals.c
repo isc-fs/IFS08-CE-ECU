@@ -1,5 +1,9 @@
 #include "io_signals.h"
 
+#if (IO_DRIVER_INPUTS_SOURCE != IO_DRIVER_INPUTS_SOURCE_LOCAL_IO)
+#error "Production firmware currently supports only local ADC/GPIO driver inputs."
+#endif
+
 #ifndef SIL_BUILD
 #include "adc.h"
 #include "app_state.h"
@@ -97,6 +101,7 @@ void IoSignals_InputStep(void)
 
   start_pressed = (HAL_GPIO_ReadPin(IO_START_GPIO_Port, IO_START_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
+  /* Production definition: driver inputs come from local IO, not CAN3. */
   if (io_adc_read_channel(IO_ADC_BRAKE_CH, &brake_raw) != HAL_OK)
   {
     brake_raw = g_in.s_freno;
@@ -158,6 +163,7 @@ void IoSignals_InputStep(void)
   uint16_t apps1_raw = SIL_IO_GetApps1Raw();
   uint16_t apps2_raw = SIL_IO_GetApps2Raw();
 
+  /* SIL mirrors the production architecture: local driver inputs only. */
   if (g_inMutex) {
     (void)osMutexAcquire(g_inMutex, osWaitForever);
   }

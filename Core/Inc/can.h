@@ -17,7 +17,7 @@ typedef enum
 {
   CAN_BUS_INV  = 1,  /* inverter */
   CAN_BUS_ACU  = 2,  /* accumulator */
-  CAN_BUS_DASH = 3   /* dashboard / misc */
+  CAN_BUS_DASH = 3   /* misc / reserved; no driver inputs in production */
 } can_bus_t;
 
 typedef struct

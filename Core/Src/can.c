@@ -8,7 +8,6 @@ extern FDCAN_HandleTypeDef hfdcan3;
 
 /* ==== Project CAN IDs (from your VCU header; keep as defines) ==== */
 #define ID_ACK_PRECARGA        0x20u
-#define ID_DC_BUS_VOLTAGE      0x100u
 #define ID_V_CELDA_MIN         0x12Cu
 
 #define TX_STATE_2             0x461u
@@ -71,69 +70,83 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
 {
   if (!m || !st) return;
 
-  switch (m->id)
+  switch (m->bus)
   {
-    case ID_ACK_PRECARGA:
-      /* Legacy polling firmware treated ACK=0 as "precharge complete". */
-      st->ok_precarga = (m->data[0] == 0u) ? 1u : 0u;
-      break;
-
-    case ID_DC_BUS_VOLTAGE:
-      /* Compatibility path kept for the simplified tests/protocol. */
-      st->inv_dc_bus_voltage = read_u16_le(m->data);
-      break;
-
-    case ID_V_CELDA_MIN:
-      /* Legacy ACU frame is big-endian. */
-      st->v_celda_min = read_u16_be(m->data);
-      break;
-
-    case TX_STATE_2:
-      st->inv_state = (uint8_t)(m->data[4] & 0x0Fu);
-      if (st->inv_state == 10u || st->inv_state == 11u)
+    case CAN_BUS_INV:
+      switch (m->id)
       {
-        st->inv_error = m->data[2];
+        case TX_STATE_2:
+          st->inv_state = (uint8_t)(m->data[4] & 0x0Fu);
+          if (st->inv_state == 10u || st->inv_state == 11u)
+          {
+            st->inv_error = m->data[2];
+          }
+          break;
+
+        case TX_STATE_4:
+          if (m->dlc == 8u)
+          {
+            uint32_t raw = (((uint32_t)m->data[7] & 0x0Fu) << 16)
+                         | ((uint32_t)m->data[6] << 8)
+                         | (uint32_t)m->data[5];
+            if ((raw & 0x80000u) != 0u)
+            {
+              raw |= 0xFFF00000u;
+            }
+            st->inv_rpm = (int32_t)raw;
+          }
+          break;
+
+        case TX_STATE_5:
+          if (m->dlc == 8u)
+          {
+            st->inv_motor_temp = (int16_t)m->data[0];
+            st->inv_igbt_temp  = (int16_t)m->data[1];
+            st->inv_air_temp   = (int16_t)m->data[2];
+          }
+          break;
+
+        case TX_STATE_6:
+          if (m->dlc == 8u)
+          {
+            st->inv_speed_actual   = (int32_t)read_u16_le(&m->data[2]);
+            st->inv_current_actual = (int32_t)read_u16_le(&m->data[4]);
+          }
+          break;
+
+        case TX_STATE_7:
+          if (m->dlc == 6u)
+          {
+            st->inv_dc_bus_voltage = read_u16_le(&m->data[2]);
+            st->inv_vdc_ready = 1u;
+          }
+          break;
+
+        default:
+          break;
       }
       break;
 
-    case TX_STATE_4:
-      if (m->dlc == 8u)
+    case CAN_BUS_ACU:
+      switch (m->id)
       {
-        uint32_t raw = (((uint32_t)m->data[7] & 0x0Fu) << 16)
-                     | ((uint32_t)m->data[6] << 8)
-                     | (uint32_t)m->data[5];
-        if ((raw & 0x80000u) != 0u)
-        {
-          raw |= 0xFFF00000u;
-        }
-        st->inv_rpm = (int32_t)raw;
+        case ID_ACK_PRECARGA:
+          /* Legacy polling firmware treated ACK=0 as "precharge complete". */
+          st->ok_precarga = (m->data[0] == 0u) ? 1u : 0u;
+          break;
+
+        case ID_V_CELDA_MIN:
+          /* Legacy ACU frame is big-endian. */
+          st->v_celda_min = read_u16_be(m->data);
+          break;
+
+        default:
+          break;
       }
       break;
 
-    case TX_STATE_5:
-      if (m->dlc == 8u)
-      {
-        st->inv_motor_temp = (int16_t)m->data[0];
-        st->inv_igbt_temp  = (int16_t)m->data[1];
-        st->inv_air_temp   = (int16_t)m->data[2];
-      }
-      break;
-
-    case TX_STATE_6:
-      if (m->dlc == 8u)
-      {
-        st->inv_speed_actual   = (int32_t)read_u16_le(&m->data[2]);
-        st->inv_current_actual = (int32_t)read_u16_le(&m->data[4]);
-      }
-      break;
-
-    case TX_STATE_7:
-      if (m->dlc == 6u)
-      {
-        st->inv_dc_bus_voltage = read_u16_le(&m->data[2]);
-      }
-      break;
-
+    case CAN_BUS_DASH:
+      /* Production definition: bus 3 is not a source of APPS/brake/start. */
     default:
       break;
   }
