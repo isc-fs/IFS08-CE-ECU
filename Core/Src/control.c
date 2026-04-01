@@ -1,7 +1,14 @@
 #include "control.h"
 #include <string.h>
 
-/* Thresholds from your VCU header */
+/* APPS calibration — measure raw ADC at pedal min and max when mounted.
+ * Formula: pct = (raw - MIN) / (MAX - MIN) * 100  →  saturated 0..100. */
+#define APPS1_ADC_MIN  2050u   /* raw ADC at 0% pedal travel, sensor 1 — PENDING CALIBRATION */
+#define APPS1_ADC_MAX  2950u   /* raw ADC at 100% pedal travel, sensor 1 — PENDING CALIBRATION */
+#define APPS2_ADC_MIN  1915u   /* raw ADC at 0% pedal travel, sensor 2 — PENDING CALIBRATION */
+#define APPS2_ADC_MAX  2570u   /* raw ADC at 100% pedal travel, sensor 2 — PENDING CALIBRATION */
+
+/* Thresholds */
 #define UMBRAL_FRENO_APPS 3000u
 #define UMBRAL_FRENO_ARRANQUE 900u
 #define UMBRAL_DC_BUS_PRECARGA 300u
@@ -15,6 +22,7 @@
 #define INV_MODE_RESET    0x13u
 #define VMIN_FULL_TORQUE  3500u
 #define VMIN_MIN_TORQUE   2800u
+#define PRECHARGE_TIMEOUT_MS 10000u
 
 /* Very small helper */
 static void out_push(control_out_t *out, const can_msg_t *m)
@@ -38,6 +46,7 @@ typedef enum
 
 static ctrl_state_t s_state;
 static uint32_t s_r2d_start_tick;
+static uint32_t s_precharge_start_tick;
 static uint8_t s_ev23_latched;
 static uint8_t s_flag_r2d;
 static uint8_t s_flag_react;
@@ -46,6 +55,7 @@ void Control_Init(void)
 {
   s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
   s_r2d_start_tick = 0u;
+  s_precharge_start_tick = 0u;
   s_ev23_latched = 0u;
   s_flag_r2d = 0u;
   s_flag_react = 0u;
@@ -227,8 +237,10 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 
   if (!in) return 0u;
 
-  s1_pct = saturate_pct(((float)in->s1_aceleracion - 2050.0f) / (29.5f - 20.5f));
-  s2_pct = saturate_pct(((float)in->s2_aceleracion - 1915.0f) / (25.70f - 19.15f));
+  s1_pct = saturate_pct(((float)in->s1_aceleracion - (float)APPS1_ADC_MIN) /
+                        ((float)(APPS1_ADC_MAX - APPS1_ADC_MIN) / 100.0f));
+  s2_pct = saturate_pct(((float)in->s2_aceleracion - (float)APPS2_ADC_MIN) /
+                        ((float)(APPS2_ADC_MAX - APPS2_ADC_MIN) / 100.0f));
 
   torque = 0u;
   if (s1_pct > 8u && s2_pct > 8u)
@@ -316,6 +328,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
             build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
             out_push(out, &precharge_cmd);
           }
+          s_precharge_start_tick = osKernelGetTickCount();
           s_state = CTRL_ST_WAIT_PRECHARGE_ACK;
         }
         break;
@@ -324,6 +337,12 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         if (precharge_complete(in))
         {
           s_state = CTRL_ST_WAIT_START_BRAKE;
+          rerun = 1u;
+        }
+        else if ((osKernelGetTickCount() - s_precharge_start_tick) >= PRECHARGE_TIMEOUT_MS)
+        {
+          /* Precharge did not complete in time — retry from BOOT. */
+          s_state = CTRL_ST_BOOT;
           rerun = 1u;
         }
         else
