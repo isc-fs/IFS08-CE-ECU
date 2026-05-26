@@ -29,6 +29,32 @@ typedef struct
   uint16_t v_celda_min;      /* raw / scaled */
   uint8_t  ok_precarga;      /* ack from ACU, etc. */
 
+  /* Battery expansion */
+  uint8_t  soc;              /* 0..100 or project-specific scaling */
+  uint16_t vmin_modulo[5];
+  uint16_t vmax_modulo[5];
+  int16_t  corriente_accu;
+  int16_t  corriente_dcdc;
+  uint16_t temp_dcdc;
+  uint16_t temp_max_modulo[5];
+
+  /* IMU */
+  int16_t  imu_accel_xyz[3];
+  int16_t  imu_gyro_xyz[3];
+  int16_t  imu_roll_deg;
+  int16_t  imu_pitch_deg;
+  int16_t  imu_yaw_deg;
+
+  /* GPS */
+  uint16_t gps_speed;
+  uint16_t gps_course_deg;
+  int32_t  gps_altitude;
+  uint8_t  gps_fix_type;
+  uint8_t  gps_sat_count;
+  uint16_t gps_hdop;
+  int32_t  gps_latitude;
+  int32_t  gps_longitude;
+
   /* Safety / plausibility flags */
   uint8_t flag_EV_2_3;
   uint8_t flag_T11_8_9;

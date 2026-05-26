@@ -14,5 +14,8 @@ void AppRuntime_CanRxStep(void);
 void AppRuntime_CanTxStep(void);
 void AppRuntime_TelemetryStep(void);
 void AppRuntime_TelemetryEventStep(const telemetry_event_t *event);
+void AppRuntime_RadioTxStep(void);
+void AppRuntime_SdLogStep(void);
+void AppRuntime_DashStep(void);
 
 #endif /* APP_RUNTIME_H */

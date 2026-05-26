@@ -149,9 +149,10 @@ void TelemetryTask(void *argument)
 
   const uint32_t period = ms_to_ticks(100);
   uint32_t next = osKernelGetTickCount();
+  uint8_t slow_divider = 4U;
 
   app_inputs_t in_snap;
-  uint8_t payload[32];
+  telemetry_frame_t frame;
 
   for (;;)
   {
@@ -162,8 +163,18 @@ void TelemetryTask(void *argument)
     in_snap = g_in;
     osMutexRelease(g_inMutex);
 
-    Telemetry_Build32(&in_snap, payload);
-    Telemetry_Send32(payload);
+    Telemetry_BuildFrame(&in_snap, NULL, &frame);
+
+    slow_divider++;
+    if (slow_divider >= 5U)
+    {
+      slow_divider = 0U;
+      (void)Telemetry_EnqueueFrameTargets(&frame, 1U, 1U, 1U);
+    }
+    else
+    {
+      (void)Telemetry_EnqueueFrameTargets(&frame, 0U, 0U, 1U);
+    }
   }
 }
 

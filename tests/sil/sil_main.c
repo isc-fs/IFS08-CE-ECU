@@ -64,6 +64,11 @@ void Telemetry_Send32(const uint8_t payload[32])
     }
 }
 
+void Telemetry_SdStore32(const uint8_t payload[32])
+{
+    (void)payload;
+}
+
 static void sil_check(int condition, const char *message)
 {
     if (condition) {

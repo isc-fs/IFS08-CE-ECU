@@ -192,6 +192,9 @@ osMutexId_t g_inMutex = NULL;
 osMessageQueueId_t canRxQueueHandle = NULL;
 osMessageQueueId_t canTxQueueHandle = NULL;
 osMessageQueueId_t telemetryEventQueueHandle = NULL;
+osMessageQueueId_t telemetryRadioQueueHandle = NULL;
+osMessageQueueId_t telemetrySdQueueHandle = NULL;
+osMessageQueueId_t telemetryDashQueueHandle = NULL;
 
 /* Stubs de app_state.c */
 app_inputs_t g_in = {0};

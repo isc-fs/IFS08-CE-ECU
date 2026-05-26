@@ -23,9 +23,9 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "can.h"        /* can_qitem16_t, CAN_Pack16, etc.          */
-#include "diag.h"        /* Diag_Log                                  */
-#include "telemetry.h"   /* Telemetry task + frame/event plumbing     */
-#include "test_integration.h"  /* Integration tests – modo HIL (hardware)  */
+#include "diag.h"       /* Diag_Log                                  */
+#include "telemetry.h"  /* Telemetry task + frame/event plumbing     */
+#include "test_integration.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -33,6 +33,7 @@
 #include "app_runtime.h"
 #include "control.h"
 #include "io_signals.h"
+#include <string.h>
 #ifndef SIL_BUILD
 extern HAL_StatusTypeDef FDCAN_RuntimeBringUp(void);
 #endif
@@ -58,6 +59,8 @@ typedef struct
 } app_periodic_state_t;
 
 static uint32_t s_periodic_generation;
+static uint8_t s_telemetry_radio_divider;
+static uint8_t s_telemetry_sd_divider;
 
 static uint32_t app_ms_to_ticks(uint32_t ms)
 {
@@ -95,6 +98,41 @@ static uint8_t app_tick_reached(uint32_t now, uint32_t deadline)
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+osThreadId_t RadioTxTaskHandle;
+const osThreadAttr_t RadioTxTask_attributes = {
+  .name = "RadioTxTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+
+osThreadId_t SdLogTaskHandle;
+const osThreadAttr_t SdLogTask_attributes = {
+  .name = "SdLogTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+
+osThreadId_t DashTaskHandle;
+const osThreadAttr_t DashTask_attributes = {
+  .name = "DashTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
+
+osMessageQueueId_t telemetryRadioQueueHandle;
+const osMessageQueueAttr_t telemetryRadioQueue_attributes = {
+  .name = "telemetryRadioQueue"
+};
+
+osMessageQueueId_t telemetrySdQueueHandle;
+const osMessageQueueAttr_t telemetrySdQueue_attributes = {
+  .name = "telemetrySdQueue"
+};
+
+osMessageQueueId_t telemetryDashQueueHandle;
+const osMessageQueueAttr_t telemetryDashQueue_attributes = {
+  .name = "telemetryDashQueue"
+};
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -173,6 +211,9 @@ const osMessageQueueAttr_t telemetryEventQueue_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+void StartRadioTxTask(void *argument);
+void StartSdLogTask(void *argument);
+void StartDashTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -196,6 +237,7 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+  Diag_Log("RTOS: MX_FREERTOS_Init enter");
 
   /* USER CODE END Init */
 
@@ -209,6 +251,7 @@ void MX_FREERTOS_Init(void) {
   /* Mutex global de acceso a g_in (app_state). DEBE crearse antes de
    * cualquier tarea que llame AppState_Snapshot / AppState_Init.       */
   g_inMutex = osMutexNew(NULL);
+  Diag_Log("RTOS: g_inMutex %s", (g_inMutex != NULL) ? "ok" : "FAIL");
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -221,50 +264,74 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* creation of canRxQueue */
+  canRxQueueHandle = osMessageQueueNew(128, sizeof(can_qitem16_t), NULL);
+  Diag_Log("RTOS: canRxQueue %s", (canRxQueueHandle != NULL) ? "ok" : "FAIL");
 
+  /* creation of canTxQueue */
+  canTxQueueHandle = osMessageQueueNew(64, sizeof(can_qitem16_t), NULL);
+  Diag_Log("RTOS: canTxQueue %s", (canTxQueueHandle != NULL) ? "ok" : "FAIL");
 
-canRxQueueHandle = osMessageQueueNew(128, sizeof(can_qitem16_t), NULL);
-canTxQueueHandle = osMessageQueueNew(64,  sizeof(can_qitem16_t), NULL);
-telemetryEventQueueHandle = osMessageQueueNew(32, sizeof(telemetry_event_t), NULL);
-
+  /* creation of telemetryEventQueue */
+  telemetryEventQueueHandle = osMessageQueueNew(32, sizeof(telemetry_event_t), NULL);
+  Diag_Log("RTOS: telemetryEventQueue %s", (telemetryEventQueueHandle != NULL) ? "ok" : "FAIL");
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+telemetryRadioQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
+telemetrySdQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
+telemetryDashQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
+  Diag_Log("RTOS: telemetryRadioQueue %s", (telemetryRadioQueueHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: telemetrySdQueue %s", (telemetrySdQueueHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: telemetryDashQueue %s", (telemetryDashQueueHandle != NULL) ? "ok" : "FAIL");
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  Diag_Log("RTOS: defaultTask %s", (defaultTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of App_InitTask */
   App_InitTaskHandle = osThreadNew(StartAppInitTask, NULL, &App_InitTask_attributes);
+  Diag_Log("RTOS: App_InitTask %s", (App_InitTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of ControlTask */
   ControlTaskHandle = osThreadNew(StartControlTask, NULL, &ControlTask_attributes);
+  Diag_Log("RTOS: ControlTask %s", (ControlTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of CanRxTask */
   CanRxTaskHandle = osThreadNew(StartCanRxTask, NULL, &CanRxTask_attributes);
+  Diag_Log("RTOS: CanRxTask %s", (CanRxTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of CanTxTask */
   CanTxTaskHandle = osThreadNew(StartCanTxTask, NULL, &CanTxTask_attributes);
+  Diag_Log("RTOS: CanTxTask %s", (CanTxTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of TelemetryTask */
   TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
+  Diag_Log("RTOS: TelemetryTask %s", (TelemetryTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of DiagTask */
   DiagTaskHandle = osThreadNew(StartDiagTask, NULL, &DiagTask_attributes);
+  Diag_Log("RTOS: DiagTask %s", (DiagTaskHandle != NULL) ? "ok" : "FAIL");
 
   /* creation of IntegrationTestTask */
 #ifdef APP_ENABLE_INTEGRATION_TEST_TASK
 #ifndef SIL_USE_THREAD_SCHEDULER
   IntegrationTestTaskHandle = osThreadNew(StartIntegrationTestTask, NULL, &IntegrationTestTask_attributes);
+  Diag_Log("RTOS: IntegrationTestTask %s", (IntegrationTestTaskHandle != NULL) ? "ok" : "FAIL");
 #else
   IntegrationTestTaskHandle = NULL;
+  Diag_Log("RTOS: IntegrationTestTask skipped in SIL scheduler");
 #endif
 #endif
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  RadioTxTaskHandle = osThreadNew(StartRadioTxTask, NULL, &RadioTxTask_attributes);
+  SdLogTaskHandle = osThreadNew(StartSdLogTask, NULL, &SdLogTask_attributes);
+  DashTaskHandle = osThreadNew(StartDashTask, NULL, &DashTask_attributes);
+  Diag_Log("RTOS: RadioTxTask %s", (RadioTxTaskHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: SdLogTask %s", (SdLogTaskHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: DashTask %s", (DashTaskHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: MX_FREERTOS_Init exit");
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -284,6 +351,7 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   (void)argument;
+  Diag_Log("TASK: defaultTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   osDelay(1);
   return;
@@ -307,6 +375,7 @@ void StartAppInitTask(void *argument)
 {
   /* USER CODE BEGIN StartAppInitTask */
   (void)argument;
+  Diag_Log("TASK: App_InitTask enter");
   AppRuntime_InitStep();
   // Exit this init task - scheduler will run other tasks
   osThreadExit();
@@ -326,6 +395,7 @@ void StartControlTask(void *argument)
   /* USER CODE BEGIN StartControlTask */
   /* Control loop: 10ms period (100Hz) */
   (void)argument;
+  Diag_Log("TASK: ControlTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   static app_periodic_state_t s_control_periodic = {0};
   AppRuntime_ControlStep();
@@ -356,6 +426,7 @@ void StartCanRxTask(void *argument)
   /* USER CODE BEGIN StartCanRxTask */
   /* CAN Receive task: 5ms period */
   (void)argument;
+  Diag_Log("TASK: CanRxTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   static app_periodic_state_t s_can_rx_periodic = {0};
   AppRuntime_CanRxStep();
@@ -386,6 +457,7 @@ void StartCanTxTask(void *argument)
   /* USER CODE BEGIN StartCanTxTask */
   /* CAN Transmit task: 10ms period (100Hz), aligned with control cadence */
   (void)argument;
+  Diag_Log("TASK: CanTxTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   static app_periodic_state_t s_can_tx_periodic = {0};
   AppRuntime_CanTxStep();
@@ -415,6 +487,7 @@ void StartTelemetryTask(void *argument)
 {
   /* USER CODE BEGIN StartTelemetryTask */
   (void)argument;
+  Diag_Log("TASK: TelemetryTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   static uint32_t s_next_release = 0u;
   telemetry_event_t event;
@@ -481,6 +554,7 @@ void StartDiagTask(void *argument)
 {
   /* USER CODE BEGIN StartDiagTask */
   (void)argument;
+  Diag_Log("TASK: DiagTask enter");
 #ifdef SIL_USE_THREAD_SCHEDULER
   osDelay(1);
   return;
@@ -504,18 +578,17 @@ void StartDiagTask(void *argument)
 void StartIntegrationTestTask(void *argument)
 {
   /* USER CODE BEGIN StartIntegrationTestTask */
-  
-  Diag_Log("\n\nIntegrationTestTask started – esperando estabilizacion del sistema...");
+  (void)argument;
+  Diag_Log("TASK: IntegrationTestTask enter");
 
-  /* Esperar a que el resto de tareas se inicialicen (AppInitTask termina
-   * en ~0 ms, pero necesitamos que g_inMutex y las colas existan).       */
+  Diag_Log("\n\nIntegrationTestTask started - esperando estabilizacion del sistema...");
   osDelay(200);
 
-  /* Ejecutar todas las suites de integración y generar informe */
-  test_result_t res = Test_IntegrationRunAll();
-  (void)res;  /* resultado ya impreso por Test_IntegrationRunAll            */
+  {
+    test_result_t res = Test_IntegrationRunAll();
+    (void)res;
+  }
 
-  /* Tarea de test finalizada – se suspende indefinidamente */
   osThreadSuspend(NULL);
   
   /* USER CODE END StartIntegrationTestTask */
@@ -525,6 +598,57 @@ void StartIntegrationTestTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+void StartRadioTxTask(void *argument)
+{
+  (void)argument;
+  Diag_Log("TASK: RadioTxTask enter");
+#ifdef SIL_USE_THREAD_SCHEDULER
+  AppRuntime_RadioTxStep();
+  osDelay(1u);
+  return;
+#else
+  for (;;)
+  {
+    AppRuntime_RadioTxStep();
+    osDelay(1u);
+  }
+#endif
+}
+
+void StartSdLogTask(void *argument)
+{
+  (void)argument;
+  Diag_Log("TASK: SdLogTask enter");
+#ifdef SIL_USE_THREAD_SCHEDULER
+  AppRuntime_SdLogStep();
+  osDelay(1u);
+  return;
+#else
+  for (;;)
+  {
+    AppRuntime_SdLogStep();
+    osDelay(1u);
+  }
+#endif
+}
+
+void StartDashTask(void *argument)
+{
+  (void)argument;
+  Diag_Log("TASK: DashTask enter");
+#ifdef SIL_USE_THREAD_SCHEDULER
+  AppRuntime_DashStep();
+  osDelay(1u);
+  return;
+#else
+  for (;;)
+  {
+    AppRuntime_DashStep();
+    osDelay(1u);
+  }
+#endif
+}
+
 void AppRuntime_InitStep(void)
 {
   Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
@@ -533,6 +657,8 @@ void AppRuntime_InitStep(void)
   Diag_Log("State machine initialized (WAIT_INV_VDC_CONFIG)\n");
 
   Telemetry_Init();
+  s_telemetry_radio_divider = 2u;
+  s_telemetry_sd_divider = 9u;
   Diag_Log("Telemetry subsystem initialized\n");
 
   Control_Init();
@@ -625,23 +751,220 @@ void AppRuntime_CanTxStep(void)
 void AppRuntime_TelemetryStep(void)
 {
   app_inputs_t state_snapshot;
-  telemetry_frame_t frame;
+  telemetry_frame_t dash_frame;
+  telemetry_frame_t radio_frame;
+  telemetry_frame_t sd_frame;
+  uint8_t send_radio;
+  uint8_t send_sd;
 
   AppState_Snapshot(&state_snapshot);
-  Telemetry_BuildFrame(&state_snapshot, NULL, &frame);
-  Telemetry_TransportSend(&frame);
+  Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_DASH, &dash_frame);
+  (void)Telemetry_EnqueueFrameTargets(&dash_frame, 0u, 0u, 1u);
+
+  s_telemetry_radio_divider++;
+  if (s_telemetry_radio_divider >= 3u)
+  {
+    s_telemetry_radio_divider = 0u;
+    send_radio = 1u;
+  }
+  else
+  {
+    send_radio = 0u;
+  }
+
+  s_telemetry_sd_divider++;
+  if (s_telemetry_sd_divider >= 10u)
+  {
+    s_telemetry_sd_divider = 0u;
+    send_sd = 1u;
+  }
+  else
+  {
+    send_sd = 0u;
+  }
+
+  if (send_radio)
+  {
+    Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_FAST, &radio_frame);
+    (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
+  }
+
+  if (send_sd)
+  {
+    Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_SLOW, &radio_frame);
+    (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
+
+    Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_SD, &sd_frame);
+    (void)Telemetry_EnqueueFrameTargets(&sd_frame, 0u, 1u, 0u);
+  }
 }
 
 void AppRuntime_TelemetryEventStep(const telemetry_event_t *event)
 {
   app_inputs_t state_snapshot;
-  telemetry_frame_t frame;
+  telemetry_frame_t dash_frame;
+  telemetry_frame_t radio_frame;
+  telemetry_frame_t sd_frame;
 
   if (!event) return;
 
   AppState_Snapshot(&state_snapshot);
-  Telemetry_BuildFrame(&state_snapshot, event, &frame);
-  Telemetry_TransportSend(&frame);
+  Telemetry_BuildFrameWithKind(&state_snapshot, event, TELEMETRY_FRAME_DASH, &dash_frame);
+  (void)Telemetry_EnqueueFrameTargets(&dash_frame, 0u, 0u, 1u);
+
+  Telemetry_BuildFrameWithKind(&state_snapshot, event, TELEMETRY_FRAME_RF_EVENT, &radio_frame);
+  (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
+
+  Telemetry_BuildFrameWithKind(&state_snapshot, event, TELEMETRY_FRAME_SD, &sd_frame);
+  (void)Telemetry_EnqueueFrameTargets(&sd_frame, 0u, 1u, 0u);
+}
+
+void AppRuntime_RadioTxStep(void)
+{
+  telemetry_frame_t frame;
+  osStatus_t status;
+  uint8_t fragment_count;
+  uint8_t fragment_index;
+
+  status = osMessageQueueGet(telemetryRadioQueueHandle, &frame, NULL, 0u);
+  if (status != osOK)
+  {
+    return;
+  }
+
+  fragment_count = Telemetry_RadioFragmentCount(&frame);
+  if (fragment_count == 0u)
+  {
+    return;
+  }
+
+  for (fragment_index = 0u; fragment_index < fragment_count; fragment_index++)
+  {
+    Telemetry_TransportSendFragment(&frame, fragment_index);
+  }
+}
+
+void AppRuntime_SdLogStep(void)
+{
+  telemetry_frame_t frame;
+  uint8_t payload32[32];
+  osStatus_t status;
+
+  status = osMessageQueueGet(telemetrySdQueueHandle, &frame, NULL, 0u);
+  while (status == osOK)
+  {
+    Telemetry_SerializeFrame(&frame, payload32);
+    Telemetry_SdStore32(payload32);
+    status = osMessageQueueGet(telemetrySdQueueHandle, &frame, NULL, 0u);
+  }
+}
+
+static void app_dash_push_u16le(uint16_t value, uint8_t out[2])
+{
+  out[0] = (uint8_t)(value & 0xFFu);
+  out[1] = (uint8_t)((value >> 8) & 0xFFu);
+}
+
+static void app_dash_push_u32le(uint32_t value, uint8_t out[4])
+{
+  out[0] = (uint8_t)(value & 0xFFu);
+  out[1] = (uint8_t)((value >> 8) & 0xFFu);
+  out[2] = (uint8_t)((value >> 16) & 0xFFu);
+  out[3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void app_dash_send_msg(const can_msg_t *msg)
+{
+  if (!msg) return;
+  (void)CanTx_SendHal(msg);
+}
+
+static void app_dash_publish_frame(const telemetry_frame_t *frame)
+{
+  can_msg_t msg;
+  uint8_t fault_bits = 0u;
+
+  if (!frame) return;
+
+  if (frame->snapshot.flag_EV_2_3)  fault_bits |= 0x01u;
+  if (frame->snapshot.flag_T11_8_9) fault_bits |= 0x02u;
+  if (frame->snapshot.inv_error)    fault_bits |= 0x04u;
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x510u;
+  msg.dlc = 8u;
+  msg.data[0] = frame->snapshot.inv_state;
+  msg.data[1] = (uint8_t)frame->snapshot.torque_total;
+  msg.data[2] = fault_bits;
+  msg.data[3] = frame->snapshot.ok_precarga;
+  msg.data[4] = frame->snapshot.boton_arranque;
+  msg.data[5] = (uint8_t)frame->kind;
+  msg.data[6] = (uint8_t)(frame->sequence & 0xFFu);
+  msg.data[7] = (uint8_t)((frame->sequence >> 8) & 0xFFu);
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x511u;
+  msg.dlc = 6u;
+  app_dash_push_u16le(frame->snapshot.s1_aceleracion, &msg.data[0]);
+  app_dash_push_u16le(frame->snapshot.s2_aceleracion, &msg.data[2]);
+  app_dash_push_u16le(frame->snapshot.s_freno, &msg.data[4]);
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x512u;
+  msg.dlc = 6u;
+  app_dash_push_u16le(frame->snapshot.inv_dc_bus_voltage, &msg.data[0]);
+  app_dash_push_u16le(frame->snapshot.v_celda_min, &msg.data[2]);
+  msg.data[4] = frame->snapshot.inv_error;
+  msg.data[5] = frame->snapshot.inv_vdc_ready;
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x513u;
+  msg.dlc = 6u;
+  app_dash_push_u16le((uint16_t)frame->snapshot.inv_motor_temp, &msg.data[0]);
+  app_dash_push_u16le((uint16_t)frame->snapshot.inv_igbt_temp, &msg.data[2]);
+  app_dash_push_u16le((uint16_t)frame->snapshot.inv_air_temp, &msg.data[4]);
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x514u;
+  msg.dlc = 4u;
+  app_dash_push_u32le((uint32_t)frame->snapshot.inv_rpm, &msg.data[0]);
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x515u;
+  msg.dlc = 4u;
+  app_dash_push_u32le((uint32_t)frame->snapshot.inv_speed_actual, &msg.data[0]);
+  app_dash_send_msg(&msg);
+
+  memset(&msg, 0, sizeof(msg));
+  msg.bus = CAN_BUS_DASH;
+  msg.id = 0x516u;
+  msg.dlc = 4u;
+  app_dash_push_u32le((uint32_t)frame->snapshot.inv_current_actual, &msg.data[0]);
+  app_dash_send_msg(&msg);
+}
+
+void AppRuntime_DashStep(void)
+{
+  telemetry_frame_t frame;
+  osStatus_t status;
+
+  status = osMessageQueueGet(telemetryDashQueueHandle, &frame, NULL, 0u);
+  while (status == osOK)
+  {
+    app_dash_publish_frame(&frame);
+    status = osMessageQueueGet(telemetryDashQueueHandle, &frame, NULL, 0u);
+  }
 }
 
 /* USER CODE END Application */

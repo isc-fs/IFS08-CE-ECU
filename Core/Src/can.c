@@ -9,6 +9,14 @@ extern FDCAN_HandleTypeDef hfdcan3;
 /* ==== Project CAN IDs (from your VCU header; keep as defines) ==== */
 #define ID_ACK_PRECARGA        0x20u
 #define ID_V_CELDA_MIN         0x12Cu
+#define ID_ACU_SOC             0x130u
+#define ID_ACU_VMIN_012        0x131u
+#define ID_ACU_VMIN_34         0x132u
+#define ID_ACU_VMAX_012        0x133u
+#define ID_ACU_VMAX_34         0x134u
+#define ID_ACU_CURR_PACK_DCDC  0x135u
+#define ID_ACU_TMAX_012        0x136u
+#define ID_ACU_TMAX_34_DCDC    0x137u
 
 #define TX_STATE_2             0x461u
 #define TX_STATE_4             0x463u
@@ -24,6 +32,11 @@ static uint16_t read_u16_le(const uint8_t *data)
 static uint16_t read_u16_be(const uint8_t *data)
 {
   return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
+}
+
+static int16_t read_s16_be(const uint8_t *data)
+{
+  return (int16_t)read_u16_be(data);
 }
 
 /* Packing layout:
@@ -138,6 +151,70 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
         case ID_V_CELDA_MIN:
           /* Legacy ACU frame is big-endian. */
           st->v_celda_min = read_u16_be(m->data);
+          break;
+
+        case ID_ACU_SOC:
+          st->soc = m->data[0];
+          break;
+
+        case ID_ACU_VMIN_012:
+          if (m->dlc >= 6u)
+          {
+            st->vmin_modulo[0] = read_u16_be(&m->data[0]);
+            st->vmin_modulo[1] = read_u16_be(&m->data[2]);
+            st->vmin_modulo[2] = read_u16_be(&m->data[4]);
+          }
+          break;
+
+        case ID_ACU_VMIN_34:
+          if (m->dlc >= 4u)
+          {
+            st->vmin_modulo[3] = read_u16_be(&m->data[0]);
+            st->vmin_modulo[4] = read_u16_be(&m->data[2]);
+          }
+          break;
+
+        case ID_ACU_VMAX_012:
+          if (m->dlc >= 6u)
+          {
+            st->vmax_modulo[0] = read_u16_be(&m->data[0]);
+            st->vmax_modulo[1] = read_u16_be(&m->data[2]);
+            st->vmax_modulo[2] = read_u16_be(&m->data[4]);
+          }
+          break;
+
+        case ID_ACU_VMAX_34:
+          if (m->dlc >= 4u)
+          {
+            st->vmax_modulo[3] = read_u16_be(&m->data[0]);
+            st->vmax_modulo[4] = read_u16_be(&m->data[2]);
+          }
+          break;
+
+        case ID_ACU_CURR_PACK_DCDC:
+          if (m->dlc >= 4u)
+          {
+            st->corriente_accu = read_s16_be(&m->data[0]);
+            st->corriente_dcdc = read_s16_be(&m->data[2]);
+          }
+          break;
+
+        case ID_ACU_TMAX_012:
+          if (m->dlc >= 6u)
+          {
+            st->temp_max_modulo[0] = read_u16_be(&m->data[0]);
+            st->temp_max_modulo[1] = read_u16_be(&m->data[2]);
+            st->temp_max_modulo[2] = read_u16_be(&m->data[4]);
+          }
+          break;
+
+        case ID_ACU_TMAX_34_DCDC:
+          if (m->dlc >= 6u)
+          {
+            st->temp_max_modulo[3] = read_u16_be(&m->data[0]);
+            st->temp_max_modulo[4] = read_u16_be(&m->data[2]);
+            st->temp_dcdc = read_u16_be(&m->data[4]);
+          }
           break;
 
         default:

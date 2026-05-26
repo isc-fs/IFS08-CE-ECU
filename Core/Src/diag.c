@@ -1,4 +1,5 @@
 #include "diag.h"
+#include "usart.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -25,6 +26,31 @@ void Diag_Report(osMessageQueueId_t rxQ, osMessageQueueId_t txQ)
 
 __attribute__((weak)) void Diag_Log(const char *fmt, ...)
 {
-  (void)fmt;
-  /* Implement UART logging in your project. */
+  char buf[192];
+  size_t len;
+  va_list args;
+
+  if (!fmt || huart10.Instance == NULL)
+  {
+    return;
+  }
+
+  va_start(args, fmt);
+  len = (size_t)vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+
+  if (len >= sizeof(buf))
+  {
+    len = sizeof(buf) - 1u;
+  }
+
+  if ((len + 2u) < sizeof(buf) &&
+      (len == 0u || (buf[len - 1u] != '\n' && buf[len - 1u] != '\r')))
+  {
+    buf[len++] = '\r';
+    buf[len++] = '\n';
+    buf[len] = '\0';
+  }
+
+  (void)HAL_UART_Transmit(&huart10, (uint8_t *)buf, (uint16_t)len, 100u);
 }

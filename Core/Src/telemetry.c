@@ -3,6 +3,9 @@
 
 static uint16_t s_telemetry_sequence;
 
+#define TELEMETRY_RADIO_MAGIC 0xECu
+#define TELEMETRY_RADIO_VERSION 0x02u
+
 static void telemetry_pack_u16le(uint16_t value, uint8_t out[2])
 {
   out[0] = (uint8_t)(value & 0xFFu);
@@ -15,6 +18,16 @@ static void telemetry_pack_u32le(uint32_t value, uint8_t out[4])
   out[1] = (uint8_t)((value >> 8) & 0xFFu);
   out[2] = (uint8_t)((value >> 16) & 0xFFu);
   out[3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void telemetry_pack_s16le(int16_t value, uint8_t out[2])
+{
+  telemetry_pack_u16le((uint16_t)value, out);
+}
+
+static void telemetry_pack_s32le(int32_t value, uint8_t out[4])
+{
+  telemetry_pack_u32le((uint32_t)value, out);
 }
 
 static void telemetry_pack_snapshot_compat(const app_inputs_t *in, uint8_t out32[32])
@@ -66,10 +79,21 @@ void Telemetry_BuildFrame(const app_inputs_t *in,
                           const telemetry_event_t *event,
                           telemetry_frame_t *out)
 {
+  Telemetry_BuildFrameWithKind(in,
+                               event,
+                               event ? TELEMETRY_FRAME_RF_EVENT : TELEMETRY_FRAME_DASH,
+                               out);
+}
+
+void Telemetry_BuildFrameWithKind(const app_inputs_t *in,
+                                  const telemetry_event_t *event,
+                                  telemetry_frame_kind_t kind,
+                                  telemetry_frame_t *out)
+{
   if (!out) return;
 
   memset(out, 0, sizeof(*out));
-  out->kind = event ? TELEMETRY_FRAME_EVENT : TELEMETRY_FRAME_HEARTBEAT;
+  out->kind = kind;
   out->sequence = s_telemetry_sequence++;
 
   if (in)
@@ -102,12 +126,169 @@ void Telemetry_SerializeFrame(const telemetry_frame_t *frame, uint8_t out32[32])
   out32[29] = frame->snapshot.inv_vdc_ready;
 }
 
-void Telemetry_TransportSend(const telemetry_frame_t *frame)
+void Telemetry_SerializeRadioFragment(const telemetry_frame_t *frame,
+                                      uint8_t fragment_index,
+                                      uint8_t out32[32])
+{
+  memset(out32, 0, 32);
+  if (!frame) return;
+
+  out32[0] = TELEMETRY_RADIO_MAGIC;
+  out32[1] = TELEMETRY_RADIO_VERSION;
+  out32[2] = fragment_index;
+  out32[3] = Telemetry_RadioFragmentCount(frame);
+  telemetry_pack_u16le(frame->sequence, &out32[4]);
+  out32[6] = (uint8_t)frame->kind;
+  out32[7] = (uint8_t)frame->event.type;
+
+  if (frame->kind == TELEMETRY_FRAME_RF_EVENT)
+  {
+    out32[8] = frame->snapshot.inv_state;
+    out32[9] = frame->snapshot.flag_EV_2_3;
+    out32[10] = frame->snapshot.flag_T11_8_9;
+    out32[11] = frame->snapshot.inv_error;
+    out32[12] = frame->event.previous_inv_state;
+    out32[13] = frame->event.current_inv_state;
+    out32[14] = frame->event.inv_error;
+    out32[15] = frame->snapshot.ok_precarga;
+    out32[16] = frame->snapshot.inv_vdc_ready;
+    telemetry_pack_u16le(frame->snapshot.torque_total, &out32[17]);
+    telemetry_pack_u16le(frame->snapshot.inv_dc_bus_voltage, &out32[19]);
+    telemetry_pack_u16le(frame->snapshot.v_celda_min, &out32[21]);
+    telemetry_pack_u32le(frame->event.tick_ms, &out32[23]);
+    return;
+  }
+
+  if (frame->kind == TELEMETRY_FRAME_RF_SLOW)
+  {
+    if (fragment_index == 0u)
+    {
+      out32[8] = frame->snapshot.inv_state;
+      out32[9] = frame->snapshot.boton_arranque;
+      out32[10] = frame->snapshot.ok_precarga;
+      out32[11] = frame->snapshot.inv_vdc_ready;
+      out32[12] = frame->snapshot.inv_error;
+      telemetry_pack_u16le(frame->snapshot.inv_dc_bus_voltage, &out32[13]);
+      telemetry_pack_u16le(frame->snapshot.v_celda_min, &out32[15]);
+      telemetry_pack_s16le(frame->snapshot.inv_motor_temp, &out32[17]);
+      telemetry_pack_s16le(frame->snapshot.inv_igbt_temp, &out32[19]);
+      telemetry_pack_s16le(frame->snapshot.inv_air_temp, &out32[21]);
+      telemetry_pack_u32le(frame->event.tick_ms, &out32[23]);
+      return;
+    }
+
+    out32[8] = frame->event.previous_inv_state;
+    out32[9] = frame->event.current_inv_state;
+    out32[10] = frame->event.inv_error;
+    out32[11] = frame->event.type;
+    return;
+  }
+
+  if (fragment_index == 0u)
+  {
+    out32[8] = frame->snapshot.inv_state;
+    out32[9] = frame->snapshot.boton_arranque;
+    out32[10] = frame->snapshot.ok_precarga;
+    out32[11] = frame->snapshot.flag_EV_2_3;
+    out32[12] = frame->snapshot.flag_T11_8_9;
+    out32[13] = frame->snapshot.inv_vdc_ready;
+    out32[14] = frame->snapshot.inv_error;
+    out32[15] = frame->event.inv_error;
+    out32[16] = frame->event.previous_inv_state;
+    out32[17] = frame->event.current_inv_state;
+    telemetry_pack_u16le(frame->snapshot.torque_total, &out32[18]);
+    telemetry_pack_u16le(frame->snapshot.inv_dc_bus_voltage, &out32[20]);
+    telemetry_pack_u16le(frame->snapshot.v_celda_min, &out32[22]);
+    telemetry_pack_u16le(frame->snapshot.s1_aceleracion, &out32[24]);
+    telemetry_pack_u16le(frame->snapshot.s2_aceleracion, &out32[26]);
+    telemetry_pack_u16le(frame->snapshot.s_freno, &out32[28]);
+    return;
+  }
+
+  if (fragment_index == 1u)
+  {
+    telemetry_pack_s16le(frame->snapshot.inv_motor_temp, &out32[8]);
+    telemetry_pack_s16le(frame->snapshot.inv_igbt_temp, &out32[10]);
+    telemetry_pack_s16le(frame->snapshot.inv_air_temp, &out32[12]);
+    telemetry_pack_s32le(frame->snapshot.inv_rpm, &out32[14]);
+    telemetry_pack_s32le(frame->snapshot.inv_speed_actual, &out32[18]);
+    telemetry_pack_u32le(frame->event.tick_ms, &out32[22]);
+    return;
+  }
+
+  telemetry_pack_s32le(frame->snapshot.inv_current_actual, &out32[8]);
+}
+
+void Telemetry_TransportSendFragment(const telemetry_frame_t *frame, uint8_t fragment_index)
 {
   uint8_t payload32[32];
 
-  Telemetry_SerializeFrame(frame, payload32);
+  Telemetry_SerializeRadioFragment(frame, fragment_index, payload32);
   Telemetry_Send32(payload32);
+}
+
+uint8_t Telemetry_RadioFragmentCount(const telemetry_frame_t *frame)
+{
+  if (!frame)
+  {
+    return 0u;
+  }
+
+  switch (frame->kind)
+  {
+    case TELEMETRY_FRAME_RF_EVENT:
+      return 1u;
+
+    case TELEMETRY_FRAME_RF_SLOW:
+      return 2u;
+
+    case TELEMETRY_FRAME_RF_FAST:
+      return TELEMETRY_RADIO_FRAGMENT_COUNT;
+
+    default:
+      return 0u;
+  }
+}
+
+uint8_t Telemetry_EnqueueFrame(const telemetry_frame_t *frame)
+{
+  return Telemetry_EnqueueFrameTargets(frame, 1u, 1u, 1u);
+}
+
+uint8_t Telemetry_EnqueueFrameTargets(const telemetry_frame_t *frame,
+                                      uint8_t to_radio,
+                                      uint8_t to_sd,
+                                      uint8_t to_dash)
+{
+  uint8_t queued = 1u;
+
+  if (!frame)
+  {
+    return 0u;
+  }
+
+  if (to_radio &&
+      telemetryRadioQueueHandle &&
+      osMessageQueuePut(telemetryRadioQueueHandle, frame, 0u, 0u) != osOK)
+  {
+    queued = 0u;
+  }
+
+  if (to_sd &&
+      telemetrySdQueueHandle &&
+      osMessageQueuePut(telemetrySdQueueHandle, frame, 0u, 0u) != osOK)
+  {
+    queued = 0u;
+  }
+
+  if (to_dash &&
+      telemetryDashQueueHandle &&
+      osMessageQueuePut(telemetryDashQueueHandle, frame, 0u, 0u) != osOK)
+  {
+    queued = 0u;
+  }
+
+  return queued;
 }
 
 uint8_t Telemetry_EventPublish(const telemetry_event_t *event)
@@ -151,4 +332,10 @@ __attribute__((weak)) void Telemetry_Send32(const uint8_t payload[32])
 {
   (void)payload;
   /* Implement transport (nRF24/UART/etc.) in your project. */
+}
+
+__attribute__((weak)) void Telemetry_SdStore32(const uint8_t payload[32])
+{
+  (void)payload;
+  /* Implement SD logging transport in your project. */
 }

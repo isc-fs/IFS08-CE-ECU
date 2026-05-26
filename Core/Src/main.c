@@ -20,7 +20,9 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "adc.h"
+#include "fatfs.h"
 #include "fdcan.h"
+#include "memorymap.h"
 #include "sdmmc.h"
 #include "spi.h"
 #include "tim.h"
@@ -30,6 +32,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "diag.h"
 
 /* USER CODE END Includes */
 
@@ -98,28 +101,47 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  Diag_Log("BOOT: starting peripheral init sequence");
   MX_GPIO_Init();
+  Diag_Log("BOOT: gpio init ok");
   MX_FDCAN1_Init();
+  Diag_Log("BOOT: fdcan1 init ok");
   MX_FDCAN2_Init();
+  Diag_Log("BOOT: fdcan2 init ok");
   MX_TIM1_Init();
+  Diag_Log("BOOT: tim1 init ok");
   MX_TIM16_Init();
+  Diag_Log("BOOT: tim16 init ok");
   MX_FDCAN3_Init();
+  Diag_Log("BOOT: fdcan3 init ok");
   MX_ADC3_Init();
+  Diag_Log("BOOT: adc3 init ok");
   MX_USART10_UART_Init();
+  Diag_Log("BOOT: uart up");
   MX_SDMMC1_SD_Init();
+  Diag_Log("BOOT: sdmmc init ok");
   MX_SPI1_Init();
+  Diag_Log("BOOT: spi1 init ok");
   MX_USB_OTG_HS_PCD_Init();
+  Diag_Log("BOOT: usb otg init ok");
+  MX_FATFS_Init();
+  Diag_Log("BOOT: fatfs init ok");
   /* USER CODE BEGIN 2 */
+  Diag_Log("BOOT: peripherals initialized");
+  Diag_Log("BOOT: entering RTOS startup");
 
   /* USER CODE END 2 */
 
   /* Init scheduler */
   osKernelInitialize();
+  Diag_Log("BOOT: kernel initialized");
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
   MX_FREERTOS_Init();
+  Diag_Log("BOOT: RTOS objects created");
 
   /* Start scheduler */
+  Diag_Log("BOOT: starting scheduler");
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
@@ -233,6 +255,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  Diag_Log("BOOT: Error_Handler reached");
   __disable_irq();
   while (1)
   {

@@ -51,6 +51,9 @@ typedef struct { int dummy; } sil_mutex_t;
 extern osMessageQueueId_t canRxQueueHandle;
 extern osMessageQueueId_t canTxQueueHandle;
 extern osMessageQueueId_t telemetryEventQueueHandle;
+extern osMessageQueueId_t telemetryRadioQueueHandle;
+extern osMessageQueueId_t telemetrySdQueueHandle;
+extern osMessageQueueId_t telemetryDashQueueHandle;
 extern osMutexId_t g_inMutex;
 
 static uint32_t s_tick_ms = 0;
@@ -308,6 +311,9 @@ void SIL_RTOS_ResetKernel(void)
     sil_queue_destroy(&canRxQueueHandle);
     sil_queue_destroy(&canTxQueueHandle);
     sil_queue_destroy(&telemetryEventQueueHandle);
+    sil_queue_destroy(&telemetryRadioQueueHandle);
+    sil_queue_destroy(&telemetrySdQueueHandle);
+    sil_queue_destroy(&telemetryDashQueueHandle);
 
     if (g_inMutex) {
         (void)osMutexDelete(g_inMutex);
@@ -329,6 +335,9 @@ void SIL_RTOS_Init(void)
     canRxQueueHandle = osMessageQueueNew(128u, sizeof(can_qitem16_t), NULL);
     canTxQueueHandle = osMessageQueueNew(64u, sizeof(can_qitem16_t), NULL);
     telemetryEventQueueHandle = osMessageQueueNew(32u, sizeof(telemetry_event_t), NULL);
+    telemetryRadioQueueHandle = osMessageQueueNew(64u, sizeof(telemetry_frame_t), NULL);
+    telemetrySdQueueHandle = osMessageQueueNew(64u, sizeof(telemetry_frame_t), NULL);
+    telemetryDashQueueHandle = osMessageQueueNew(64u, sizeof(telemetry_frame_t), NULL);
     g_inMutex = osMutexNew(NULL);
 
     SIL_FDCAN_Reset();
