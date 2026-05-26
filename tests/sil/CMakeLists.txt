@@ -105,6 +105,18 @@ add_test(
 )
 
 add_test(
+    NAME SILPrechargeE2E
+    COMMAND ecu08_sil --test-precharge-e2e
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+add_test(
+    NAME SILPrechargeNoAck
+    COMMAND ecu08_sil --test-precharge-no-ack
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+add_test(
     NAME SILRtosStartup
     COMMAND ecu08_sil --test-rtos-startup
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}

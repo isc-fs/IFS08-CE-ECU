@@ -187,7 +187,7 @@ Los 5 gaps mas importantes ahora son:
 
 | ID | Bus | Dir | Payload legacy esperado | Implementacion actual | Estado |
 |---|---|---|---|---|---|
-| `0x020` | ACU / FDCAN2 | RX | `data[0] == 0` => precarga OK | Igual en `Core/Src/can.c:79` | OK |
+| `0x020` | ACU / FDCAN2 | RX | `data[0] == 1` => precarga OK | Adaptado al contrato AMS actual en `Core/Src/can.c` | OK |
 | `0x12C` | ACU / FDCAN2 | RX | `v_celda_min` big-endian | Igual en `Core/Src/can.c:110` | OK |
 | `0x101` | DASH / FDCAN3 | RX | `S1` y `S2` juntos, big-endian, 4 bytes | Retirado del runtime nuevo; pedales pasan por ADC | Retirado |
 | `0x102` | DASH / FDCAN3 | RX | Definido en `VCU.h`, pero no usado por el callback legacy principal | Retirado del runtime nuevo | Retirado |
@@ -197,8 +197,8 @@ Los 5 gaps mas importantes ahora son:
 | `0x464` | INV / FDCAN1 | RX | Temperaturas | Igual en `Core/Src/can.c:137` | OK |
 | `0x465` | INV / FDCAN1 | RX | Velocidad/corriente LE bytes `2..5` | Igual en `Core/Src/can.c:146` | OK |
 | `0x466` | INV / FDCAN1 | RX | Vdc LE bytes `2..3`, `dlc == 6` | Igual en `Core/Src/can.c:154` | OK |
-| `0x100` | ACU / FDCAN2 | TX | Vdc al AMS, ext ID, LE, 2 bytes | Emitido desde control; la compat RX ya se retiro y la entrada real vuelve a ser `0x466` del inversor | Parcial avanzado |
-| `0x600` | ACU / FDCAN2 | TX | Boton de precarga, ext ID, 2 bytes | Emitido en `BOOT`/`WAIT_PRECHARGE_ACK`; falta pauta exacta legacy | Parcial |
+| `0x100` | ACU / FDCAN2 | TX | Vdc al AMS, std ID, LE, 2 bytes | Emitido desde control y alineado con el filtro estándar del AMS actual | Parcial avanzado |
+| `0x600` | ACU / FDCAN2 | TX | Boton de precarga, std ID, 2 bytes | Emitido en `BOOT`/`WAIT_PRECHARGE_ACK`; falta pauta exacta legacy | Parcial |
 | `0x360` | INV / FDCAN1 | TX | Modo `0x01/0x04/0x06/0x13` segun estado | Ya emite `0x01/0x04/0x06/0x13` segun la FSM cooperativa | Parcial avanzado |
 | `0x362` | INV / FDCAN1 | TX | Torque cero o comando legacy bytes `2..3` | Formato portado; ahora el torque ya sale limitado por `v_celda_min` | Parcial avanzado |
 

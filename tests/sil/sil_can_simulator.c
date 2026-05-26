@@ -114,7 +114,7 @@ void SIL_CAN_Process(void)
     
     /* Send precharge ACK (ID 0x20) every 100ms */
     if ((current_time - sim_state.last_update_ms) >= 100) {
-        uint8_t data[8] = {0x00, 0, 0, 0, 0, 0, 0, 0};  /* Legacy: ACK=0 => precarga OK */
+        uint8_t data[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};  /* AMS v1.2+: ACK=1 => precarga OK */
 
         SIL_CAN_SendFrame(0x20, data, 8);
         

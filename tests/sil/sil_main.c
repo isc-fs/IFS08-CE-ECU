@@ -291,9 +291,9 @@ static void test_legacy_compat_harness(void)
     printf("║  SIL TEST: Legacy Compatibility Harness            ║\n");
     printf("╚══════════════════════════════════════════════════════╝\n\n");
 
-    SIL_Results_Init("legacy_compat_harness.log");
-    SIL_Results_Log("LEGACY_COMPAT", "STARTED",
-                    "Polling-compatible startup and inverter-write harness");
+    SIL_Results_Init("precharge_startup_e2e.log");
+    SIL_Results_Log("PRECHARGE_E2E", "STARTED",
+                    "Complete startup/precharge simulation through READY/TORQUE handoff");
 
     sil_runtime_init();
     sil_set_start_button(0u);
@@ -318,18 +318,18 @@ static void test_legacy_compat_harness(void)
     sil_run_until_next_control_cycle_after_rx();
 
     memset(expected, 0, sizeof(expected));
-    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 1u, 2u, expected, 2u,
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
                         "P2: reenvio DC bus al ACU");
     memset(expected, 0, sizeof(expected));
     expected[0] = 1u;
-    sil_expect_tx_frame(&hfdcan2, 0x600u, 1u, 2u, expected, 2u,
+    sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
                         "P2: peticion de precarga");
     sil_check_bus_empty(&hfdcan1, "P2: sin escritura al inversor durante precarga");
     sil_check_bus_empty(&hfdcan2, "P2: solo dos tramas ACU esperadas en el ciclo");
 
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "PRECHARGE_ACK");
     memset(data, 0, sizeof(data));
-    data[0] = 0x00u;
+    data[0] = 0x01u;
     sil_check(sil_inject_rx_frame(&hfdcan2, TINT_ID_ACK_PRECARGA, FDCAN_STANDARD_ID, data, 1u) == HAL_OK,
               "P3: ACK precarga inyectado");
     sil_run_until_next_control_cycle_after_rx();
@@ -456,11 +456,11 @@ static void test_legacy_compat_harness(void)
                         "P12: state=13 -> standby");
     sil_check_bus_empty(&hfdcan1, "P12: una sola trama en shutdown");
 
-    SIL_Results_Log("LEGACY_COMPAT",
+    SIL_Results_Log("PRECHARGE_E2E",
                     (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
                     (sil_test_failures == 0)
-                        ? "Startup and inverter write sequence matches polling contract"
-                        : "Legacy compatibility harness found sequence mismatches");
+                        ? "Precharge/startup end-to-end simulation passed"
+                        : "Precharge/startup end-to-end simulation FAILED");
     SIL_Results_Close();
 }
 
@@ -845,6 +845,99 @@ static void test_dynamic_state_transitions(void)
     SIL_Results_Close();
 }
 
+static void test_precharge_unconfirmed(void)
+{
+    uint8_t data[8] = {0};
+    uint8_t expected[8] = {0};
+
+    printf("\n");
+    printf("========================================\n");
+    printf("  SIL TEST: Precharge Not Confirmed\n");
+    printf("========================================\n\n");
+
+    SIL_Results_Init("precharge_unconfirmed.log");
+    SIL_Results_Log("PRECHARGE_NO_ACK", "STARTED",
+                    "Verify ECU never reaches inverter control without positive precharge ACK");
+
+    sil_runtime_init();
+    sil_set_start_button(1u);
+    SIL_CAN_InjectBrake(100u);
+    SIL_CAN_InjectThrottle(0u);
+    sil_drain_tx_bus(&hfdcan1);
+    sil_drain_tx_bus(&hfdcan2);
+    sil_drain_tx_bus(&hfdcan3);
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1", "WAIT_INV_VDC_CONFIG");
+    sil_run_manual(30u, 0u);
+    sil_check_bus_empty(&hfdcan1, "N1: sin escritura al inversor antes de TX_STATE_7");
+    sil_check_bus_empty(&hfdcan2, "N1: sin trafico ACU antes de TX_STATE_7");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "PRECHARGE_REQUEST_NO_ACK");
+    memset(data, 0, sizeof(data));
+    data[2] = 0x00u;
+    data[3] = 0x00u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_7, FDCAN_STANDARD_ID, data, 6u) == HAL_OK,
+              "N2: RX TX_STATE_7 inyectada");
+    sil_run_until_next_control_cycle_after_rx();
+
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N2: reenvio DC bus al ACU");
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 1u;
+    sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
+                        "N2: peticion inicial de precarga");
+    sil_check_bus_empty(&hfdcan1, "N2: sin escritura al inversor durante precarga");
+
+    /* Negative ACK / pending state must keep the FSM blocked in precharge. */
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "NEGATIVE_ACK");
+    memset(data, 0, sizeof(data));
+    data[0] = 0x00u;
+    sil_check(sil_inject_rx_frame(&hfdcan2, TINT_ID_ACK_PRECARGA, FDCAN_STANDARD_ID, data, 1u) == HAL_OK,
+              "N3: ACK negativo inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N3: reenvio DC bus repetido");
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 1u;
+    sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
+                        "N3: peticion de precarga repetida");
+    sil_check_bus_empty(&hfdcan1, "N3: ACK negativo no habilita inversor");
+
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE4", "TIMEOUT_WITHOUT_ACK");
+    sil_run_manual(3000u, 0u);
+    sil_check_bus_empty(&hfdcan1, "N4: tras 3s sin ACK no hay escritura al inversor");
+
+    /* Another control cycle should still produce only ACU precharge traffic. */
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N4: DC bus sigue publicandose al ACU");
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 1u;
+    sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
+                        "N4: precarga sigue solicitandose");
+    sil_check_bus_empty(&hfdcan1, "N4: sigue bloqueado antes de R2D");
+
+    /* Even if an inverter state arrives, the control FSM must ignore it while
+       precharge is not confirmed. */
+    SIL_Results_LogEvent(sil_get_time_ms(), "PHASE5", "SPURIOUS_INV_STATE");
+    memset(data, 0, sizeof(data));
+    data[4] = 3u;
+    sil_check(sil_inject_rx_frame(&hfdcan1, TINT_TX_STATE_2, FDCAN_STANDARD_ID, data, 8u) == HAL_OK,
+              "N5: state=3 espurio inyectado");
+    sil_run_until_next_control_cycle_after_rx();
+    sil_check_bus_empty(&hfdcan1, "N5: state=3 espurio no desbloquea el inversor");
+
+    SIL_Results_Log("PRECHARGE_NO_ACK",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    (sil_test_failures == 0)
+                        ? "Negative/no-ACK precharge path remained blocked as expected"
+                        : "ECU escaped precharge without confirmation");
+    SIL_Results_Close();
+}
+
 static void test_rtos_task_startup(void)
 {
     printf("\n");
@@ -900,6 +993,8 @@ static void print_usage(const char *prog)
     printf("  --test-error-temp        High temperature fault test\n");
     printf("  --test-safety-brake      EV 2.3 brake+throttle test\n");
     printf("  --test-dynamic-states    Dynamic state transition test\n");
+    printf("  --test-precharge-e2e     Complete startup/precharge end-to-end test\n");
+    printf("  --test-precharge-no-ack  Precharge remains blocked without positive ACK\n");
     printf("  --test-legacy-compat     Polling-compatible startup/inverter harness\n");
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
@@ -938,6 +1033,10 @@ int main(int argc, char *argv[])
         test_safety_brake_throttle();
     } else if (strcmp(test_name, "--test-dynamic-states") == 0) {
         test_dynamic_state_transitions();
+    } else if (strcmp(test_name, "--test-precharge-e2e") == 0) {
+        test_legacy_compat_harness();
+    } else if (strcmp(test_name, "--test-precharge-no-ack") == 0) {
+        test_precharge_unconfirmed();
     } else if (strcmp(test_name, "--test-legacy-compat") == 0) {
         test_legacy_compat_harness();
     } else if (strcmp(test_name, "--test-integration") == 0) {
@@ -952,6 +1051,7 @@ int main(int argc, char *argv[])
         test_safety_brake_throttle();
         test_dynamic_state_transitions();
         test_legacy_compat_harness();
+        test_precharge_unconfirmed();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);

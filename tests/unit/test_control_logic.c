@@ -137,6 +137,7 @@ TEST(ControlLogic, control_step_boot_to_precharge)
     TEST_ASSERT_EQUAL_INT(1, out.count);
     TEST_ASSERT_EQUAL_HEX32(0x100u, out.msgs[0].id);
     TEST_ASSERT_EQUAL_INT(CAN_BUS_ACU, out.msgs[0].bus);
+    TEST_ASSERT_EQUAL_INT(0, out.msgs[0].ide);
     TEST_ASSERT_EQUAL_HEX8((uint8_t)(in.inv_dc_bus_voltage & 0xFFu), out.msgs[0].data[0]);
     TEST_ASSERT_EQUAL_HEX8((uint8_t)((in.inv_dc_bus_voltage >> 8) & 0xFFu), out.msgs[0].data[1]);
 }
@@ -169,6 +170,8 @@ TEST(ControlLogic, control_step_precharge_button_emits_request_frame)
     TEST_ASSERT_EQUAL_HEX32(0x100u, out.msgs[0].id);
     TEST_ASSERT_EQUAL_HEX32(0x600u, out.msgs[1].id);
     TEST_ASSERT_EQUAL_INT(CAN_BUS_ACU, out.msgs[1].bus);
+    TEST_ASSERT_EQUAL_INT(0, out.msgs[0].ide);
+    TEST_ASSERT_EQUAL_INT(0, out.msgs[1].ide);
     TEST_ASSERT_EQUAL_HEX8(0x01u, out.msgs[1].data[0]);
 }
 

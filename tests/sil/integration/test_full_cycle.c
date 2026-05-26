@@ -204,8 +204,9 @@ static void fc_drive_to_active(void)
     Control_Step10ms(&snap, &out);   /* WAIT_VDC→BOOT→WAIT_PRECHARGE_ACK */
     fc_drain(&hfdcan2);
 
-    /* 2. Precharge ACK: data[0]=0 → ok_precarga=1 */
+    /* 2. Precharge ACK: data[0]=1 → ok_precarga=1 */
     memset(data, 0, sizeof(data));
+    data[0] = 1u;
     fc_inject(&hfdcan2, FC_ID_ACK_PRECARGA, data, 1u);
     AppState_Snapshot(&snap);
     Control_Step10ms(&snap, &out);   /* WAIT_PRECHARGE_ACK → WAIT_START_BRAKE */

@@ -7,13 +7,13 @@
  * 0 on first assertion failure.
  *
  * Protocol constants verified against can.c / control.c:
- *   ID_ACK_PRECARGA   = 0x020  (ACU bus, data[0]==0 → ok_precarga=1)
+ *   ID_ACK_PRECARGA   = 0x020  (ACU bus, data[0]==1 → ok_precarga=1)
  *   TX_STATE_2        = 0x461  (INV bus, data[4]&0x0F = inv_state)
  *   TX_STATE_7        = 0x466  (INV bus, dlc=6, data[2:3] LE = dc_bus_voltage)
  *   RX_SETPOINT_1     = 0x360  (ECU→INV, dlc=3, data[2]=mode, ide=0)
  *   RX_SETPOINT_3     = 0x362  (ECU→INV, dlc=4, data[2:3] LE = legacy torque)
- *   ID_DC_BUS_VOLTAGE = 0x100  (ECU→ACU, dlc=2, ide=1)
- *   ID_PRECHARGE_CMD  = 0x600  (ECU→ACU, dlc=2, ide=1)
+ *   ID_DC_BUS_VOLTAGE = 0x100  (ECU→ACU, dlc=2, ide=0)
+ *   ID_PRECHARGE_CMD  = 0x600  (ECU→ACU, dlc=2, ide=0)
  *
  * Thresholds (control.c):
  *   UMBRAL_DC_BUS_PRECARGA = 300   (inv_dc_bus_voltage >= 300 → precharge OK)
@@ -213,13 +213,14 @@ static int test_boot_sequence_timing(void)
 
     BT_ASSERT_TRUE(bt_pop(&hfdcan2, &tx),    "T1.2_dc_bus_frame_emitted_to_acu");
     BT_ASSERT_EQ(tx.id,  BT_ID_DC_BUS_V,    "T1.2_dc_bus_frame_id");
-    BT_ASSERT_EQ(tx.ide, 1u,                "T1.2_dc_bus_frame_ide_extended");
+    BT_ASSERT_EQ(tx.ide, 0u,                "T1.2_dc_bus_frame_ide_standard");
     BT_ASSERT_EQ(tx.dlc, 2u,                "T1.2_dc_bus_frame_dlc");
     BT_ASSERT_EQ(SIL_FDCAN_GetTxCount(&hfdcan1), 0u,
                  "T1.2_no_inv_tx_during_precharge_wait");
 
-    /* T1.3: Precharge ACK (data[0]=0) → ok_precarga=1 */
+    /* T1.3: Precharge ACK (data[0]=1) → ok_precarga=1 */
     memset(data, 0, sizeof(data));
+    data[0] = 1u;
     BT_ASSERT_TRUE(bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u),
                    "T1.3_ack_inject_ok");
     AppState_Snapshot(&snap);
@@ -294,22 +295,23 @@ static int test_precharge_ack(void)
     printf("\n[BOOT] T2: precharge ACK handling\n");
     bt_reset();
 
-    /* T2.1: Positive ACK data[0]=0 → ok_precarga=1 */
+    /* T2.1: Positive ACK data[0]=1 → ok_precarga=1 */
     memset(data, 0, sizeof(data));
+    data[0] = 1u;
     BT_ASSERT_TRUE(bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u),
                    "T2.1_positive_ack_inject_ok");
     AppState_Snapshot(&snap);
     BT_ASSERT_EQ(snap.ok_precarga, 1u, "T2.1_ok_precarga_set_to_1");
 
-    /* T2.2: Negative ACK data[0]=1 → ok_precarga=0 */
-    data[0] = 1u;
+    /* T2.2: Negative ACK data[0]=0 → ok_precarga=0 */
+    data[0] = 0u;
     BT_ASSERT_TRUE(bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u),
                    "T2.2_negative_ack_inject_ok");
     AppState_Snapshot(&snap);
     BT_ASSERT_EQ(snap.ok_precarga, 0u, "T2.2_ok_precarga_cleared_by_nack");
 
     /* T2.3: Same frame on INV bus must be ignored (parser filters by bus) */
-    data[0] = 0u;
+    data[0] = 1u;
     BT_ASSERT_TRUE(bt_inject(&hfdcan1, BT_ID_ACK_PRECARGA, data, 1u),
                    "T2.3_wrong_bus_inject_ok");
     AppState_Snapshot(&snap);
@@ -317,7 +319,7 @@ static int test_precharge_ack(void)
                  "T2.3_ok_precarga_unchanged_on_wrong_bus");
 
     /* T2.4: Re-confirm positive ACK after negative */
-    data[0] = 0u;
+    data[0] = 1u;
     bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u);
     AppState_Snapshot(&snap);
     BT_ASSERT_EQ(snap.ok_precarga, 1u, "T2.4_ok_precarga_restored");
@@ -348,7 +350,8 @@ static int test_inverter_states(void)
     Control_Step10ms(&snap, &out);
     bt_drain(&hfdcan2);
 
-    memset(data, 0, sizeof(data));                   /* ok_precarga=1 */
+    memset(data, 0, sizeof(data));
+    data[0] = 1u;                                    /* ok_precarga=1 */
     bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u);
     AppState_Snapshot(&snap);
     Control_Step10ms(&snap, &out);

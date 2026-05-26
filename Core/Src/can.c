@@ -144,8 +144,8 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
       switch (m->id)
       {
         case ID_ACK_PRECARGA:
-          /* Legacy polling firmware treated ACK=0 as "precharge complete". */
-          st->ok_precarga = (m->data[0] == 0u) ? 1u : 0u;
+          /* AMS v1.2+ publishes 0x020[0] = 1 when precharge is complete. */
+          st->ok_precarga = (m->data[0] != 0u) ? 1u : 0u;
           break;
 
         case ID_V_CELDA_MIN:
@@ -202,18 +202,18 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
         case ID_ACU_TMAX_012:
           if (m->dlc >= 6u)
           {
-            st->temp_max_modulo[0] = read_u16_be(&m->data[0]);
-            st->temp_max_modulo[1] = read_u16_be(&m->data[2]);
-            st->temp_max_modulo[2] = read_u16_be(&m->data[4]);
+            st->temp_max_modulo[0] = read_s16_be(&m->data[0]);
+            st->temp_max_modulo[1] = read_s16_be(&m->data[2]);
+            st->temp_max_modulo[2] = read_s16_be(&m->data[4]);
           }
           break;
 
         case ID_ACU_TMAX_34_DCDC:
           if (m->dlc >= 6u)
           {
-            st->temp_max_modulo[3] = read_u16_be(&m->data[0]);
-            st->temp_max_modulo[4] = read_u16_be(&m->data[2]);
-            st->temp_dcdc = read_u16_be(&m->data[4]);
+            st->temp_max_modulo[3] = read_s16_be(&m->data[0]);
+            st->temp_max_modulo[4] = read_s16_be(&m->data[2]);
+            st->temp_dcdc = read_s16_be(&m->data[4]);
           }
           break;
 

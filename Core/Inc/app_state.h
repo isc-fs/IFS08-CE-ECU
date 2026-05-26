@@ -35,8 +35,8 @@ typedef struct
   uint16_t vmax_modulo[5];
   int16_t  corriente_accu;
   int16_t  corriente_dcdc;
-  uint16_t temp_dcdc;
-  uint16_t temp_max_modulo[5];
+  int16_t  temp_dcdc;
+  int16_t  temp_max_modulo[5];
 
   /* IMU */
   int16_t  imu_accel_xyz[3];

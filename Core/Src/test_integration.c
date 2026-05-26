@@ -430,7 +430,7 @@ uint32_t test_suite_boot_sequence(void)
 
   /* S3.2 – Precarga completada (ok_precarga=1), todavía sin botón ni freno */
   {
-    uint8_t d[8] = {0x00, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t d[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1),
                  (uint32_t)HAL_OK, S, "3.2_precharge_rx_ok");
     AppState_Snapshot(&in);
@@ -546,7 +546,7 @@ uint32_t test_suite_can_rx_parsing(void)
 
   /* S4.1 – ACK precarga (0x020), byte0=1 */
   {
-    uint8_t d[8] = {0x00, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t d[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1),
                  (uint32_t)HAL_OK, S, "4.1_ack_rx_ok");
     AppState_Snapshot(&st);

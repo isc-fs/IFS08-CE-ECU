@@ -105,7 +105,7 @@ static void build_acu_dc_bus_frame(uint16_t dc_bus_voltage, can_msg_t *m)
   m->bus = CAN_BUS_ACU;
   m->id = ID_DC_BUS_VOLTAGE;
   m->dlc = 2u;
-  m->ide = 1u;
+  m->ide = 0u;
   m->data[0] = (uint8_t)(dc_bus_voltage & 0xFFu);
   m->data[1] = (uint8_t)((dc_bus_voltage >> 8) & 0xFFu);
 }
@@ -116,7 +116,7 @@ static void build_acu_precharge_cmd(uint8_t button_pressed, can_msg_t *m)
   m->bus = CAN_BUS_ACU;
   m->id = ID_PRECHARGE_CMD;
   m->dlc = 2u;
-  m->ide = 1u;
+  m->ide = 0u;
   m->data[0] = button_pressed ? 1u : 0u;
 }
 

@@ -15,9 +15,9 @@ void tearDown(void)
 {
 }
 
-TEST(CAN_Parsing, parse_precarga_ack_zero_means_ok)
+TEST(CAN_Parsing, parse_precarga_ack_one_means_ok)
 {
-    can_msg_t frame = mock_can_precarga_ack(0x00);
+    can_msg_t frame = mock_can_precarga_ack(0x01);
     app_inputs_t st = {0};
 
     CanRx_ParseAndUpdate(&frame, &st);
@@ -25,9 +25,9 @@ TEST(CAN_Parsing, parse_precarga_ack_zero_means_ok)
     TEST_ASSERT_EQUAL_INT(1, st.ok_precarga);
 }
 
-TEST(CAN_Parsing, parse_precarga_ack_nonzero_means_pending)
+TEST(CAN_Parsing, parse_precarga_ack_zero_means_pending)
 {
-    can_msg_t frame = mock_can_precarga_ack(0x01);
+    can_msg_t frame = mock_can_precarga_ack(0x00);
     app_inputs_t st = {0};
 
     CanRx_ParseAndUpdate(&frame, &st);
@@ -130,6 +130,44 @@ TEST(CAN_Parsing, parse_legacy_inverter_temps)
     TEST_ASSERT_EQUAL_INT(36, st.inv_air_temp);
 }
 
+TEST(CAN_Parsing, parse_ams_module_temps_as_signed_big_endian)
+{
+    can_msg_t frame = {0};
+    app_inputs_t st = {0};
+
+    frame.bus = CAN_BUS_ACU;
+    frame.id = 0x136u;
+    frame.dlc = 6u;
+    frame.data[0] = 0xFFu; frame.data[1] = 0xFBu; /* -5 */
+    frame.data[2] = 0x00u; frame.data[3] = 0x19u; /* 25 */
+    frame.data[4] = 0x00u; frame.data[5] = 0x00u; /* 0 */
+
+    CanRx_ParseAndUpdate(&frame, &st);
+
+    TEST_ASSERT_EQUAL_INT(-5, st.temp_max_modulo[0]);
+    TEST_ASSERT_EQUAL_INT(25, st.temp_max_modulo[1]);
+    TEST_ASSERT_EQUAL_INT(0, st.temp_max_modulo[2]);
+}
+
+TEST(CAN_Parsing, parse_ams_dcdc_temp_sentinel_as_signed)
+{
+    can_msg_t frame = {0};
+    app_inputs_t st = {0};
+
+    frame.bus = CAN_BUS_ACU;
+    frame.id = 0x137u;
+    frame.dlc = 6u;
+    frame.data[0] = 0x00u; frame.data[1] = 0x1Eu; /* 30 */
+    frame.data[2] = 0xFFu; frame.data[3] = 0xF6u; /* -10 */
+    frame.data[4] = 0x80u; frame.data[5] = 0x00u; /* -32768 sentinel */
+
+    CanRx_ParseAndUpdate(&frame, &st);
+
+    TEST_ASSERT_EQUAL_INT(30, st.temp_max_modulo[3]);
+    TEST_ASSERT_EQUAL_INT(-10, st.temp_max_modulo[4]);
+    TEST_ASSERT_EQUAL_INT(-32768, st.temp_dcdc);
+}
+
 TEST(CAN_Parsing, unknown_id_no_crash)
 {
     uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -147,7 +185,7 @@ TEST(CAN_Parsing, multiple_frames_sequential)
 {
     app_inputs_t st = {0};
 
-    can_msg_t f1 = mock_can_precarga_ack(0x00);
+    can_msg_t f1 = mock_can_precarga_ack(0x01);
     CanRx_ParseAndUpdate(&f1, &st);
     TEST_ASSERT_EQUAL_INT(1, st.ok_precarga);
 
@@ -204,8 +242,8 @@ TEST(CAN_Packing, roundtrip_dlc_4)
 
 TEST_GROUP_RUNNER(CAN_Parsing)
 {
-    RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_zero_means_ok);
-    RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_nonzero_means_pending);
+    RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_one_means_ok);
+    RUN_TEST_CASE(CAN_Parsing, parse_precarga_ack_zero_means_pending);
     RUN_TEST_CASE(CAN_Parsing, parse_inverter_dc_bus_voltage_frame);
     RUN_TEST_CASE(CAN_Parsing, ignore_valid_id_on_wrong_bus);
     RUN_TEST_CASE(CAN_Parsing, ignore_dash_apps_frame_in_production);
@@ -214,6 +252,8 @@ TEST_GROUP_RUNNER(CAN_Parsing)
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_cell_min_voltage_big_endian);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_state_and_error);
     RUN_TEST_CASE(CAN_Parsing, parse_legacy_inverter_temps);
+    RUN_TEST_CASE(CAN_Parsing, parse_ams_module_temps_as_signed_big_endian);
+    RUN_TEST_CASE(CAN_Parsing, parse_ams_dcdc_temp_sentinel_as_signed);
     RUN_TEST_CASE(CAN_Parsing, unknown_id_no_crash);
     RUN_TEST_CASE(CAN_Packing, roundtrip_pack_unpack);
     RUN_TEST_CASE(CAN_Packing, roundtrip_dlc_4);
