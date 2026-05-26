@@ -33,6 +33,23 @@ jobs:
             const type   = '${{ steps.parse.outputs.type }}';
             const number = parseInt('${{ steps.parse.outputs.number }}', 10);
 
+            let repo;
+            try {
+              const response = await github.rest.repos.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              repo = response.data;
+            } catch (error) {
+              core.warning(`Unable to read repository metadata: ${error.message}`);
+              return;
+            }
+
+            if (!repo.has_issues) {
+              core.warning('Issues are disabled for this repository, skipping branch issue creation.');
+              return;
+            }
+
             const labelColor = type === 'feat' ? '0075ca' : 'e4e669';
             try {
               await github.rest.issues.getLabel({
@@ -147,15 +164,39 @@ jobs:
               return;
             }
 
+            let repo;
+            try {
+              const response = await github.rest.repos.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              repo = response.data;
+            } catch (error) {
+              core.warning(`Unable to read repository metadata: ${error.message}`);
+              return;
+            }
+
+            if (!repo.has_issues) {
+              core.warning('Issues are disabled for this repository, skipping description update.');
+              return;
+            }
+
             const firstMessage = commits[0].message.trim();
 
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner:    context.repo.owner,
-              repo:     context.repo.repo,
-              labels:   type,
-              state:    'open',
-              per_page: 50,
-            });
+            let issues;
+            try {
+              const response = await github.rest.issues.listForRepo({
+                owner:    context.repo.owner,
+                repo:     context.repo.repo,
+                labels:   type,
+                state:    'open',
+                per_page: 50,
+              });
+              issues = response.data;
+            } catch (error) {
+              core.warning(`Unable to list branch issues: ${error.message}`);
+              return;
+            }
 
             const branchIssue = issues.find(i => i.title.startsWith(`[${branch}]`));
             if (!branchIssue) {
@@ -171,11 +212,16 @@ jobs:
 
             const updatedBody = branchIssue.body.replace(placeholder, firstMessage);
 
-            await github.rest.issues.update({
-              owner:        context.repo.owner,
-              repo:         context.repo.repo,
-              issue_number: branchIssue.number,
-              body:         updatedBody,
-            });
+            try {
+              await github.rest.issues.update({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: branchIssue.number,
+                body:         updatedBody,
+              });
+            } catch (error) {
+              core.warning(`Unable to update branch issue #${branchIssue.number}: ${error.message}`);
+              return;
+            }
 
             console.log(`Issue #${branchIssue.number} updated with: "${firstMessage}"`);
