@@ -105,6 +105,12 @@ add_test(
 )
 
 add_test(
+    NAME SILRtosStartup
+    COMMAND ecu08_sil --test-rtos-startup
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+add_test(
     NAME SILLegacyCompat
     COMMAND ecu08_sil --test-legacy-compat
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}

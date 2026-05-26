@@ -22,6 +22,7 @@
 #include "adc.h"
 #include "fatfs.h"
 #include "fdcan.h"
+#include "i2c.h"
 #include "memorymap.h"
 #include "sdmmc.h"
 #include "spi.h"
@@ -126,6 +127,8 @@ int main(void)
   Diag_Log("BOOT: usb otg init ok");
   MX_FATFS_Init();
   Diag_Log("BOOT: fatfs init ok");
+  MX_I2C2_Init();
+  Diag_Log("BOOT: i2c2 init ok");
   /* USER CODE BEGIN 2 */
   Diag_Log("BOOT: peripherals initialized");
   Diag_Log("BOOT: entering RTOS startup");

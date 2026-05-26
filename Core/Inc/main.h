@@ -67,6 +67,10 @@ void Error_Handler(void);
 #define A3_GPIO_Port GPIOF
 #define A4_Pin GPIO_PIN_10
 #define A4_GPIO_Port GPIOF
+#define IMU_SDA_Pin GPIO_PIN_0
+#define IMU_SDA_GPIO_Port GPIOF
+#define IMU_SCL_Pin GPIO_PIN_1
+#define IMU_SCL_GPIO_Port GPIOF
 #define A5_Pin GPIO_PIN_0
 #define A5_GPIO_Port GPIOC
 #define A6_Pin GPIO_PIN_1

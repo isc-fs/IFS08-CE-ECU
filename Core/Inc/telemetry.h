@@ -14,6 +14,10 @@ typedef enum
   TELEMETRY_FRAME_RF_EVENT = 5
 } telemetry_frame_kind_t;
 
+/* Compatibility alias used by existing SIL/unit tests. */
+#define TELEMETRY_FRAME_HEARTBEAT TELEMETRY_FRAME_DASH
+#define TELEMETRY_FRAME_EVENT TELEMETRY_FRAME_RF_EVENT
+
 typedef enum
 {
   TELEMETRY_EVENT_NONE = 0,

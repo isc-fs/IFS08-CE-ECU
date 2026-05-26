@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include "app_state.h"
+#include "app_runtime.h"
 #include "can.h"
 #include "control.h"
 #include "telemetry.h"
@@ -77,6 +78,27 @@ static void sil_check(int condition, const char *message)
         printf("[CHECK][FAIL] %s\n", message);
         sil_test_failures++;
     }
+}
+
+static void sil_check_task_metric(app_task_id_t task_id,
+                                  uint32_t min_starts,
+                                  uint32_t min_steps,
+                                  const char *label)
+{
+    const app_task_metrics_t *metrics = AppRuntime_TaskMetricsGet(task_id);
+    char detail[160];
+
+    snprintf(detail, sizeof(detail), "%s -> metrics available", label);
+    sil_check(metrics != NULL, detail);
+    if (!metrics) {
+        return;
+    }
+
+    snprintf(detail, sizeof(detail), "%s -> starts >= %lu", label, (unsigned long)min_starts);
+    sil_check(metrics->start_count >= min_starts, detail);
+
+    snprintf(detail, sizeof(detail), "%s -> steps >= %lu", label, (unsigned long)min_steps);
+    sil_check(metrics->step_count >= min_steps, detail);
 }
 
 static void sil_reset_captured_outputs(void)
@@ -823,6 +845,48 @@ static void test_dynamic_state_transitions(void)
     SIL_Results_Close();
 }
 
+static void test_rtos_task_startup(void)
+{
+    printf("\n");
+    printf("========================================\n");
+    printf("  SIL TEST: RTOS Task Startup/Liveness\n");
+    printf("========================================\n\n");
+
+    SIL_Results_Init("rtos_task_startup_test.log");
+    SIL_Results_Log("RTOS_TASKS", "STARTED", "Task startup and liveness instrumentation");
+
+    sil_runtime_init();
+
+    sil_check_task_metric(APP_TASK_ID_DEFAULT, 1u, 1u, "defaultTask after init");
+    sil_check_task_metric(APP_TASK_ID_INIT, 1u, 1u, "App_InitTask after init");
+    sil_check_task_metric(APP_TASK_ID_CONTROL, 1u, 1u, "ControlTask after init");
+    sil_check_task_metric(APP_TASK_ID_CAN_RX, 1u, 1u, "CanRxTask after init");
+    sil_check_task_metric(APP_TASK_ID_CAN_TX, 1u, 1u, "CanTxTask after init");
+    sil_check_task_metric(APP_TASK_ID_TELEMETRY, 1u, 1u, "TelemetryTask after init");
+    sil_check_task_metric(APP_TASK_ID_DIAG, 1u, 1u, "DiagTask after init");
+    sil_check_task_metric(APP_TASK_ID_RADIO_TX, 1u, 1u, "RadioTxTask after init");
+    sil_check_task_metric(APP_TASK_ID_SD_LOG, 1u, 1u, "SdLogTask after init");
+    sil_check_task_metric(APP_TASK_ID_DASH, 1u, 1u, "DashTask after init");
+
+    sil_run_manual(120u, 1u);
+
+    sil_check_task_metric(APP_TASK_ID_CONTROL, 1u, 5u, "ControlTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_CAN_RX, 1u, 5u, "CanRxTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_CAN_TX, 1u, 5u, "CanTxTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_TELEMETRY, 1u, 2u, "TelemetryTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_DIAG, 1u, 1u, "DiagTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_RADIO_TX, 1u, 10u, "RadioTxTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_SD_LOG, 1u, 10u, "SdLogTask periodic activity");
+    sil_check_task_metric(APP_TASK_ID_DASH, 1u, 10u, "DashTask periodic activity");
+
+    SIL_Results_Log("RTOS_TASKS",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    (sil_test_failures == 0)
+                        ? "All RTOS tasks started and executed as expected"
+                        : "Some RTOS tasks did not start or did not execute enough");
+    SIL_Results_Close();
+}
+
 /**
  * Print usage
  */
@@ -831,6 +895,7 @@ static void print_usage(const char *prog)
     printf("Usage: %s [OPTIONS]\n", prog);
     printf("  --test-boot              Boot sequence test\n");
     printf("  --test-full-cycle        Full operating cycle test\n");
+    printf("  --test-rtos-startup      Task startup/liveness instrumentation test\n");
     printf("  --test-error-voltage     Low voltage fault test\n");
     printf("  --test-error-temp        High temperature fault test\n");
     printf("  --test-safety-brake      EV 2.3 brake+throttle test\n");
@@ -863,6 +928,8 @@ int main(int argc, char *argv[])
         test_boot_sequence();
     } else if (strcmp(test_name, "--test-full-cycle") == 0) {
         test_full_cycle();
+    } else if (strcmp(test_name, "--test-rtos-startup") == 0) {
+        test_rtos_task_startup();
     } else if (strcmp(test_name, "--test-error-voltage") == 0) {
         test_error_low_voltage();
     } else if (strcmp(test_name, "--test-error-temp") == 0) {
@@ -879,6 +946,7 @@ int main(int argc, char *argv[])
         printf("[MAIN] Running all SIL tests...\n\n");
         test_boot_sequence();
         test_full_cycle();
+        test_rtos_task_startup();
         test_error_low_voltage();
         test_error_high_temperature();
         test_safety_brake_throttle();
