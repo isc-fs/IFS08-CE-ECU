@@ -16,6 +16,7 @@
 #include "app_runtime.h"
 #include "can.h"
 #include "control.h"
+#include "bootloader.h"
 #include "telemetry.h"
 #include "test_integration.h"   /* suites S1-S10, Test_IntegrationRunAll() */
 #include "cmsis_os2.h"
@@ -1004,6 +1005,49 @@ static void test_rtos_task_startup(void)
 /**
  * Print usage
  */
+static void test_bootloader_trigger(void)
+{
+    can_msg_t m;
+
+    printf("\n");
+    printf("========================================\n");
+    printf("  SIL TEST: Bootloader reboot trigger\n");
+    printf("========================================\n\n");
+    SIL_Results_Init("bootloader_trigger.log");
+    SIL_Results_Log("BL_TRIGGER", "STARTED",
+                    "Bootloader_MatchesTrigger payload gating (id 0x002)");
+
+    /* Positive: ACU bus, id 0x002, dlc 4, ECU payload B0 07 AD 12. */
+    memset(&m, 0, sizeof(m));
+    m.bus = CAN_BUS_ACU; m.id = 0x002u; m.dlc = 4u;
+    m.data[0] = 0xB0u; m.data[1] = 0x07u; m.data[2] = 0xADu; m.data[3] = 0x12u;
+    sil_check(Bootloader_MatchesTrigger(&m) == 1u, "T1: ECU payload B0 07 AD 12 -> match");
+
+    /* Negative: AMS payload (...AD 11) must NOT reboot the ECU. */
+    m.data[3] = 0x11u;
+    sil_check(Bootloader_MatchesTrigger(&m) == 0u, "T2: AMS payload B0 07 AD 11 -> no match");
+
+    /* Negative: wrong id. */
+    m.data[3] = 0x12u; m.id = 0x100u;
+    sil_check(Bootloader_MatchesTrigger(&m) == 0u, "T3: wrong id 0x100 -> no match");
+
+    /* Negative: wrong bus (inverter, not ACU). */
+    m.id = 0x002u; m.bus = CAN_BUS_INV;
+    sil_check(Bootloader_MatchesTrigger(&m) == 0u, "T4: wrong bus INV -> no match");
+
+    /* Negative: wrong dlc. */
+    m.bus = CAN_BUS_ACU; m.dlc = 3u;
+    sil_check(Bootloader_MatchesTrigger(&m) == 0u, "T5: wrong dlc 3 -> no match");
+
+    /* Negative: NULL frame. */
+    sil_check(Bootloader_MatchesTrigger(NULL) == 0u, "T6: NULL -> no match");
+
+    SIL_Results_Log("BL_TRIGGER",
+                    (sil_test_failures == 0) ? "SUCCESS" : "FAIL",
+                    "Payload-gated bootloader trigger");
+    SIL_Results_Close();
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n", prog);
@@ -1018,6 +1062,7 @@ static void print_usage(const char *prog)
     printf("  --test-precharge-no-ack  Precharge remains blocked without positive ACK\n");
     printf("  --test-legacy-compat     Polling-compatible startup/inverter harness\n");
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
+    printf("  --test-bootloader-trigger  Bootloader reboot-trigger payload gating\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
     printf("  --help                   Print this message\n");
@@ -1062,6 +1107,8 @@ int main(int argc, char *argv[])
         test_legacy_compat_harness();
     } else if (strcmp(test_name, "--test-integration") == 0) {
         test_integration_suite();
+    } else if (strcmp(test_name, "--test-bootloader-trigger") == 0) {
+        test_bootloader_trigger();
     } else if (strcmp(test_name, "--test-all") == 0) {
         printf("[MAIN] Running all SIL tests...\n\n");
         test_boot_sequence();
@@ -1073,6 +1120,7 @@ int main(int argc, char *argv[])
         test_dynamic_state_transitions();
         test_legacy_compat_harness();
         test_precharge_unconfirmed();
+        test_bootloader_trigger();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);

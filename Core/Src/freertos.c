@@ -31,6 +31,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_state.h"
 #include "app_runtime.h"
+#include "bootloader.h"
 #include "control.h"
 #include "io_signals.h"
 #ifndef SIL_BUILD
@@ -418,6 +419,15 @@ static void app_runtime_process_can_rx_item(const can_qitem16_t *rx_qitem)
   }
 
   CAN_Unpack16(rx_qitem, &rx_msg);
+
+#ifndef SIL_BUILD
+  /* Operator command to re-enter the CAN bootloader for a reflash. Payload-
+   * gated (shares id 0x002 with the AMS, distinct payload). Never returns. */
+  if (Bootloader_MatchesTrigger(&rx_msg))
+  {
+    Bootloader_RequestReboot();
+  }
+#endif
 
   if (g_inMutex) {
     osMutexAcquire(g_inMutex, osWaitForever);
@@ -834,6 +844,7 @@ void StartControlTask(void *argument)
   {
     app_task_stepped(APP_TASK_ID_CONTROL);
     AppRuntime_ControlStep();
+    Bootloader_KickWatchdog();   /* service the BL-inherited IWDG (~8 s) */
     next_release += period_ticks;
     (void)osDelayUntil(next_release);
   }
