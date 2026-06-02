@@ -19,6 +19,7 @@ set(APP_SOURCES
     ../../Core/Src/app_state.c
     ../../Core/Src/can.c
     ../../Core/Src/control.c
+    ../../Core/Src/pit_diag.c
     ../../Core/Src/freertos.c
     ../../Core/Src/io_signals.c
     ../../Core/Src/telemetry.c

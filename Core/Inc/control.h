@@ -13,6 +13,7 @@ typedef struct
   uint8_t  flag_ev_2_3;
   uint8_t  flag_t11_8_9;
   uint8_t  rtds_active;
+  uint8_t  fsm_state;  /* ctrl_state_t after this step (for pit-diag/telemetry) */
 } control_out_t;
 
 void Control_Init(void);

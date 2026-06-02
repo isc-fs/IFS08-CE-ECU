@@ -17,6 +17,7 @@
 #include "can.h"
 #include "control.h"
 #include "bootloader.h"
+#include "pit_diag.h"
 #include "telemetry.h"
 #include "test_integration.h"   /* suites S1-S10, Test_IntegrationRunAll() */
 #include "cmsis_os2.h"
@@ -1048,6 +1049,67 @@ static void test_bootloader_trigger(void)
     SIL_Results_Close();
 }
 
+static void test_pit_diag(void)
+{
+    can_msg_t m;
+    uint8_t en;
+    app_inputs_t in;
+    control_out_t out;
+    can_msg_t frames[4];
+    const uint8_t git[4] = { 0xAAu, 0xBBu, 0xCCu, 0xDDu };
+    uint8_t got0 = 0u;
+    int i;
+
+    printf("\n========================================\n");
+    printf("  SIL TEST: Pit-diag\n");
+    printf("========================================\n\n");
+    SIL_Results_Init("pit_diag.log");
+    SIL_Results_Log("PIT_DIAG", "STARTED", "command gating + encoders + 100ms cadence");
+
+    /* Command gating: enable (magic DEADBEEF LE), disable, AMS id rejected. */
+    memset(&m, 0, sizeof(m));
+    m.bus = CAN_BUS_ACU; m.id = 0x7E0u; m.dlc = 4u;
+    m.data[0] = 0xEFu; m.data[1] = 0xBEu; m.data[2] = 0xADu; m.data[3] = 0xDEu;
+    en = 0xFFu;
+    sil_check(PitDiag_MatchCommand(&m, &en) == 1u && en == 1u, "P1: 0x7E0 DEADBEEF -> enable");
+    m.data[0] = 0u; m.data[1] = 0u; m.data[2] = 0u; m.data[3] = 0u;
+    en = 0xFFu;
+    sil_check(PitDiag_MatchCommand(&m, &en) == 1u && en == 0u, "P2: 0x7E0 zero -> disable");
+    m.id = 0x680u;  /* an AMS pit-diag id */
+    sil_check(PitDiag_MatchCommand(&m, &en) == 0u, "P3: AMS id 0x680 -> not ours");
+
+    /* Encoders. */
+    memset(&in, 0, sizeof(in));
+    memset(&out, 0, sizeof(out));
+    in.inv_state = 6u; in.v_celda_min = 3700u;       /* 0x0E74 */
+    in.s1_aceleracion = 0x1234u; in.s2_aceleracion = 0x2345u; in.s_freno = 0x0456u;
+    in.inv_dc_bus_voltage = 400u;
+    out.fsm_state = 6u; out.torque_pct = 42u; out.flag_ev_2_3 = 1u;
+
+    PitDiag_BuildStatus(&in, &out, &m);
+    sil_check(m.id == 0x700u && m.bus == CAN_BUS_ACU, "P4: status id/bus");
+    sil_check(m.data[0] == 6u && m.data[1] == 6u && m.data[3] == 42u, "P5: status fsm/inv/torque");
+    sil_check(m.data[2] == 0x01u, "P6: status flags (ev23 bit)");
+    sil_check(m.data[4] == 0x0Eu && m.data[5] == 0x74u, "P7: status v_celda_min BE 3700");
+
+    PitDiag_BuildPedals(&in, &m);
+    sil_check(m.id == 0x701u && m.data[0] == 0x12u && m.data[1] == 0x34u, "P8: pedals apps1 BE");
+
+    PitDiag_BuildFwInfo(1u, 2u, 3u, git, &m);
+    sil_check(m.id == 0x703u && m.data[0] == 1u && m.data[2] == 3u && m.data[3] == 0xAAu, "P9: fwinfo");
+
+    /* 100 ms cadence: enabled -> nothing for 9 steps, 4 frames on the 10th. */
+    PitDiag_SetEnabled(1u);
+    for (i = 0; i < 9; i++) got0 = (uint8_t)(got0 + PitDiag_Collect(&in, &out, 1u, 2u, 3u, git, frames, 4u));
+    sil_check(got0 == 0u, "P10: no frames in the first 9 steps");
+    sil_check(PitDiag_Collect(&in, &out, 1u, 2u, 3u, git, frames, 4u) == 4u, "P11: 4 frames on the 10th step");
+    PitDiag_SetEnabled(0u);
+    sil_check(PitDiag_Collect(&in, &out, 1u, 2u, 3u, git, frames, 4u) == 0u, "P12: disabled -> 0 frames");
+
+    SIL_Results_Log("PIT_DIAG", (sil_test_failures == 0) ? "SUCCESS" : "FAIL", "pit-diag");
+    SIL_Results_Close();
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n", prog);
@@ -1063,6 +1125,7 @@ static void print_usage(const char *prog)
     printf("  --test-legacy-compat     Polling-compatible startup/inverter harness\n");
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
     printf("  --test-bootloader-trigger  Bootloader reboot-trigger payload gating\n");
+    printf("  --test-pit-diag          Pit-diag command gating + encoders + cadence\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
     printf("  --help                   Print this message\n");
@@ -1109,6 +1172,8 @@ int main(int argc, char *argv[])
         test_integration_suite();
     } else if (strcmp(test_name, "--test-bootloader-trigger") == 0) {
         test_bootloader_trigger();
+    } else if (strcmp(test_name, "--test-pit-diag") == 0) {
+        test_pit_diag();
     } else if (strcmp(test_name, "--test-all") == 0) {
         printf("[MAIN] Running all SIL tests...\n\n");
         test_boot_sequence();
@@ -1121,6 +1186,7 @@ int main(int argc, char *argv[])
         test_legacy_compat_harness();
         test_precharge_unconfirmed();
         test_bootloader_trigger();
+        test_pit_diag();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);
