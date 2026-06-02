@@ -1,6 +1,7 @@
 # Build outputs
 Debug/
 build/
+build-*/
 *.o
 *.d
 *.su
