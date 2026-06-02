@@ -15,8 +15,11 @@
  *   ID_DC_BUS_VOLTAGE = 0x100  (ECU→ACU, dlc=2, ide=0)
  *   ID_PRECHARGE_CMD  = 0x600  (ECU→ACU, dlc=2, ide=0)
  *
+ * Precharge complete: ok_precarga (AMS 0x020) ONLY. The ECU no longer
+ *   completes precharge on a DC-bus voltage threshold; the AMS owns that
+ *   decision (closes AIR+ at >=95% of the measured pack, then sets 0x020).
+ *
  * Thresholds (control.c):
- *   UMBRAL_DC_BUS_PRECARGA = 300   (inv_dc_bus_voltage >= 300 → precharge OK)
  *   UMBRAL_FRENO_ARRANQUE  = 900   (s_freno > 900 for R2D)
  *   R2D_DELAY              = 2000 ms
  */
@@ -440,9 +443,11 @@ static int test_inverter_states(void)
 }
 
 /* ============================================================================
-   T4 – DC bus voltage handling via TX_STATE_7
-   Verifies that inv_dc_bus_voltage < 300 does NOT trigger auto-precharge,
-   while >= 300 does (UMBRAL_DC_BUS_PRECARGA from control.c).
+   T4 – Precharge gates on the AMS ACK (0x020), never on DC bus voltage
+   The precharge-complete decision belongs to the AMS: it closes AIR+ at >=95%
+   of the measured pack and then publishes ok_precarga on 0x020. The ECU must
+   NOT complete precharge on any DC-bus voltage on its own — not even a high
+   one. (TX_STATE_7 / 0x466 little-endian parsing is still exercised here.)
    ========================================================================== */
 static int test_dc_voltage_handling(void)
 {
@@ -450,35 +455,10 @@ static int test_dc_voltage_handling(void)
     control_out_t out;
     uint8_t       data[8];
 
-    printf("\n[BOOT] T4: DC bus voltage threshold\n");
+    printf("\n[BOOT] T4: precharge gates on AMS ACK, not DC bus voltage\n");
 
-    /* T4.1: voltage=200 (<300) must NOT trigger precharge_complete.
-     *       State remains in WAIT_PRECHARGE_ACK, no INV frames. */
-    bt_reset();
-    memset(data, 0, sizeof(data));
-    /* 200 = 0x00C8 → LE: data[2]=0xC8, data[3]=0x00 */
-    data[2] = 0xC8u;
-    data[3] = 0x00u;
-    bt_inject(&hfdcan1, BT_TX_STATE_7, data, 6u);
-    AppState_Snapshot(&snap);
-    BT_ASSERT_EQ(snap.inv_dc_bus_voltage, 200u, "T4.1_dc_bus_200_parsed_le");
-    BT_ASSERT_EQ(snap.inv_vdc_ready,      1u,   "T4.1_vdc_ready_set");
-
-    Control_Step10ms(&snap, &out);   /* BOOT: 200 < 300 → WAIT_PRECHARGE_ACK */
-    bt_drain(&hfdcan2);              /* discard DC bus report */
-
-    /* With no precharge, pressing button+brake should not advance to R2D */
-    BT_SET_GIN(boton_arranque, 1u);
-    BT_SET_GIN(s_freno, 1000u);
-    AppState_Snapshot(&snap);
-    Control_Step10ms(&snap, &out);   /* stays in WAIT_PRECHARGE_ACK */
-    bt_flush(&out);
-    BT_ASSERT_EQ(SIL_FDCAN_GetTxCount(&hfdcan1), 0u,
-                 "T4.1_no_inv_tx_at_200v_no_ack");
-    BT_ASSERT_EQ(out.rtds_active, 0u,
-                 "T4.1_no_rtds_at_200v_no_ack");
-
-    /* T4.2: voltage=400 (>=300) triggers precharge_complete automatically */
+    /* T4.1: a HIGH bus (400 V) WITHOUT an ACK must NOT complete precharge.
+     *       Button+brake must not advance to R2D, and no INV frames go out. */
     bt_reset();
     memset(data, 0, sizeof(data));
     /* 400 = 0x0190 → LE: data[2]=0x90, data[3]=0x01 */
@@ -486,37 +466,54 @@ static int test_dc_voltage_handling(void)
     data[3] = 0x01u;
     bt_inject(&hfdcan1, BT_TX_STATE_7, data, 6u);
     AppState_Snapshot(&snap);
-    BT_ASSERT_EQ(snap.inv_dc_bus_voltage, 400u, "T4.2_dc_bus_400_parsed_le");
+    BT_ASSERT_EQ(snap.inv_dc_bus_voltage, 400u, "T4.1_dc_bus_400_parsed_le");
+    BT_ASSERT_EQ(snap.inv_vdc_ready,      1u,   "T4.1_vdc_ready_set");
 
-    Control_Step10ms(&snap, &out);   /* BOOT: 400 >= 300 → WAIT_START_BRAKE */
-    bt_drain(&hfdcan2);
+    Control_Step10ms(&snap, &out);   /* BOOT → WAIT_PRECHARGE_ACK (no ACK yet) */
+    bt_drain(&hfdcan2);              /* discard the DC bus heartbeat */
 
     BT_SET_GIN(boton_arranque, 1u);
     BT_SET_GIN(s_freno, 1000u);
     AppState_Snapshot(&snap);
-    Control_Step10ms(&snap, &out);   /* → R2D_DELAY (precharge was complete) */
-    BT_ASSERT_EQ(out.rtds_active, 1u,
-                 "T4.2_rtds_active_after_400v_auto_precharge");
+    Control_Step10ms(&snap, &out);   /* stays in WAIT_PRECHARGE_ACK: 400 V alone is not enough */
+    bt_flush(&out);
+    BT_ASSERT_EQ(SIL_FDCAN_GetTxCount(&hfdcan1), 0u,
+                 "T4.1_no_inv_tx_at_400v_without_ack");
+    BT_ASSERT_EQ(out.rtds_active, 0u,
+                 "T4.1_no_rtds_at_400v_without_ack");
 
-    /* T4.3: Exactly at threshold voltage=300 must also trigger */
+    /* T4.2: the AMS ACK (0x020 data[0]=1) arrives → precharge completes and the
+     *       already-held button+brake advance to R2D. */
+    memset(data, 0, sizeof(data));
+    data[0] = 1u;
+    bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u);
+    AppState_Snapshot(&snap);
+    BT_ASSERT_EQ(snap.ok_precarga, 1u, "T4.2_ok_precarga_set_after_ack");
+
+    Control_Step10ms(&snap, &out);   /* WAIT_PRECHARGE_ACK → WAIT_START_BRAKE → R2D_DELAY */
+    BT_ASSERT_EQ(out.rtds_active, 1u,
+                 "T4.2_rtds_active_after_ack");
+
+    /* T4.3: a LOW bus (200 V) WITH the ACK still completes — proving the gate
+     *       is the ACK alone, independent of any voltage threshold. */
     bt_reset();
     memset(data, 0, sizeof(data));
-    /* 300 = 0x012C → LE: data[2]=0x2C, data[3]=0x01 */
-    data[2] = 0x2Cu;
-    data[3] = 0x01u;
+    /* 200 = 0x00C8 → LE: data[2]=0xC8, data[3]=0x00 */
+    data[2] = 0xC8u;
+    data[3] = 0x00u;
     bt_inject(&hfdcan1, BT_TX_STATE_7, data, 6u);
-    AppState_Snapshot(&snap);
-    BT_ASSERT_EQ(snap.inv_dc_bus_voltage, 300u, "T4.3_dc_bus_300_parsed_le");
-
-    Control_Step10ms(&snap, &out);
-    bt_drain(&hfdcan2);
-
+    memset(data, 0, sizeof(data));
+    data[0] = 1u;
+    bt_inject(&hfdcan2, BT_ID_ACK_PRECARGA, data, 1u);
     BT_SET_GIN(boton_arranque, 1u);
     BT_SET_GIN(s_freno, 1000u);
     AppState_Snapshot(&snap);
-    Control_Step10ms(&snap, &out);
+    BT_ASSERT_EQ(snap.inv_dc_bus_voltage, 200u, "T4.3_dc_bus_200_parsed_le");
+    BT_ASSERT_EQ(snap.ok_precarga,        1u,   "T4.3_ok_precarga_set");
+
+    Control_Step10ms(&snap, &out);   /* ACK completes precharge even at 200 V → R2D */
     BT_ASSERT_EQ(out.rtds_active, 1u,
-                 "T4.3_rtds_at_300v_threshold_included");
+                 "T4.3_rtds_active_low_bus_with_ack");
 
     return 1;
 }
