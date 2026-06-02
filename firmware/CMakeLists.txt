@@ -21,7 +21,29 @@ endif()
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(LINKER_SCRIPT ${REPO}/STM32H733ZGTX_FLASH.ld)
 
-add_compile_definitions(USE_HAL_DRIVER STM32H733xx USE_PWR_LDO_SUPPLY)
+# --- Firmware identity baked into the bootloader fwinfo record -------------
+# (Core/Src/firmware_info.c). Git short hash split into 4 bytes; build epoch.
+find_package(Git QUIET)
+set(ECU_GIT_SHORT "00000000")
+if(Git_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} -C ${REPO} rev-parse --short=8 HEAD
+    OUTPUT_VARIABLE ECU_GIT_SHORT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+string(SUBSTRING "${ECU_GIT_SHORT}00000000" 0 8 ECU_GIT_SHORT)
+string(SUBSTRING "${ECU_GIT_SHORT}" 0 2 H0)
+string(SUBSTRING "${ECU_GIT_SHORT}" 2 2 H1)
+string(SUBSTRING "${ECU_GIT_SHORT}" 4 2 H2)
+string(SUBSTRING "${ECU_GIT_SHORT}" 6 2 H3)
+string(TIMESTAMP ECU_BUILD_TS "%s" UTC)
+
+add_compile_definitions(
+  USE_HAL_DRIVER STM32H733xx USE_PWR_LDO_SUPPLY
+  ECU_FW_VERSION_MAJOR=0 ECU_FW_VERSION_MINOR=1 ECU_FW_VERSION_PATCH=0
+  ECU_GIT_HASH_0=0x${H0} ECU_GIT_HASH_1=0x${H1}
+  ECU_GIT_HASH_2=0x${H2} ECU_GIT_HASH_3=0x${H3}
+  ECU_BUILD_TIMESTAMP=${ECU_BUILD_TS}ULL
+)
 
 include_directories(
   ${REPO}/Core/Inc
@@ -43,6 +65,7 @@ include_directories(
 #   main_rx_callback_snippet.c  -> doc snippet; redefines HAL_FDCAN_RxFifo0Callback
 set(APP_SRC
   ${REPO}/Core/Src/main.c
+  ${REPO}/Core/Src/firmware_info.c
   ${REPO}/Core/Src/freertos.c
   ${REPO}/Core/Src/control.c
   ${REPO}/Core/Src/can.c

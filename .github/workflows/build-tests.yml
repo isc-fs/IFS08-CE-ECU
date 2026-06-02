@@ -5,13 +5,13 @@ name: Build and tests
 #                     port, no network/Unity), compiles the real control logic +
 #                     freertos.c task bodies against mocks and exercises boot/
 #                     precharge/torque/telemetry. Regression gate for Core/Src.
-#   firmware-build  — arm-none-eabi cross-compile for STM32H733 (firmware/), a
-#                     link check that the real image still builds, plus sizes.
+#   firmware-build  — arm-none-eabi cross-compile for STM32H733 (firmware/),
+#                     then check_flash_layout.py enforces the image is
+#                     bootloader-compatible (app at 0x08020000, sectors 0 & 7
+#                     clear), plus a size report.
 #
-# NOT here yet: the bootloader flash-layout check (parity with IFS08-CE-AMS).
-# It is added with the bootloader relink (feat/5): today's image links at the
-# 0x08000000 app base, but stm32-can-bootloader requires 0x08020000, so the
-# layout check only becomes meaningful (and green) after the relink.
+# This matches IFS08-CE-AMS build-tests.yml (host tests + firmware cross-compile
+# + flash-layout guard against isc-fs/stm32-can-bootloader).
 
 on:
   push:
@@ -74,6 +74,16 @@ jobs:
 
       - name: Build firmware
         run: cmake --build build-fw -j
+
+      - name: Verify bootloader-compatible flash layout
+        run: |
+          python3 scripts/check_flash_layout.py build-fw/ECU08.elf | tee layout.log
+          {
+            echo "## Flash layout vs. stm32-can-bootloader"
+            echo '```'
+            cat layout.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report firmware size
         run: |
