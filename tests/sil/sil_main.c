@@ -306,7 +306,14 @@ static void test_legacy_compat_harness(void)
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1", "WAIT_INV_VDC_CONFIG");
     sil_run_manual(30u, 0u);
     sil_check_bus_empty(&hfdcan1, "P1: sin escritura al inversor antes de TX_STATE_7");
-    sil_check_bus_empty(&hfdcan2, "P1: sin precarga antes de TX_STATE_7");
+    /* The 0x100 DC-bus heartbeat now streams on the ACU bus every control
+     * cycle (the AMS VcuStale watchdog requires it). Before TX_STATE_7 the bus
+     * carries that heartbeat and nothing else -- crucially no 0x600 precharge
+     * command, since the start button has not been pressed yet. */
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "P1: solo heartbeat 0x100 antes de TX_STATE_7");
+    sil_drain_tx_bus(&hfdcan2);
 
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "PRECHARGE_REQUEST");
     sil_set_start_button(1u);
@@ -317,13 +324,15 @@ static void test_legacy_compat_harness(void)
               "P2: RX TX_STATE_7 inyectada");
     sil_run_until_next_control_cycle_after_rx();
 
-    memset(expected, 0, sizeof(expected));
-    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
-                        "P2: reenvio DC bus al ACU");
+    /* The precharge step emits the 0x600 command (from the FSM body) followed
+     * by the 0x100 heartbeat (appended at the tail of the control step). */
     memset(expected, 0, sizeof(expected));
     expected[0] = 1u;
     sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
                         "P2: peticion de precarga");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "P2: reenvio DC bus al ACU");
     sil_check_bus_empty(&hfdcan1, "P2: sin escritura al inversor durante precarga");
     sil_check_bus_empty(&hfdcan2, "P2: solo dos tramas ACU esperadas en el ciclo");
 
@@ -870,7 +879,13 @@ static void test_precharge_unconfirmed(void)
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE1", "WAIT_INV_VDC_CONFIG");
     sil_run_manual(30u, 0u);
     sil_check_bus_empty(&hfdcan1, "N1: sin escritura al inversor antes de TX_STATE_7");
-    sil_check_bus_empty(&hfdcan2, "N1: sin trafico ACU antes de TX_STATE_7");
+    /* The 0x100 DC-bus heartbeat streams on the ACU bus every control cycle;
+     * before TX_STATE_7 there is no 0x600 precharge command yet (the FSM is
+     * still in WAIT_INV_VDC_CONFIG, which never emits one). */
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N1: solo heartbeat 0x100 antes de TX_STATE_7");
+    sil_drain_tx_bus(&hfdcan2);
 
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE2", "PRECHARGE_REQUEST_NO_ACK");
     memset(data, 0, sizeof(data));
@@ -880,13 +895,14 @@ static void test_precharge_unconfirmed(void)
               "N2: RX TX_STATE_7 inyectada");
     sil_run_until_next_control_cycle_after_rx();
 
-    memset(expected, 0, sizeof(expected));
-    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
-                        "N2: reenvio DC bus al ACU");
+    /* Precharge step: 0x600 (FSM body) precedes the tail 0x100 heartbeat. */
     memset(expected, 0, sizeof(expected));
     expected[0] = 1u;
     sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
                         "N2: peticion inicial de precarga");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N2: reenvio DC bus al ACU");
     sil_check_bus_empty(&hfdcan1, "N2: sin escritura al inversor durante precarga");
 
     /* Negative ACK / pending state must keep the FSM blocked in precharge. */
@@ -898,12 +914,12 @@ static void test_precharge_unconfirmed(void)
     sil_run_until_next_control_cycle_after_rx();
 
     memset(expected, 0, sizeof(expected));
-    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
-                        "N3: reenvio DC bus repetido");
-    memset(expected, 0, sizeof(expected));
     expected[0] = 1u;
     sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
                         "N3: peticion de precarga repetida");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N3: reenvio DC bus repetido");
     sil_check_bus_empty(&hfdcan1, "N3: ACK negativo no habilita inversor");
 
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE4", "TIMEOUT_WITHOUT_ACK");
@@ -912,12 +928,12 @@ static void test_precharge_unconfirmed(void)
 
     /* Another control cycle should still produce only ACU precharge traffic. */
     memset(expected, 0, sizeof(expected));
-    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
-                        "N4: DC bus sigue publicandose al ACU");
-    memset(expected, 0, sizeof(expected));
     expected[0] = 1u;
     sil_expect_tx_frame(&hfdcan2, 0x600u, 0u, 2u, expected, 2u,
                         "N4: precarga sigue solicitandose");
+    memset(expected, 0, sizeof(expected));
+    sil_expect_tx_frame(&hfdcan2, TINT_ID_DC_BUS_V, 0u, 2u, expected, 2u,
+                        "N4: DC bus sigue publicandose al ACU");
     sil_check_bus_empty(&hfdcan1, "N4: sigue bloqueado antes de R2D");
 
     /* Even if an inverter state arrives, the control FSM must ignore it while

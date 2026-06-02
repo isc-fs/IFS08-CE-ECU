@@ -191,14 +191,18 @@ static int test_boot_sequence_timing(void)
     printf("\n[BOOT] T1: full boot sequence timing\n");
     bt_reset();
 
-    /* T1.1: Before VDC config no CAN output is expected */
+    /* T1.1: Before VDC config the ECU streams only the 0x100 DC-bus heartbeat
+     * (now emitted every control step so the AMS VcuStale watchdog stays fed);
+     * no inverter traffic and no precharge command yet. */
     AppState_Snapshot(&snap);
     Control_Step10ms(&snap, &out);
     bt_flush(&out);
     BT_ASSERT_EQ(SIL_FDCAN_GetTxCount(&hfdcan1), 0u,
                  "T1.1_no_inv_tx_before_vdc_config");
-    BT_ASSERT_EQ(SIL_FDCAN_GetTxCount(&hfdcan2), 0u,
-                 "T1.1_no_acu_tx_before_vdc_config");
+    BT_ASSERT_TRUE(bt_pop(&hfdcan2, &tx),
+                   "T1.1_acu_heartbeat_before_vdc_config");
+    BT_ASSERT_EQ(tx.id, BT_ID_DC_BUS_V, "T1.1_acu_heartbeat_id");
+    bt_drain(&hfdcan2);
 
     /* T1.2: TX_STATE_7 sets inv_vdc_ready=1; dc_bus=0 (no auto-precharge).
      *       ECU should emit the DC bus report frame to ACU. */

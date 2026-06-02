@@ -319,9 +319,9 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         }
         else
         {
-          can_msg_t dc_bus_cmd;
-          build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
-          out_push(out, &dc_bus_cmd);
+          /* 0x100 heartbeat is emitted unconditionally at the end of the
+           * step (see Control_Step10ms tail); here we only add the
+           * precharge command when the start button is held. */
           if (in->boton_arranque)
           {
             can_msg_t precharge_cmd;
@@ -347,9 +347,9 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         }
         else
         {
-          can_msg_t dc_bus_cmd;
-          build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
-          out_push(out, &dc_bus_cmd);
+          /* 0x100 heartbeat is emitted unconditionally at the end of the
+           * step (see Control_Step10ms tail); here we only add the
+           * precharge command when the start button is held. */
           if (in->boton_arranque)
           {
             can_msg_t precharge_cmd;
@@ -399,5 +399,17 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
     {
       break;
     }
+  }
+
+  /* DC-bus heartbeat to the ACU/AMS — emitted every control step (10 ms) in
+   * EVERY state, not only during precharge. The AMS arms a VcuStale predicate
+   * the moment it locks Car mode and latches a sticky ERROR (opening the AIRs)
+   * if 0x100 goes stale for >200 ms (AMS ams_config VcuStaleMs). The legacy
+   * firmware sent this from the TIM16 ISR unconditionally; emitting it only
+   * during precharge tripped the AMS the instant precharge completed. */
+  {
+    can_msg_t dc_bus_cmd;
+    build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
+    out_push(out, &dc_bus_cmd);
   }
 }

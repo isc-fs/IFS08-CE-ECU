@@ -418,7 +418,11 @@ uint32_t test_suite_boot_sequence(void)
   in.s2_aceleracion  = TINT_ADC_S2_50PCT;
   Control_Step10ms(&in, &out);
   ASSERT_EQUAL(out.torque_pct, 0u, S, "3.1_boot_no_torque_without_precarga");
-  ASSERT_EQUAL(out.count, 0u, S, "3.1_boot_precharge_can_frames");
+  /* Even before TX_STATE_7 the ECU streams the 0x100 DC-bus heartbeat so the
+   * AMS sees the VCU as present; only the heartbeat is sent (no precharge). */
+  ASSERT_EQUAL(out.count, 1u, S, "3.1_boot_only_heartbeat_before_vdc");
+  ASSERT_EQUAL(out.msgs[0].id, 0x100u, S, "3.1_boot_heartbeat_id");
+  ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_ACU, S, "3.1_boot_heartbeat_bus");
 
   /* S3.1b – Con TX_STATE_7 ya recibido, la FSM entra en precarga */
   in.inv_vdc_ready      = 1;
@@ -454,12 +458,16 @@ uint32_t test_suite_boot_sequence(void)
   /* New cooperative FSM path: require inverter states 3 -> 4 -> 6. */
   osDelay(2100);
   Control_Step10ms(&in, &out);   /* R2D_DELAY -> WAIT_INV_STANDBY */
-  ASSERT_EQUAL(out.count, 0u, S, "3.4_post_r2d_sends_can_frame");
+  /* WAIT_INV_STANDBY with inv_state != 3: only the 0x100 heartbeat goes out. */
+  ASSERT_EQUAL(out.count, 1u, S, "3.4_post_r2d_heartbeat_only");
+  ASSERT_EQUAL(out.msgs[0].id, 0x100u, S, "3.4_post_r2d_heartbeat_id");
   ASSERT_EQUAL(out.rtds_active, 0u, S, "3.4_rtds_off_after_delay");
 
   in.inv_state = 3u;
   Control_Step10ms(&in, &out);   /* WAIT_INV_STANDBY -> ACTIVE */
-  ASSERT_EQUAL(out.count, 2u, S, "3.4_post_r2d_tx_queue_ok");
+  /* inv_state 3: READY (0x360) + zero-torque (0x362) + 0x100 heartbeat = 3.
+   * Inverter frames precede the tail heartbeat, so msgs[0] is still 0x360. */
+  ASSERT_EQUAL(out.count, 3u, S, "3.4_post_r2d_tx_queue_ok");
   ASSERT_EQUAL(out.msgs[0].id, 0x360u, S, "3.4_post_r2d_torque_valid");
   ASSERT_EQUAL(out.msgs[0].data[2], 0x04u, S, "3.4_post_r2d_torque_valid");
 
@@ -468,7 +476,8 @@ uint32_t test_suite_boot_sequence(void)
   in.s2_aceleracion = TINT_ADC_S2_50PCT;
   in.inv_state      = 4u;
   Control_Step10ms(&in, &out);   /* READY: 0x06 + zero torque */
-  ASSERT_EQUAL(out.count, 2u, S, "3.5_inv_mode_frame_present");
+  /* inv_state 4: TORQUE-mode (0x360) + zero-torque (0x362) + heartbeat = 3. */
+  ASSERT_EQUAL(out.count, 3u, S, "3.5_inv_mode_frame_present");
 
   in.inv_state = 6u;
   Control_Step10ms(&in, &out);   /* TORQUE: emits runtime command */
