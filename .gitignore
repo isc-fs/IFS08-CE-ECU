@@ -1,0 +1,41 @@
+# Build outputs
+Debug/
+build/
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.hex
+*.bin
+
+# IDE files
+.settings/
+.cproject
+.project
+.classpath
+*.swp
+*.swo
+*~
+
+# STM32CubeIDE specific
+STM32CubeIDE/
+*.launch
+
+# CMake
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+
+# Test artifacts
+test_output/
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
