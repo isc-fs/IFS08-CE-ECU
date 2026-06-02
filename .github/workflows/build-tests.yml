@@ -41,7 +41,8 @@ jobs:
           flags="--test-integration --test-boot --test-full-cycle \
                  --test-rtos-startup --test-error-voltage --test-error-temp \
                  --test-safety-brake --test-dynamic-states \
-                 --test-legacy-compat --test-precharge-no-ack"
+                 --test-legacy-compat --test-precharge-no-ack \
+                 --test-bootloader-trigger"
           fail=0
           for flag in $flags; do
             out=$("$SIL" $flag 2>&1) ; code=$?

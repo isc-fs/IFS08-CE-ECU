@@ -66,6 +66,7 @@ include_directories(
 set(APP_SRC
   ${REPO}/Core/Src/main.c
   ${REPO}/Core/Src/firmware_info.c
+  ${REPO}/Core/Src/bootloader.c
   ${REPO}/Core/Src/freertos.c
   ${REPO}/Core/Src/control.c
   ${REPO}/Core/Src/can.c
