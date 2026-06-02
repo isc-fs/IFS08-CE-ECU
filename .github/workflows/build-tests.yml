@@ -1,0 +1,60 @@
+name: Build and tests
+
+# Builds and runs the host SIL (Software-In-The-Loop) suite for the ECU.
+# The SIL build is self-contained: no hardware, no FreeRTOS port, no network
+# (no Unity download) — it compiles the real control logic + freertos.c task
+# bodies against host mocks and exercises the boot/precharge/torque/telemetry
+# paths. This is the regression gate for everything in Core/Src/{control,can,
+# io_signals,telemetry,app_*}.c.
+#
+# NOT here yet: an arm-none-eabi firmware cross-compile + a bootloader
+# flash-layout check (parity with IFS08-CE-AMS build-tests.yml). The ECU has
+# no firmware build system today; both are added with the bootloader-compat
+# work, where the linker is reworked to the 0x08020000 app base that
+# stm32-can-bootloader requires (at which point the flash-layout check
+# becomes meaningful). See docs / the bootloader-flash-layout branch.
+
+on:
+  push:
+    branches: ['feat/**', 'fix/**', dev, main]
+  pull_request:
+    branches: ['feat/**', dev, main]
+  workflow_dispatch:
+
+jobs:
+  sil-tests:
+    name: Host SIL suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SIL (host, no unit/Unity, no network)
+        run: cmake -B build-sil -S . -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
+
+      - name: Build SIL
+        run: cmake --build build-sil -j
+
+      - name: Run SIL suites
+        run: |
+          set -u
+          SIL=build-sil/tests/sil/ecu08_sil
+          test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
+          flags="--test-integration --test-boot --test-full-cycle \
+                 --test-rtos-startup --test-error-voltage --test-error-temp \
+                 --test-safety-brake --test-dynamic-states \
+                 --test-legacy-compat --test-precharge-no-ack"
+          fail=0
+          for flag in $flags; do
+            out=$("$SIL" $flag 2>&1) ; code=$?
+            # Defensive: trip on a non-zero exit OR any failure marker in the
+            # output (some suites print failures without setting the exit code).
+            if [ "$code" -ne 0 ] || printf '%s\n' "$out" \
+                 | grep -qiE '\[FAIL\]|FALLARON|checks failed|FALLOS: [1-9]|HAY TESTS FALLIDOS'; then
+              echo "::error::SIL $flag FAILED (exit=$code)"
+              printf '%s\n' "$out" | grep -iE '\[FAIL\]|FALLOS|FALLARON|checks failed' | head -20
+              fail=1
+            else
+              echo "PASS  $flag"
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "All SIL suites passed." || { echo "::error::One or more SIL suites failed"; exit 1; }

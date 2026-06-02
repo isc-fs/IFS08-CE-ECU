@@ -548,6 +548,11 @@ static void test_integration_suite(void)
         printf("\n[INFO] Informe guardado en: %s\n", log_path);
     }
 
+    /* Feed the global failure counter so main() returns a non-zero exit code
+     * (honest result for CI). Without this, --test-integration / --test-all
+     * would exit 0 even with failed S1-S10 assertions. */
+    sil_test_failures += (int)res.failed;
+
     /* Código de salida: 0 = todo OK, 1 = hay fallos */
     if (res.failed > 0) {
         printf("[RESULT] FALLOS: %lu/%lu tests fallaron.\n",
