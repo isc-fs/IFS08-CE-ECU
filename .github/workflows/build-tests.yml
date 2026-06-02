@@ -42,7 +42,7 @@ jobs:
                  --test-rtos-startup --test-error-voltage --test-error-temp \
                  --test-safety-brake --test-dynamic-states \
                  --test-legacy-compat --test-precharge-no-ack \
-                 --test-bootloader-trigger"
+                 --test-bootloader-trigger --test-pit-diag"
           fail=0
           for flag in $flags; do
             out=$("$SIL" $flag 2>&1) ; code=$?

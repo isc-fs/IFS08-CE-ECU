@@ -420,4 +420,6 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
     build_acu_dc_bus_frame(in->inv_dc_bus_voltage, &dc_bus_cmd);
     out_push(out, &dc_bus_cmd);
   }
+
+  out->fsm_state = (uint8_t)s_state;  /* surfaced via pit-diag */
 }

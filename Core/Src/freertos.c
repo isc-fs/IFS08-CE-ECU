@@ -32,6 +32,8 @@
 #include "app_state.h"
 #include "app_runtime.h"
 #include "bootloader.h"
+#include "pit_diag.h"
+#include "firmware_info.h"
 #include "control.h"
 #include "io_signals.h"
 #ifndef SIL_BUILD
@@ -426,6 +428,20 @@ static void app_runtime_process_can_rx_item(const can_qitem16_t *rx_qitem)
   if (Bootloader_MatchesTrigger(&rx_msg))
   {
     Bootloader_RequestReboot();
+  }
+  else
+  {
+    /* Pit-diag enable/disable (0x7E0); ack on 0x7E1. */
+    uint8_t pd_en = 0u;
+    if (PitDiag_MatchCommand(&rx_msg, &pd_en))
+    {
+      can_msg_t     pd_ack;
+      can_qitem16_t pd_qi;
+      PitDiag_SetEnabled(pd_en);
+      PitDiag_BuildAck(pd_en, &pd_ack);
+      CAN_Pack16(&pd_ack, &pd_qi);
+      (void)osMessageQueuePut(canTxQueueHandle, &pd_qi, 0, 0);
+    }
   }
 #endif
 
@@ -1175,6 +1191,22 @@ void AppRuntime_ControlStep(void)
     CAN_Pack16(&control_output.msgs[i], &qitem);
     (void)osMessageQueuePut(canTxQueueHandle, &qitem, 0, 0);
   }
+
+#ifndef SIL_BUILD
+  /* Pit-diag bench stream (0x700..0x703) when enabled via 0x7E0, at 100 ms. */
+  {
+    can_msg_t diag[4];
+    uint8_t dn = PitDiag_Collect(&state_snapshot, &control_output,
+                                 ecu_fw_version_major(), ecu_fw_version_minor(),
+                                 ecu_fw_version_patch(), ecu_git_hash(),
+                                 diag, 4u);
+    for (uint8_t i = 0; i < dn; i++) {
+      can_qitem16_t qitem;
+      CAN_Pack16(&diag[i], &qitem);
+      (void)osMessageQueuePut(canTxQueueHandle, &qitem, 0, 0);
+    }
+  }
+#endif
 }
 
 void AppRuntime_CanRxStep(void)

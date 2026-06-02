@@ -76,3 +76,10 @@ const bl_fwinfo_t __firmware_info
        must not collide with the AMS. reserved[1] free. */
     .reserved         = { 0u, 0u },
 };
+
+/* Pit-diag accessors (firmware_info.h): surface firmware identity on the wire
+ * without re-declaring bl_fwinfo_t elsewhere. */
+uint8_t ecu_fw_version_major(void) { return (uint8_t)__firmware_info.fw_version_major; }
+uint8_t ecu_fw_version_minor(void) { return (uint8_t)__firmware_info.fw_version_minor; }
+uint8_t ecu_fw_version_patch(void) { return (uint8_t)__firmware_info.fw_version_patch; }
+const uint8_t *ecu_git_hash(void)  { return __firmware_info.git_hash; }
