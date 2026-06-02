@@ -11,7 +11,6 @@
 /* Thresholds */
 #define UMBRAL_FRENO_APPS 3000u
 #define UMBRAL_FRENO_ARRANQUE 900u
-#define UMBRAL_DC_BUS_PRECARGA 300u
 #define ID_DC_BUS_VOLTAGE 0x100u
 #define ID_PRECHARGE_CMD  0x600u
 #define RX_SETPOINT_1     0x360u
@@ -123,7 +122,16 @@ static void build_acu_precharge_cmd(uint8_t button_pressed, can_msg_t *m)
 static uint8_t precharge_complete(const app_inputs_t *in)
 {
   if (!in) return 0u;
-  return (uint8_t)((in->ok_precarga != 0u) || (in->inv_dc_bus_voltage >= UMBRAL_DC_BUS_PRECARGA));
+  /* The AMS owns the contactors and the precharge-complete decision: it closes
+   * AIR+ only when the DC bus reaches >=95% of the *measured* pack, then
+   * publishes ok_precarga on 0x020. The ECU must not second-guess that with a
+   * fixed-voltage heuristic. The old "|| inv_dc_bus_voltage >= 300" was a
+   * main_polling.c holdover (when the VCU drove precharge itself): 300 V is
+   * non-adaptive (~75% of a full pack, unreachable on a low pack) and, being
+   * below the AMS gate, let the ECU's startup run ahead of the contactors.
+   * Gate solely on the AMS ACK; PRECHARGE_TIMEOUT_MS is the fallback if it
+   * never arrives. This is an intentional divergence from main_polling.c. */
+  return (uint8_t)(in->ok_precarga != 0u);
 }
 
 static uint8_t inverter_vdc_configured(const app_inputs_t *in)
