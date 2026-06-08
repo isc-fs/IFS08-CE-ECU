@@ -147,15 +147,33 @@ void MX_FDCAN2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN2_Init 2 */
+  /* FDCAN2 is the accumulator / uDV bus and carries STANDARD ids (AMS
+   * 0x020 / 0x12C / 0x131-0x137 / 0x002, uDV 0x504 / 0x505 / 0x507 / 0x510 ...).
+   * Previously only an EXTENDED accept-all filter was configured here, so
+   * standard frames reached RX FIFO0 only via the FDCAN hardware default for
+   * non-matching frames -- implicit and never hardware-validated. Add an
+   * explicit STANDARD accept-all filter so the RX path no longer depends on
+   * that default. (A narrower standard accept-list to trim FIFO load on the
+   * shared bus is a follow-up, once the uDV id contract is finalised.) */
   FDCAN_FilterTypeDef sFilterConfig = {0};
 
-  sFilterConfig.IdType = FDCAN_EXTENDED_ID;
-  sFilterConfig.FilterIndex = 0;
-  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+  sFilterConfig.FilterType   = FDCAN_FILTER_MASK;
   sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  sFilterConfig.FilterID1 = 0x0;
-  sFilterConfig.FilterID2 = 0x0;
+  sFilterConfig.FilterID1    = 0x0;
+  sFilterConfig.FilterID2    = 0x0;   /* mask 0 -> accept any id */
 
+  /* Standard ids (AMS + uDV). */
+  sFilterConfig.IdType      = FDCAN_STANDARD_ID;
+  sFilterConfig.FilterIndex = 0;
+  if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* Extended ids (kept; nothing the ECU needs on this bus is extended, but
+   * harmless to keep accepting them). */
+  sFilterConfig.IdType      = FDCAN_EXTENDED_ID;
+  sFilterConfig.FilterIndex = 0;
   if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK)
   {
     Error_Handler();
