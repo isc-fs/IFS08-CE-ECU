@@ -1116,7 +1116,7 @@ static void test_ams_error(void)
     control_out_t out;
     const int AMS_ERROR_ST = 7;   /* CTRL_ST_AMS_ERROR */
     const int WAIT_VDC_ST  = 0;   /* CTRL_ST_WAIT_INV_VDC_CONFIG */
-    uint8_t i, zero_torque;
+    uint8_t i, standby_cmd, reset_cmd, any_torque;
 
     printf("\n========================================\n");
     printf("  SIL TEST: AMS Start/Error consumer\n");
@@ -1133,19 +1133,34 @@ static void test_ams_error(void)
     Control_Step10ms(&in, &out);
     sil_check(out.fsm_state != AMS_ERROR_ST, "A1: AMS Start -> not inhibited");
 
-    /* AMS latches Error (5): inhibit regardless of ok_precarga; zero torque. */
-    in.ams_state = 5u;
+    /* AMS latches Error (5), inverter NOT faulted: inhibit (regardless of
+       ok_precarga), command STANDBY (legacy idle, 0x360=0x01), never torque. */
+    in.ams_state = 5u; in.inv_state = 0u;
     Control_Step10ms(&in, &out);
     sil_check(out.fsm_state == AMS_ERROR_ST, "A2: AMS Error -> CTRL_ST_AMS_ERROR");
-    zero_torque = 0u;
+    standby_cmd = 0u; any_torque = 0u;
     for (i = 0u; i < out.count; i++)
-        if (out.msgs[i].id == 0x362u && out.msgs[i].data[2] == 0u && out.msgs[i].data[3] == 0u)
-            zero_torque = 1u;
-    sil_check(zero_torque == 1u, "A3: AMS Error -> zero-torque (0x362) commanded");
+    {
+        if (out.msgs[i].id == 0x360u && out.msgs[i].data[2] == 0x01u) standby_cmd = 1u; /* INV_MODE_STANDBY */
+        if (out.msgs[i].id == 0x362u) any_torque = 1u;
+    }
+    sil_check(standby_cmd == 1u, "A3: AMS Error (inv idle) -> STANDBY (0x360=0x01)");
+    sil_check(any_torque == 0u, "A3b: AMS Error -> no torque frame (0x362) emitted");
 
-    /* Still Error: stays inhibited, no precharge retry / progress. */
+    /* Still Error but the inverter has soft-faulted (10, lost HV): use the SAME
+       legacy recovery command RESET so it is not left stuck in fault when the
+       AMS returns. Still no torque. */
+    in.inv_state = 10u;
     Control_Step10ms(&in, &out);
     sil_check(out.fsm_state == AMS_ERROR_ST, "A4: still Error -> still inhibited (no retry)");
+    reset_cmd = 0u; any_torque = 0u;
+    for (i = 0u; i < out.count; i++)
+    {
+        if (out.msgs[i].id == 0x360u && out.msgs[i].data[2] == 0x13u) reset_cmd = 1u; /* INV_MODE_RESET */
+        if (out.msgs[i].id == 0x362u) any_torque = 1u;
+    }
+    sil_check(reset_cmd == 1u, "A4b: AMS Error + inv soft-fault -> RESET (0x360=0x13)");
+    sil_check(any_torque == 0u, "A4c: AMS Error + fault -> still no torque (0x362)");
 
     /* AMS recovers (power-cycled back to Start): the ECU re-arms from the top. */
     in.ams_state = 0u; in.inv_vdc_ready = 0u;

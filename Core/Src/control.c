@@ -410,9 +410,21 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         break;
 
       case CTRL_ST_AMS_ERROR:
-        /* AMS latched in Error: command zero torque, do not retry precharge.
-         * Re-arm only once the AMS leaves Error (power-cycled back to Start). */
-        emit_inv_zero_torque(out);
+        /* AMS latched in Error: inhibit drive (never command torque) and do not
+         * retry precharge. Keep the inverter recoverable using the SAME legacy
+         * commands emit_legacy_inverter_runtime would send — RESET to clear a
+         * fault, STANDBY to idle — so it is not left stuck in fault when the AMS
+         * returns. (Leaving ACTIVE with s_flag_r2d cleared would otherwise skip
+         * the legacy recovery path entirely.) Re-arm only once the AMS leaves
+         * Error (power-cycled back to Start). */
+        if (in->inv_state == 10u || in->inv_state == 11u)
+        {
+          emit_inv_mode(out, INV_MODE_RESET);
+        }
+        else
+        {
+          emit_inv_mode(out, INV_MODE_STANDBY);
+        }
         if (in->ams_state != AMS_STATE_ERROR)
         {
           s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
