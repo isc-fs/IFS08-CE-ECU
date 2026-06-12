@@ -17,6 +17,7 @@ extern FDCAN_HandleTypeDef hfdcan3;
 #define ID_ACU_CURR_PACK_DCDC  0x135u
 #define ID_ACU_TMAX_012        0x136u
 #define ID_ACU_TMAX_34_DCDC    0x137u
+#define ID_AMS_STATUS          0x4A0u  /* AMS status; byte0 = fsm::State (0..5) */
 
 #define TX_STATE_2             0x461u
 #define TX_STATE_4             0x463u
@@ -146,6 +147,12 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
         case ID_ACK_PRECARGA:
           /* AMS v1.2+ publishes 0x020[0] = 1 when precharge is complete. */
           st->ok_precarga = (m->data[0] != 0u) ? 1u : 0u;
+          break;
+
+        case ID_AMS_STATUS:
+          /* AMS FSM state (0x4A0[0]): 0=Start..5=Error. Lets the ECU tell a
+           * re-armable Start from a latched Error (ok_precarga can't). */
+          st->ams_state = m->data[0];
           break;
 
         case ID_V_CELDA_MIN:
