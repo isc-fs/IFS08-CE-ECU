@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x700  PitDiag_status -- FSM / inverter state / control flags / torque +
+ * min cell voltage. Mirrors PitDiag_BuildStatus(). 100 ms while enabled.
+ *
+ * `flags` is a composite bitmask the adapter packs:
+ *   bit0 ev_2_3   bit1 t11_8_9   bit2 rtds_active
+ *   bit3 ok_precarga   bit4 boton_arranque
+ */
+
+CAN_MSG(PitDiag_status, 0x700, 6, "VCU", 100)
+    FIELD_LE (fsm_state,     uint8_t,  0, 8,  1, 0, "enum")
+    FIELD_LE (inv_state,     uint8_t,  1, 8,  1, 0, "enum")
+    FIELD_LE (flags,         uint8_t,  2, 8,  1, 0, "bitmask")
+    FIELD_LE (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
+    FIELD_BE (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
+CAN_MSG_END(PitDiag_status)

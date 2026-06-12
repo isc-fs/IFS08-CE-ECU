@@ -1,4 +1,5 @@
 #include "pit_diag.h"
+#include "can/can_codecs.h"   /* code-first CAN DSL: generated pit-diag encoders */
 
 #include <string.h>
 
@@ -19,68 +20,73 @@ static void frame_init(can_msg_t *m, uint32_t id, uint8_t dlc)
   m->ide = 0u;
 }
 
-static void put_u16_be(uint8_t *p, uint16_t v)
-{
-  p[0] = (uint8_t)(v >> 8);
-  p[1] = (uint8_t)(v & 0xFFu);
-}
+/* Each builder is a thin adapter over the code-first CAN DSL: the byte layout,
+ * id and dlc come from Core/Inc/can/messages/pit_diag_*.def via the generated
+ * encoders + PitDiag_*_ID/DLC. frame_init still owns the envelope (bus/ide and
+ * the zeroed buffer the null-input path returns). Parity vs the old hand-rolled
+ * bytes is asserted by SIL --test-pit-diag and --test-dsl-parity. */
 
 void PitDiag_BuildAck(uint8_t enabled, can_msg_t *m)
 {
-  frame_init(m, PIT_DIAG_ACK_ID, 1u);
-  m->data[0] = enabled ? 1u : 0u;
+  PitDiag_ack_t a = {0};
+  frame_init(m, PitDiag_ack_ID, PitDiag_ack_DLC);
+  a.enabled = enabled ? 1u : 0u;
+  encode_PitDiag_ack(&a, m->data);
 }
 
 void PitDiag_BuildStatus(const app_inputs_t *in, const control_out_t *out, can_msg_t *m)
 {
-  frame_init(m, PIT_DIAG_STATUS_ID, 6u);
+  PitDiag_status_t s = {0};
+  frame_init(m, PitDiag_status_ID, PitDiag_status_DLC);
   if (!in || !out) return;
-  m->data[0] = out->fsm_state;
-  m->data[1] = in->inv_state;
-  m->data[2] = (uint8_t)((out->flag_ev_2_3  ? 0x01u : 0u) |
-                         (out->flag_t11_8_9 ? 0x02u : 0u) |
-                         (out->rtds_active  ? 0x04u : 0u) |
-                         (in->ok_precarga   ? 0x08u : 0u) |
-                         (in->boton_arranque? 0x10u : 0u));
-  m->data[3] = (uint8_t)out->torque_pct;
-  put_u16_be(&m->data[4], in->v_celda_min);
+  s.fsm_state     = out->fsm_state;
+  s.inv_state     = in->inv_state;
+  s.flags         = (uint8_t)((out->flag_ev_2_3  ? 0x01u : 0u) |
+                              (out->flag_t11_8_9 ? 0x02u : 0u) |
+                              (out->rtds_active  ? 0x04u : 0u) |
+                              (in->ok_precarga   ? 0x08u : 0u) |
+                              (in->boton_arranque? 0x10u : 0u));
+  s.torque_pct    = (uint8_t)out->torque_pct;
+  s.v_cell_min_mV = in->v_celda_min;
+  encode_PitDiag_status(&s, m->data);
 }
 
 void PitDiag_BuildPedals(const app_inputs_t *in, can_msg_t *m)
 {
-  frame_init(m, PIT_DIAG_PEDALS_ID, 6u);
+  PitDiag_pedals_t p = {0};
+  frame_init(m, PitDiag_pedals_ID, PitDiag_pedals_DLC);
   if (!in) return;
-  put_u16_be(&m->data[0], in->s1_aceleracion);
-  put_u16_be(&m->data[2], in->s2_aceleracion);
-  put_u16_be(&m->data[4], in->s_freno);
+  p.apps1_raw = in->s1_aceleracion;
+  p.apps2_raw = in->s2_aceleracion;
+  p.brake_raw = in->s_freno;
+  encode_PitDiag_pedals(&p, m->data);
 }
 
 void PitDiag_BuildInverter(const app_inputs_t *in, can_msg_t *m)
 {
-  frame_init(m, PIT_DIAG_INVERTER_ID, 7u);
+  PitDiag_inverter_t iv = {0};
+  frame_init(m, PitDiag_inverter_ID, PitDiag_inverter_DLC);
   if (!in) return;
-  put_u16_be(&m->data[0], in->inv_dc_bus_voltage);
-  m->data[2] = (uint8_t)((uint32_t)in->inv_rpm >> 24);
-  m->data[3] = (uint8_t)((uint32_t)in->inv_rpm >> 16);
-  m->data[4] = (uint8_t)((uint32_t)in->inv_rpm >> 8);
-  m->data[5] = (uint8_t)((uint32_t)in->inv_rpm);
-  m->data[6] = in->inv_error;
+  iv.dc_bus_voltage = in->inv_dc_bus_voltage;
+  iv.inv_rpm        = in->inv_rpm;
+  iv.inv_error      = in->inv_error;
+  encode_PitDiag_inverter(&iv, m->data);
 }
 
 void PitDiag_BuildFwInfo(uint8_t major, uint8_t minor, uint8_t patch,
                          const uint8_t *git4, can_msg_t *m)
 {
-  frame_init(m, PIT_DIAG_FWINFO_ID, 7u);
-  m->data[0] = major;
-  m->data[1] = minor;
-  m->data[2] = patch;
+  PitDiag_fwinfo_t fw = {0};
+  frame_init(m, PitDiag_fwinfo_ID, PitDiag_fwinfo_DLC);
+  fw.fw_major = major;
+  fw.fw_minor = minor;
+  fw.fw_patch = patch;
   if (git4)
   {
-    m->data[3] = git4[0];
-    m->data[4] = git4[1];
-    m->data[5] = git4[2];
-    m->data[6] = git4[3];
+    fw.git_hash = ((uint32_t)git4[0] << 24) | ((uint32_t)git4[1] << 16) |
+                  ((uint32_t)git4[2] << 8)  |  (uint32_t)git4[3];
   }
+  encode_PitDiag_fwinfo(&fw, m->data);
 }
 
 uint8_t PitDiag_Collect(const app_inputs_t *in, const control_out_t *out,
