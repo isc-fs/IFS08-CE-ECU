@@ -41,4 +41,7 @@ jobs:
           dbc-path:         docs/dbc/ecu.dbc
           cmake-source-dir: tests/sil
           dump-target:      ecu_dbc_dump
-          dump-binary-path: tests/sil/ecu_dbc_dump
+          # When cmake-source-dir is tests/sil, the build root IS tests/sil
+          # from the build's perspective, so ecu_dbc_dump lands at the top
+          # of the build dir -- not nested under tests/sil/.
+          dump-binary-path: ecu_dbc_dump
