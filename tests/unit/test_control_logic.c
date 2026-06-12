@@ -156,7 +156,7 @@ TEST(ControlLogic, control_step_waits_for_vdc_config_before_precharge)
     TEST_ASSERT_EQUAL_INT(0, out.torque_pct);
 }
 
-TEST(ControlLogic, control_step_precharge_button_emits_request_frame)
+TEST(ControlLogic, control_step_precharge_emits_only_heartbeat)
 {
     app_inputs_t in = mock_input_nominal();
     control_out_t out = {0};
@@ -166,13 +166,13 @@ TEST(ControlLogic, control_step_precharge_button_emits_request_frame)
 
     Control_Step10ms(&in, &out);
 
-    TEST_ASSERT_EQUAL_INT(2, out.count);
+    /* The 0x600 precharge command was retired AMS-side (the AMS self-triggers
+       precharge from its TSMS/DASH_CHG inputs). Holding the start button during
+       precharge therefore emits only the 0x100 DC-bus heartbeat. */
+    TEST_ASSERT_EQUAL_INT(1, out.count);
     TEST_ASSERT_EQUAL_HEX32(0x100u, out.msgs[0].id);
-    TEST_ASSERT_EQUAL_HEX32(0x600u, out.msgs[1].id);
-    TEST_ASSERT_EQUAL_INT(CAN_BUS_ACU, out.msgs[1].bus);
+    TEST_ASSERT_EQUAL_INT(CAN_BUS_ACU, out.msgs[0].bus);
     TEST_ASSERT_EQUAL_INT(0, out.msgs[0].ide);
-    TEST_ASSERT_EQUAL_INT(0, out.msgs[1].ide);
-    TEST_ASSERT_EQUAL_HEX8(0x01u, out.msgs[1].data[0]);
 }
 
 TEST(ControlLogic, control_step_waits_for_inverter_standby_before_runtime_commands)
@@ -324,7 +324,7 @@ TEST_GROUP_RUNNER(ControlLogic)
     RUN_TEST_CASE(ControlLogic, t1189_sensor_mismatch_zeroes_torque);
     RUN_TEST_CASE(ControlLogic, control_step_boot_to_precharge);
     RUN_TEST_CASE(ControlLogic, control_step_waits_for_vdc_config_before_precharge);
-    RUN_TEST_CASE(ControlLogic, control_step_precharge_button_emits_request_frame);
+    RUN_TEST_CASE(ControlLogic, control_step_precharge_emits_only_heartbeat);
     RUN_TEST_CASE(ControlLogic, control_step_waits_for_inverter_standby_before_runtime_commands);
     RUN_TEST_CASE(ControlLogic, control_step_enables_rtds_during_r2d_delay);
     RUN_TEST_CASE(ControlLogic, control_step_run_emits_legacy_inverter_frames);

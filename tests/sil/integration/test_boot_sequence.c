@@ -13,7 +13,6 @@
  *   RX_SETPOINT_1     = 0x360  (ECU→INV, dlc=3, data[2]=mode, ide=0)
  *   RX_SETPOINT_3     = 0x362  (ECU→INV, dlc=4, data[2:3] LE = legacy torque)
  *   ID_DC_BUS_VOLTAGE = 0x100  (ECU→ACU, dlc=2, ide=0)
- *   ID_PRECHARGE_CMD  = 0x600  (ECU→ACU, dlc=2, ide=0)
  *
  * Precharge complete: ok_precarga (AMS 0x020) ONLY. The ECU no longer
  *   completes precharge on a DC-bus voltage threshold; the AMS owns that
@@ -47,7 +46,6 @@ extern osMessageQueueId_t   canTxQueueHandle;
 #define BT_RX_SETPOINT_1     0x360u
 #define BT_RX_SETPOINT_3     0x362u
 #define BT_ID_DC_BUS_V       0x100u
-#define BT_ID_PRECHARGE_CMD  0x600u
 
 /* Inverter mode bytes sent in SETPOINT_1.data[2] */
 #define BT_MODE_STANDBY  0x01u

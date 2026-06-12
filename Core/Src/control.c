@@ -12,7 +12,6 @@
 #define UMBRAL_FRENO_APPS 3000u
 #define UMBRAL_FRENO_ARRANQUE 900u
 #define ID_DC_BUS_VOLTAGE 0x100u
-#define ID_PRECHARGE_CMD  0x600u
 #define RX_SETPOINT_1     0x360u
 #define RX_SETPOINT_3     0x362u
 #define INV_MODE_STANDBY  0x01u
@@ -109,16 +108,6 @@ static void build_acu_dc_bus_frame(uint16_t dc_bus_voltage, can_msg_t *m)
   m->ide = 0u;
   m->data[0] = (uint8_t)(dc_bus_voltage & 0xFFu);
   m->data[1] = (uint8_t)((dc_bus_voltage >> 8) & 0xFFu);
-}
-
-static void build_acu_precharge_cmd(uint8_t button_pressed, can_msg_t *m)
-{
-  memset(m, 0, sizeof(*m));
-  m->bus = CAN_BUS_ACU;
-  m->id = ID_PRECHARGE_CMD;
-  m->dlc = 2u;
-  m->ide = 0u;
-  m->data[0] = button_pressed ? 1u : 0u;
 }
 
 static uint8_t precharge_complete(const app_inputs_t *in)
@@ -339,15 +328,10 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         }
         else
         {
-          /* 0x100 heartbeat is emitted unconditionally at the end of the
-           * step (see Control_Step10ms tail); here we only add the
-           * precharge command when the start button is held. */
-          if (in->boton_arranque)
-          {
-            can_msg_t precharge_cmd;
-            build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
-            out_push(out, &precharge_cmd);
-          }
+          /* 0x100 heartbeat streams unconditionally at the tail of the step.
+           * The AMS self-triggers precharge from its own TSMS/DASH_CHG inputs
+           * (CAN 0x600 was retired AMS-side), so the ECU sends no precharge
+           * command here — it just waits for the 0x020 completion ack. */
           s_precharge_start_tick = osKernelGetTickCount();
           s_state = CTRL_ST_WAIT_PRECHARGE_ACK;
         }
@@ -367,15 +351,9 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         }
         else
         {
-          /* 0x100 heartbeat is emitted unconditionally at the end of the
-           * step (see Control_Step10ms tail); here we only add the
-           * precharge command when the start button is held. */
-          if (in->boton_arranque)
-          {
-            can_msg_t precharge_cmd;
-            build_acu_precharge_cmd(in->boton_arranque, &precharge_cmd);
-            out_push(out, &precharge_cmd);
-          }
+          /* Still precharging: nothing to emit here. The 0x100 heartbeat
+           * streams at the tail of the step; the AMS owns precharge (its own
+           * TSMS/DASH_CHG inputs) and signals completion via 0x020. */
         }
         break;
 
