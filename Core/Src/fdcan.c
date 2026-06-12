@@ -120,9 +120,13 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Init.AutoRetransmission = DISABLE;
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
-  hfdcan2.Init.NominalPrescaler = 6;
+  /* 500 kbps @ 68.75% sample point (24 MHz HSE / (3 * (1+10+5))); matches the
+     AMS accumulator bus (its FDCAN1: prescaler 3 / TS1 10 / TS2 5). Was 6/2/5
+     -- same 500 kbps but a 37.5% sample point, too early and mismatched with
+     the AMS on the shared bus. */
+  hfdcan2.Init.NominalPrescaler = 3;
   hfdcan2.Init.NominalSyncJumpWidth = 1;
-  hfdcan2.Init.NominalTimeSeg1 = 2;
+  hfdcan2.Init.NominalTimeSeg1 = 10;
   hfdcan2.Init.NominalTimeSeg2 = 5;
   hfdcan2.Init.DataPrescaler = 1;
   hfdcan2.Init.DataSyncJumpWidth = 1;
