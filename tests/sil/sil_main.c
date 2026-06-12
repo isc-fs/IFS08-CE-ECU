@@ -15,6 +15,7 @@
 #include "app_state.h"
 #include "app_runtime.h"
 #include "can.h"
+#include "can/can_codecs.h"   /* code-first CAN DSL: generated encoders/decoders */
 #include "control.h"
 #include "bootloader.h"
 #include "pit_diag.h"
@@ -1153,6 +1154,71 @@ static void test_ams_error(void)
     SIL_Results_Close();
 }
 
+/* Code-first CAN DSL parity: the generated encoder must reproduce the exact
+ * wire bytes the hand-rolled build_acu_dc_bus_frame() produced (the contract
+ * the AMS decodes), and the .def-derived id/dlc must match. Replaces the C++
+ * original's compile-time overlap guard with a runtime encode/decode check. */
+static void test_dsl_parity(void)
+{
+    uint8_t i;
+
+    printf("\n========================================\n");
+    printf("  SIL TEST: code-first CAN DSL parity\n");
+    printf("========================================\n\n");
+    SIL_Results_Init("dsl_parity.log");
+    SIL_Results_Log("DSL_PARITY", "STARTED", "0x100 VCU_heartbeat encoder/DBC parity");
+
+    /* D1: envelope constants come from the .def (single source of truth). */
+    sil_check(VCU_heartbeat_ID == 0x100 && VCU_heartbeat_DLC == 2,
+              "D1: VCU_heartbeat_ID/DLC == 0x100/2 (from .def)");
+
+    /* D2: wire layout == legacy hand-rolled (dc_bus_voltage little-endian in
+       bytes 0..1). Vectors are the exact bytes the old encoder emitted. */
+    {
+        static const struct { uint16_t v; uint8_t b0, b1; } vec[] = {
+            { 0x0000u, 0x00u, 0x00u },
+            { 0x1234u, 0x34u, 0x12u },
+            { 300u,    0x2Cu, 0x01u },   /* the old precharge threshold */
+            { 0xFFFFu, 0xFFu, 0xFFu },
+        };
+        uint8_t ok = 1u;
+        for (i = 0u; i < (uint8_t)(sizeof(vec) / sizeof(vec[0])); i++) {
+            VCU_heartbeat_t in = {0};
+            uint8_t d[8] = { 0xAAu, 0xAAu, 0xAAu, 0xAAu, 0xAAu, 0xAAu, 0xAAu, 0xAAu };
+            in.dc_bus_voltage = vec[i].v;
+            encode_VCU_heartbeat(&in, d);
+            if (d[0] != vec[i].b0 || d[1] != vec[i].b1) ok = 0u;
+        }
+        sil_check(ok == 1u, "D2: encoder emits legacy LE byte layout for all vectors");
+    }
+
+    /* D3: encode -> decode round-trip is identity. */
+    {
+        VCU_heartbeat_t a = {0};
+        VCU_heartbeat_t b = {0};
+        uint8_t buf[8] = {0};
+        a.dc_bus_voltage = 0xBEEFu;
+        encode_VCU_heartbeat(&a, buf);
+        decode_VCU_heartbeat(buf, &b);
+        sil_check(b.dc_bus_voltage == 0xBEEFu, "D3: encode/decode round-trip is identity");
+    }
+
+    /* D4: build_acu_dc_bus_frame (the adapter) is exercised by the boot/full-
+       cycle suites which assert the 0x100 frame on the ACU bus; here we just
+       confirm the generated path is wired by re-encoding a known value. */
+    {
+        VCU_heartbeat_t in = {0};
+        uint8_t d[8] = {0};
+        in.dc_bus_voltage = 0x0102u;
+        encode_VCU_heartbeat(&in, d);
+        sil_check(d[0] == 0x02u && d[1] == 0x01u && d[2] == 0x00u,
+                  "D4: only bytes 0..1 written, dlc-clean tail");
+    }
+
+    SIL_Results_Log("DSL_PARITY", (sil_test_failures == 0) ? "SUCCESS" : "FAIL", "CAN DSL parity");
+    SIL_Results_Close();
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n", prog);
@@ -1170,6 +1236,7 @@ static void print_usage(const char *prog)
     printf("  --test-bootloader-trigger  Bootloader reboot-trigger payload gating\n");
     printf("  --test-pit-diag          Pit-diag command gating + encoders + cadence\n");
     printf("  --test-ams-error         AMS 0x4A0 Error inhibit + re-arm\n");
+    printf("  --test-dsl-parity        Code-first CAN DSL encoder/DBC parity (0x100)\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
     printf("  --help                   Print this message\n");
@@ -1220,6 +1287,8 @@ int main(int argc, char *argv[])
         test_pit_diag();
     } else if (strcmp(test_name, "--test-ams-error") == 0) {
         test_ams_error();
+    } else if (strcmp(test_name, "--test-dsl-parity") == 0) {
+        test_dsl_parity();
     } else if (strcmp(test_name, "--test-all") == 0) {
         printf("[MAIN] Running all SIL tests...\n\n");
         test_boot_sequence();
@@ -1234,6 +1303,7 @@ int main(int argc, char *argv[])
         test_bootloader_trigger();
         test_pit_diag();
         test_ams_error();
+        test_dsl_parity();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);

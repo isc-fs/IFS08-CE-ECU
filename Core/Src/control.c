@@ -1,4 +1,5 @@
 #include "control.h"
+#include "can/can_codecs.h"   /* code-first CAN DSL: VCU_heartbeat_t + encoder */
 #include <string.h>
 
 /* APPS calibration — measure raw ADC at pedal min and max when mounted.
@@ -11,7 +12,8 @@
 /* Thresholds */
 #define UMBRAL_FRENO_APPS 3000u
 #define UMBRAL_FRENO_ARRANQUE 900u
-#define ID_DC_BUS_VOLTAGE 0x100u
+/* 0x100 (DC-bus heartbeat) id/dlc now come from the .def via VCU_heartbeat_ID/
+ * VCU_heartbeat_DLC (can/can_codecs.h) — single source of truth. */
 #define RX_SETPOINT_1     0x360u
 #define RX_SETPOINT_3     0x362u
 #define INV_MODE_STANDBY  0x01u
@@ -101,13 +103,20 @@ static void build_inv_torque_cmd(uint16_t legacy_torque, can_msg_t *m)
 
 static void build_acu_dc_bus_frame(uint16_t dc_bus_voltage, can_msg_t *m)
 {
+  /* Thin adapter over the code-first CAN DSL: the byte layout, id and dlc all
+   * come from Core/Inc/can/messages/vcu_heartbeat.def via the generated
+   * encoder + VCU_heartbeat_ID/DLC. The .def is the single source of truth the
+   * committed docs/dbc/ecu.dbc is also generated from, so encoder and DBC
+   * cannot drift. Parity asserted in SIL --test-dsl-parity. */
+  VCU_heartbeat_t in = {0};
+  in.dc_bus_voltage = dc_bus_voltage;
+
   memset(m, 0, sizeof(*m));
   m->bus = CAN_BUS_ACU;
-  m->id = ID_DC_BUS_VOLTAGE;
-  m->dlc = 2u;
-  m->ide = 0u;
-  m->data[0] = (uint8_t)(dc_bus_voltage & 0xFFu);
-  m->data[1] = (uint8_t)((dc_bus_voltage >> 8) & 0xFFu);
+  m->id  = VCU_heartbeat_ID;   /* 0x100, from the .def */
+  m->dlc = VCU_heartbeat_DLC;  /* 2, from the .def */
+  m->ide = 0u;                 /* standard 11-bit id */
+  encode_VCU_heartbeat(&in, m->data);
 }
 
 static uint8_t precharge_complete(const app_inputs_t *in)

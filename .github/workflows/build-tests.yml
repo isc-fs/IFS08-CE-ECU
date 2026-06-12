@@ -42,7 +42,8 @@ jobs:
                  --test-rtos-startup --test-error-voltage --test-error-temp \
                  --test-safety-brake --test-dynamic-states \
                  --test-legacy-compat --test-precharge-no-ack \
-                 --test-bootloader-trigger --test-pit-diag --test-ams-error"
+                 --test-bootloader-trigger --test-pit-diag --test-ams-error \
+                 --test-dsl-parity"
           fail=0
           for flag in $flags; do
             out=$("$SIL" $flag 2>&1) ; code=$?
@@ -58,6 +59,19 @@ jobs:
             fi
           done
           [ "$fail" -eq 0 ] && echo "All SIL suites passed." || { echo "::error::One or more SIL suites failed"; exit 1; }
+
+      - name: Verify DBC matches the code-first CAN DSL
+        run: |
+          set -u
+          DUMP=build-sil/tests/sil/ecu_dbc_dump
+          test -x "$DUMP" || { echo "::error::dbc_dump not built at $DUMP"; exit 1; }
+          "$DUMP" > /tmp/ecu.dbc.regen
+          if ! diff -u docs/dbc/ecu.dbc /tmp/ecu.dbc.regen; then
+            echo "::error::docs/dbc/ecu.dbc is stale — regenerate it from the DSL:"
+            echo "::error::  cmake --build build-sil --target ecu_dbc_dump && build-sil/tests/sil/ecu_dbc_dump > docs/dbc/ecu.dbc"
+            exit 1
+          fi
+          echo "DBC matches the .def descriptors (no drift)."
 
   firmware-build:
     name: Firmware cross-compile (arm-none-eabi)
