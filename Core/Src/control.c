@@ -22,6 +22,7 @@
 #define VMIN_FULL_TORQUE  3500u
 #define VMIN_MIN_TORQUE   2800u
 #define PRECHARGE_TIMEOUT_MS 10000u
+#define AMS_STATE_ERROR      5u  /* ams::fsm::State::Error in 0x4A0[0] */
 
 /* Very small helper */
 static void out_push(control_out_t *out, const can_msg_t *m)
@@ -40,7 +41,8 @@ typedef enum
   CTRL_ST_WAIT_START_BRAKE,
   CTRL_ST_R2D_DELAY,
   CTRL_ST_WAIT_INV_STANDBY,
-  CTRL_ST_ACTIVE
+  CTRL_ST_ACTIVE,
+  CTRL_ST_AMS_ERROR     /* AMS latched in Error: inhibited, no retry */
 } ctrl_state_t;
 
 static ctrl_state_t s_state;
@@ -305,6 +307,16 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
   out->flag_t11_8_9 = t1189;
   /* out->torque_pct stays 0 until the inverter reaches torque state */
 
+  /* AMS authority: a latched AMS Error (0x4A0[0] == 5) will not re-arm without
+   * a power cycle, so inhibit immediately and stop retrying precharge --
+   * ok_precarga alone can't tell Error from a re-armable Start. Overrides the
+   * FSM from any state (including ACTIVE, which cuts torque). */
+  if (in->ams_state == AMS_STATE_ERROR)
+  {
+    s_flag_r2d = 0u;
+    s_state = CTRL_ST_AMS_ERROR;
+  }
+
   for (guard = 0u; guard < 4u; guard++)
   {
     rerun = 0u;
@@ -394,6 +406,17 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         {
           s_state = CTRL_ST_ACTIVE;
           emit_legacy_inverter_runtime(in, out, torque);
+        }
+        break;
+
+      case CTRL_ST_AMS_ERROR:
+        /* AMS latched in Error: command zero torque, do not retry precharge.
+         * Re-arm only once the AMS leaves Error (power-cycled back to Start). */
+        emit_inv_zero_torque(out);
+        if (in->ams_state != AMS_STATE_ERROR)
+        {
+          s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
+          rerun = 1u;
         }
         break;
 

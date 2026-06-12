@@ -28,6 +28,7 @@ typedef struct
   /* Battery / misc */
   uint16_t v_celda_min;      /* raw / scaled */
   uint8_t  ok_precarga;      /* ack from ACU, etc. */
+  uint8_t  ams_state;        /* AMS FSM state from 0x4A0[0]: 0=Start..5=Error */
 
   /* Battery expansion */
   uint8_t  soc;              /* 0..100 or project-specific scaling */

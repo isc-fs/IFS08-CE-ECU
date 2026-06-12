@@ -1110,6 +1110,52 @@ static void test_pit_diag(void)
     SIL_Results_Close();
 }
 
+static void test_ams_error(void)
+{
+    app_inputs_t  in;
+    control_out_t out;
+    const int AMS_ERROR_ST = 7;   /* CTRL_ST_AMS_ERROR */
+    const int WAIT_VDC_ST  = 0;   /* CTRL_ST_WAIT_INV_VDC_CONFIG */
+    uint8_t i, zero_torque;
+
+    printf("\n========================================\n");
+    printf("  SIL TEST: AMS Start/Error consumer\n");
+    printf("========================================\n\n");
+    SIL_Results_Init("ams_error.log");
+    SIL_Results_Log("AMS_ERROR", "STARTED", "0x4A0[0] Error inhibit + re-arm");
+
+    Control_Init();
+
+    /* AMS in Start (0), inverter ready + precharge ack: the ECU proceeds past
+       precharge -- it does NOT inhibit just because of ok_precarga. */
+    memset(&in, 0, sizeof(in));
+    in.ams_state = 0u; in.inv_vdc_ready = 1u; in.ok_precarga = 1u;
+    Control_Step10ms(&in, &out);
+    sil_check(out.fsm_state != AMS_ERROR_ST, "A1: AMS Start -> not inhibited");
+
+    /* AMS latches Error (5): inhibit regardless of ok_precarga; zero torque. */
+    in.ams_state = 5u;
+    Control_Step10ms(&in, &out);
+    sil_check(out.fsm_state == AMS_ERROR_ST, "A2: AMS Error -> CTRL_ST_AMS_ERROR");
+    zero_torque = 0u;
+    for (i = 0u; i < out.count; i++)
+        if (out.msgs[i].id == 0x362u && out.msgs[i].data[2] == 0u && out.msgs[i].data[3] == 0u)
+            zero_torque = 1u;
+    sil_check(zero_torque == 1u, "A3: AMS Error -> zero-torque (0x362) commanded");
+
+    /* Still Error: stays inhibited, no precharge retry / progress. */
+    Control_Step10ms(&in, &out);
+    sil_check(out.fsm_state == AMS_ERROR_ST, "A4: still Error -> still inhibited (no retry)");
+
+    /* AMS recovers (power-cycled back to Start): the ECU re-arms from the top. */
+    in.ams_state = 0u; in.inv_vdc_ready = 0u;
+    Control_Step10ms(&in, &out);
+    sil_check(out.fsm_state == WAIT_VDC_ST, "A5: AMS leaves Error -> re-arm to WAIT_INV_VDC_CONFIG");
+
+    SIL_Results_Log("AMS_ERROR", (sil_test_failures == 0) ? "SUCCESS" : "FAIL", "AMS error consumer");
+    SIL_Results_Close();
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n", prog);
@@ -1126,6 +1172,7 @@ static void print_usage(const char *prog)
     printf("  --test-integration       Suites S1-S10 (test_integration.c)\n");
     printf("  --test-bootloader-trigger  Bootloader reboot-trigger payload gating\n");
     printf("  --test-pit-diag          Pit-diag command gating + encoders + cadence\n");
+    printf("  --test-ams-error         AMS 0x4A0 Error inhibit + re-arm\n");
     printf("                           -> genera tests/sil/results/integration_test.log\n");
     printf("  --test-all               Run ALL tests (incluyendo S1-S10)\n");
     printf("  --help                   Print this message\n");
@@ -1174,6 +1221,8 @@ int main(int argc, char *argv[])
         test_bootloader_trigger();
     } else if (strcmp(test_name, "--test-pit-diag") == 0) {
         test_pit_diag();
+    } else if (strcmp(test_name, "--test-ams-error") == 0) {
+        test_ams_error();
     } else if (strcmp(test_name, "--test-all") == 0) {
         printf("[MAIN] Running all SIL tests...\n\n");
         test_boot_sequence();
@@ -1187,6 +1236,7 @@ int main(int argc, char *argv[])
         test_precharge_unconfirmed();
         test_bootloader_trigger();
         test_pit_diag();
+        test_ams_error();
         test_integration_suite();   /* S1-S10 al final, genera integration_test.log */
     } else if (strcmp(test_name, "--help") == 0) {
         print_usage(argv[0]);
