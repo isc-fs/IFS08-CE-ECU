@@ -75,6 +75,15 @@ target_compile_definitions(ecu08_sil PRIVATE
     SIL_ANSI_COLORS=1      # colores ANSI en stdout (quitar si el terminal no los soporta)
 )
 
+# ---- Host tool: dbc_dump ----------------------------------------------------
+# Emits docs/dbc/ecu.dbc straight from the code-first CAN DSL descriptors
+# (Core/Inc/can/messages/*.def). Built host-side; CI regenerates and diffs the
+# committed DBC so it can never drift from the firmware encoders. Defines
+# ECU_CAN_DESCRIPTORS to pull in the pass-4 descriptor tables.
+add_executable(ecu_dbc_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/dbc_dump.c)
+target_include_directories(ecu_dbc_dump PRIVATE ../../Core/Inc)
+target_compile_options(ecu_dbc_dump PRIVATE -Wall -Wextra)
+
 # ---- Enlazar con la librería matemática (por si control.c usa floats) -------
 target_link_libraries(ecu08_sil m)
 
