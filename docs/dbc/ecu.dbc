@@ -34,6 +34,9 @@ BS_:
 
 BU_: AMS VCU ECU UDV Pit_Tool
 
+BA_DEF_ BO_  "GenMsgCycleTime" INT 0 65535;
+BA_DEF_DEF_  "GenMsgCycleTime" 0;
+
 BO_ 256 VCU_heartbeat: 2 VCU
  SG_ dc_bus_voltage : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
 
@@ -63,3 +66,8 @@ BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_patch : 16|8@1+ (1,0) [0|0] "" Vector__XXX
  SG_ git_hash : 31|32@0+ (1,0) [0|0] "hex" Vector__XXX
 
+BA_ "GenMsgCycleTime" BO_ 256 10;
+BA_ "GenMsgCycleTime" BO_ 1792 100;
+BA_ "GenMsgCycleTime" BO_ 1793 100;
+BA_ "GenMsgCycleTime" BO_ 1794 100;
+BA_ "GenMsgCycleTime" BO_ 1795 100;

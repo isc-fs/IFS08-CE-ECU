@@ -35,6 +35,12 @@ int main(void)
     printf("\nBS_:\n\n");
     printf("BU_: AMS VCU ECU UDV Pit_Tool\n\n");
 
+    /* GenMsgCycleTime attribute declaration. cantools exposes this as
+     * Message.cycle_time; DBCinator's bus_load.py reads it to size the
+     * fleet bus budget. Default 0 means "no declared cadence". */
+    printf("BA_DEF_ BO_  \"GenMsgCycleTime\" INT 0 65535;\n");
+    printf("BA_DEF_DEF_  \"GenMsgCycleTime\" 0;\n\n");
+
     for (unsigned mi = 0u; mi < ALL_MSGS_COUNT; ++mi) {
         const can_msg_desc_t *m = &ALL_MSGS[mi];
         printf("BO_ %u %s: %u %s\n", m->id, m->name, m->dlc, m->sender);
@@ -49,6 +55,16 @@ int main(void)
                    f->factor, f->offset, f->unit);
         }
         printf("\n");
+    }
+
+    /* Per-message GenMsgCycleTime attributes, emitted after every BO_
+     * they refer to. Period 0 means one-shot / on-demand -- skipped
+     * here because BA_DEF_DEF_ already covers them. */
+    for (unsigned mi = 0u; mi < ALL_MSGS_COUNT; ++mi) {
+        const can_msg_desc_t *m = &ALL_MSGS[mi];
+        if (m->period_ms > 0u) {
+            printf("BA_ \"GenMsgCycleTime\" BO_ %u %u;\n", m->id, m->period_ms);
+        }
     }
     return 0;
 }
