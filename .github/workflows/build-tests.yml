@@ -60,18 +60,12 @@ jobs:
           done
           [ "$fail" -eq 0 ] && echo "All SIL suites passed." || { echo "::error::One or more SIL suites failed"; exit 1; }
 
-      - name: Verify DBC matches the code-first CAN DSL
-        run: |
-          set -u
-          DUMP=build-sil/tests/sil/ecu_dbc_dump
-          test -x "$DUMP" || { echo "::error::dbc_dump not built at $DUMP"; exit 1; }
-          "$DUMP" > /tmp/ecu.dbc.regen
-          if ! diff -u docs/dbc/ecu.dbc /tmp/ecu.dbc.regen; then
-            echo "::error::docs/dbc/ecu.dbc is stale — regenerate it from the DSL:"
-            echo "::error::  cmake --build build-sil --target ecu_dbc_dump && build-sil/tests/sil/ecu_dbc_dump > docs/dbc/ecu.dbc"
-            exit 1
-          fi
-          echo "DBC matches the .def descriptors (no drift)."
+      # The "DBC matches the code-first CAN DSL" check that used to live
+      # here was retired when the dbcinator bot took over docs/dbc/ecu.dbc
+      # maintenance -- see .github/workflows/dbc-bot.yml. The bot
+      # regenerates the DBC on every PR and force-pushes the result onto
+      # the PR branch, so a parallel diff check here would either be
+      # redundant or race with the bot's commit.
 
   firmware-build:
     name: Firmware cross-compile (arm-none-eabi)
