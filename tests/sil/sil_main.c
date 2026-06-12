@@ -1215,6 +1215,55 @@ static void test_dsl_parity(void)
                   "D4: only bytes 0..1 written, dlc-clean tail");
     }
 
+    /* ---- pit-diag frames (0x700..0x703): the adapters are now DSL-backed;
+       assert they still reproduce the exact hand-rolled byte layout. ---- */
+    {
+        app_inputs_t  in;
+        control_out_t out;
+        can_msg_t     m;
+        uint8_t       git[4] = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
+        memset(&in, 0, sizeof(in));
+        memset(&out, 0, sizeof(out));
+
+        /* D5: status -- id/dlc from .def + flags bitmask + BE v_cell_min. */
+        out.fsm_state = 3u; in.inv_state = 6u; out.torque_pct = 50u;
+        out.flag_ev_2_3 = 1u; in.ok_precarga = 1u; in.v_celda_min = 0x0E74u;
+        PitDiag_BuildStatus(&in, &out, &m);
+        sil_check(m.id == 0x700u && m.dlc == 6u &&
+                  m.data[0] == 3u && m.data[1] == 6u &&
+                  m.data[2] == (0x01u | 0x08u) && m.data[3] == 50u &&
+                  m.data[4] == 0x0Eu && m.data[5] == 0x74u,
+                  "D5: pit-diag status -> legacy byte layout (flags + BE v_cell_min)");
+
+        /* D6: pedals -- three BE u16 raw ADC channels. */
+        in.s1_aceleracion = 0x1234u; in.s2_aceleracion = 0x5678u; in.s_freno = 0x9ABCu;
+        PitDiag_BuildPedals(&in, &m);
+        sil_check(m.id == 0x701u &&
+                  m.data[0] == 0x12u && m.data[1] == 0x34u &&
+                  m.data[2] == 0x56u && m.data[3] == 0x78u &&
+                  m.data[4] == 0x9Au && m.data[5] == 0xBCu,
+                  "D6: pit-diag pedals -> three BE u16");
+
+        /* D7: inverter -- SIGNED big-endian 32-bit rpm (FIELD_BE_S). The new
+           variant; -1000 must encode as 0xFFFFFC18 in bytes 2..5. */
+        in.inv_dc_bus_voltage = 0x0190u; in.inv_rpm = -1000; in.inv_error = 7u;
+        PitDiag_BuildInverter(&in, &m);
+        sil_check(m.id == 0x702u && m.dlc == 7u &&
+                  m.data[0] == 0x01u && m.data[1] == 0x90u &&
+                  m.data[2] == 0xFFu && m.data[3] == 0xFFu &&
+                  m.data[4] == 0xFCu && m.data[5] == 0x18u &&
+                  m.data[6] == 7u,
+                  "D7: pit-diag inverter -> signed BE32 rpm (-1000)");
+
+        /* D8: fwinfo -- version bytes + git hash as a BE u32 from 4 bytes. */
+        PitDiag_BuildFwInfo(1u, 2u, 3u, git, &m);
+        sil_check(m.id == 0x703u &&
+                  m.data[0] == 1u && m.data[1] == 2u && m.data[2] == 3u &&
+                  m.data[3] == 0xDEu && m.data[4] == 0xADu &&
+                  m.data[5] == 0xBEu && m.data[6] == 0xEFu,
+                  "D8: pit-diag fwinfo -> version + git4 (BE u32)");
+    }
+
     SIL_Results_Log("DSL_PARITY", (sil_test_failures == 0) ? "SUCCESS" : "FAIL", "CAN DSL parity");
     SIL_Results_Close();
 }

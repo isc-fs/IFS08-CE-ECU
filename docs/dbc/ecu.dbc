@@ -37,3 +37,29 @@ BU_: AMS VCU ECU UDV Pit_Tool
 BO_ 256 VCU_heartbeat: 2 VCU
  SG_ dc_bus_voltage : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
 
+BO_ 2017 PitDiag_ack: 1 VCU
+ SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
+
+BO_ 1792 PitDiag_status: 6 VCU
+ SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ inv_state : 8|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ flags : 16|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ torque_pct : 24|8@1+ (1,0) [0|0] "%" Vector__XXX
+ SG_ v_cell_min_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 1793 PitDiag_pedals: 6 VCU
+ SG_ apps1_raw : 7|16@0+ (1,0) [0|0] "adc" Vector__XXX
+ SG_ apps2_raw : 23|16@0+ (1,0) [0|0] "adc" Vector__XXX
+ SG_ brake_raw : 39|16@0+ (1,0) [0|0] "adc" Vector__XXX
+
+BO_ 1794 PitDiag_inverter: 7 VCU
+ SG_ dc_bus_voltage : 7|16@0+ (1,0) [0|0] "V" Vector__XXX
+ SG_ inv_rpm : 23|32@0- (1,0) [0|0] "rpm" Vector__XXX
+ SG_ inv_error : 48|8@1+ (1,0) [0|0] "code" Vector__XXX
+
+BO_ 1795 PitDiag_fwinfo: 7 VCU
+ SG_ fw_major : 0|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ fw_minor : 8|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ fw_patch : 16|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ git_hash : 31|32@0+ (1,0) [0|0] "hex" Vector__XXX
+

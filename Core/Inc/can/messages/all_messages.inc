@@ -9,9 +9,15 @@
  * inverter 0x461..0x466) are NOT here -- the sender owns those; we consume
  * via the sender's released DBC.
  *
- * Foundation scope (this PR): the 0x100 VCU heartbeat only -- the end-to-end
- * proof of the pipeline. The ECU-owned pit-diag frames (0x700..0x703, 0x7E1)
- * and the uDV/FDCAN2 contract (#17) land in follow-up PRs.
+ * On the DSL so far: the 0x100 VCU heartbeat and the ECU-owned pit-diag
+ * stream (0x700..0x703 + 0x7E1 ack). The uDV/FDCAN2 contract (#17) lands in a
+ * follow-up PR once the DV-side signals are pinned.
  */
 
 #include "vcu_heartbeat.def"
+
+#include "pit_diag_ack.def"
+#include "pit_diag_status.def"
+#include "pit_diag_pedals.def"
+#include "pit_diag_inverter.def"
+#include "pit_diag_fwinfo.def"

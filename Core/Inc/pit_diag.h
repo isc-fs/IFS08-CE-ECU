@@ -10,12 +10,12 @@
 #include "app_state.h"
 #include "control.h"
 
-#define PIT_DIAG_CMD_ID        0x7E0u   /* RX: enable/disable command */
-#define PIT_DIAG_ACK_ID        0x7E1u   /* TX: ack */
-#define PIT_DIAG_STATUS_ID     0x700u   /* TX: fsm / inverter / flags / torque */
-#define PIT_DIAG_PEDALS_ID     0x701u   /* TX: apps1 / apps2 / brake (raw ADC) */
-#define PIT_DIAG_INVERTER_ID   0x702u   /* TX: dc-bus / rpm / error */
-#define PIT_DIAG_FWINFO_ID     0x703u   /* TX: version + git hash */
+#define PIT_DIAG_CMD_ID        0x7E0u   /* RX: enable/disable command (consumed, not on the DSL) */
+
+/* TX frame ids + dlc now come from the code-first CAN DSL (single source of
+ * truth): PitDiag_ack_ID 0x7E1, PitDiag_status_ID 0x700, PitDiag_pedals_ID
+ * 0x701, PitDiag_inverter_ID 0x702, PitDiag_fwinfo_ID 0x703 — declared in
+ * Core/Inc/can/messages/pit_diag_*.def. */
 
 #define PIT_DIAG_ENABLE_MAGIC  0xDEADBEEFu  /* data[0..3] LE; anything else = off */
 
