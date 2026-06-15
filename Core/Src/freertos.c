@@ -1236,13 +1236,13 @@ void AppRuntime_ControlStep(void)
   }
 
 #ifndef SIL_BUILD
-  /* Pit-diag bench stream (0x700..0x703) when enabled via 0x7E0, at 100 ms. */
+  /* Pit-diag bench stream (0x700..0x703 + 0x705 brake) via 0x7E0, at 100 ms. */
   {
-    can_msg_t diag[4];
+    can_msg_t diag[5];
     uint8_t dn = PitDiag_Collect(&state_snapshot, &control_output,
                                  ecu_fw_version_major(), ecu_fw_version_minor(),
                                  ecu_fw_version_patch(), ecu_git_hash(),
-                                 diag, 4u);
+                                 diag, 5u);
     for (uint8_t i = 0; i < dn; i++) {
       can_qitem16_t qitem;
       CAN_Pack16(&diag[i], &qitem);

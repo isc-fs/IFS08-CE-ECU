@@ -19,6 +19,7 @@
 #include "pit_diag_ack.def"
 #include "pit_diag_status.def"
 #include "pit_diag_pedals.def"
+#include "pit_diag_brake.def"
 #include "pit_diag_inverter.def"
 #include "pit_diag_fwinfo.def"
 #include "pit_diag_health.def"

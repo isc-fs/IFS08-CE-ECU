@@ -48,6 +48,7 @@ void PitDiag_BuildStatus(const app_inputs_t *in, const control_out_t *out, can_m
                               (in->boton_arranque? 0x10u : 0u));
   s.torque_pct    = (uint8_t)out->torque_pct;
   s.v_cell_min_mV = in->v_celda_min;
+  s.torque_cmd    = out->torque_cmd;
   encode_PitDiag_status(&s, m->data);
 }
 
@@ -62,6 +63,16 @@ void PitDiag_BuildPedals(const app_inputs_t *in, can_msg_t *m)
   p.apps1_pct = Control_AppsPct(1u, in->s1_aceleracion);
   p.apps2_pct = Control_AppsPct(2u, in->s2_aceleracion);
   encode_PitDiag_pedals(&p, m->data);
+}
+
+void PitDiag_BuildBrake(const app_inputs_t *in, can_msg_t *m)
+{
+  PitDiag_brake_t b = {0};
+  frame_init(m, PitDiag_brake_ID, PitDiag_brake_DLC);
+  if (!in) return;
+  b.brake_pressure = Control_BrakePressure(in->s_freno);
+  b.brake_pct      = Control_BrakePct(in->s_freno);
+  encode_PitDiag_brake(&b, m->data);
 }
 
 void PitDiag_BuildInverter(const app_inputs_t *in, can_msg_t *m)
@@ -116,6 +127,7 @@ uint8_t PitDiag_Collect(const app_inputs_t *in, const control_out_t *out,
   s_div = 0u;
   if (n < max) PitDiag_BuildStatus(in, out, &frames[n++]);
   if (n < max) PitDiag_BuildPedals(in, &frames[n++]);
+  if (n < max) PitDiag_BuildBrake(in, &frames[n++]);
   if (n < max) PitDiag_BuildInverter(in, &frames[n++]);
   if (n < max) PitDiag_BuildFwInfo(major, minor, patch, git4, &frames[n++]);
   return n;

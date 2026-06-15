@@ -43,12 +43,13 @@ BO_ 256 VCU_heartbeat: 2 VCU
 BO_ 2017 PitDiag_ack: 1 VCU
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
-BO_ 1792 PitDiag_status: 6 VCU
+BO_ 1792 PitDiag_status: 8 VCU
  SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ inv_state : 8|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ flags : 16|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
  SG_ torque_pct : 24|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ v_cell_min_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ torque_cmd : 55|16@0- (1,0) [0|0] "cmd" Vector__XXX
 
 BO_ 1793 PitDiag_pedals: 8 VCU
  SG_ apps1_raw : 7|16@0+ (1,0) [0|0] "adc" Vector__XXX
@@ -56,6 +57,10 @@ BO_ 1793 PitDiag_pedals: 8 VCU
  SG_ brake_raw : 39|16@0+ (1,0) [0|0] "adc" Vector__XXX
  SG_ apps1_pct : 48|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ apps2_pct : 56|8@1+ (1,0) [0|0] "%" Vector__XXX
+
+BO_ 1797 PitDiag_brake: 3 VCU
+ SG_ brake_pressure : 7|16@0+ (0.1,0) [0|0] "bar" Vector__XXX
+ SG_ brake_pct : 16|8@1+ (1,0) [0|0] "%" Vector__XXX
 
 BO_ 1794 PitDiag_inverter: 7 VCU
  SG_ dc_bus_voltage : 7|16@0+ (1,0) [0|0] "V" Vector__XXX
@@ -79,6 +84,7 @@ BO_ 1796 PitDiag_health: 8 VCU
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
+BA_ "GenMsgCycleTime" BO_ 1797 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
