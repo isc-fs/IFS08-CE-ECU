@@ -27,6 +27,9 @@ void Diag_Log(const char *fmt, ...);
 #define DIAG_FAULT_MEMMANAGE  0xF2u
 #define DIAG_FAULT_BUSFAULT   0xF3u
 #define DIAG_FAULT_USAGEFAULT 0xF4u
+#define DIAG_FAULT_STACKOVF   0xF5u  /* FreeRTOS stack-overflow hook */
+#define DIAG_FAULT_MALLOC     0xF6u  /* FreeRTOS malloc-failed hook */
+#define DIAG_FAULT_ASSERT     0xF7u  /* configASSERT */
 
 /* Latch the reset cause (RCC->RSR) + sticky fault (RTC BKP1R) ONCE at boot,
  * before the flags are cleared. Call early in MX_FREERTOS_Init. */
@@ -35,5 +38,7 @@ uint8_t Diag_ResetCause(void);
 uint8_t Diag_LastFault(void);
 /* Stamp a fault sentinel that survives the reset; call from a fault handler. */
 void Diag_LatchFault(uint8_t code);
+/* configASSERT target: latch DIAG_FAULT_ASSERT, disable IRQs, spin. */
+void Diag_AssertFault(void);
 
 #endif /* DIAG_H */

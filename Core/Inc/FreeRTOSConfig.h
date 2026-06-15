@@ -155,7 +155,19 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
 /* USER CODE BEGIN 1 */
-#define configASSERT( x ) if ((x) == 0) {taskDISABLE_INTERRUPTS(); for( ;; );}
+/* Fault detection for the firmware-health frame (0x704, IFS08-CE-ECU#36/IWDG
+ * chase): catch the silent-corruption paths that otherwise vanish into an IWDG
+ * reset, and route each to a distinct sticky last_fault sentinel. #undef-first
+ * so this survives a CubeMX regen that might emit a default 0. */
+#undef  configCHECK_FOR_STACK_OVERFLOW
+#define configCHECK_FOR_STACK_OVERFLOW  2
+#undef  configUSE_MALLOC_FAILED_HOOK
+#define configUSE_MALLOC_FAILED_HOOK    1
+
+/* configASSERT latches DIAG_FAULT_ASSERT then disables IRQs + spins (as before)
+ * so a FreeRTOS/HAL assert is reported on the bus instead of a silent hang. */
+extern void Diag_AssertFault(void);
+#define configASSERT( x ) if ((x) == 0) { Diag_AssertFault(); }
 /* USER CODE END 1 */
 
 /* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS
