@@ -694,6 +694,11 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   Diag_Log("RTOS: MX_FREERTOS_Init enter");
+#ifndef SIL_BUILD
+  /* Latch reset cause (RCC->RSR) + sticky fault (RTC BKP1R) before anything
+   * clears them, so the 0x704 health frame can report why we last reset (#36). */
+  Diag_CaptureResetCause();
+#endif
   AppRuntime_TaskMetricsReset();
 
   s_periodic_generation++;
@@ -1049,6 +1054,44 @@ void StartDiagTask(void *argument)
     app_diag_log_imu_probe();
     app_diag_log_i2c_scan();
     app_diag_log_imu_snapshot();
+
+#ifndef SIL_BUILD
+    /* Firmware-health frame (0x704) on the ACU bus, gated by 0x7E0 like the
+     * rest of pit-diag. Emitted from THIS task (not ControlTask) so it survives
+     * a ControlTask stall -- the IWDG-reset failure mode it diagnoses (#36). */
+    if (PitDiag_Enabled())
+    {
+      /* bit b set = task ids[b] stepped since the previous health frame. */
+      static const app_task_id_t ids[8] = {
+        APP_TASK_ID_CONTROL,  APP_TASK_ID_CAN_RX, APP_TASK_ID_CAN_TX, APP_TASK_ID_TELEMETRY,
+        APP_TASK_ID_RADIO_TX, APP_TASK_ID_SD_LOG, APP_TASK_ID_DASH,   APP_TASK_ID_DIAG
+      };
+      static uint32_t s_last_step[APP_TASK_ID_COUNT] = {0};
+      uint8_t  mask = 0u;
+      size_t   fh   = xPortGetFreeHeapSize();
+      size_t   mh   = xPortGetMinimumEverFreeHeapSize();
+      uint32_t up_s = osKernelGetTickCount() / 1000u;
+      can_msg_t     hm;
+      can_qitem16_t hqi;
+
+      for (uint8_t b = 0u; b < 8u; b++)
+      {
+        const app_task_metrics_t *mt = AppRuntime_TaskMetricsGet(ids[b]);
+        uint32_t sc = (mt != NULL) ? mt->step_count : 0u;
+        if (sc != s_last_step[ids[b]]) { mask |= (uint8_t)(1u << b); }
+        s_last_step[ids[b]] = sc;
+      }
+
+      PitDiag_BuildHealth((uint16_t)((fh > 0xFFFFu) ? 0xFFFFu : fh),
+                          (uint16_t)((mh > 0xFFFFu) ? 0xFFFFu : mh),
+                          mask, Diag_ResetCause(),
+                          (uint8_t)((up_s > 0xFFu) ? 0xFFu : up_s),
+                          Diag_LastFault(), &hm);
+      CAN_Pack16(&hm, &hqi);
+      (void)osMessageQueuePut(canTxQueueHandle, &hqi, 0, 0);
+    }
+#endif
+
     osDelay(app_ms_to_ticks(1000u));
   }
 #endif

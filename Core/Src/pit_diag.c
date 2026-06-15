@@ -89,6 +89,21 @@ void PitDiag_BuildFwInfo(uint8_t major, uint8_t minor, uint8_t patch,
   encode_PitDiag_fwinfo(&fw, m->data);
 }
 
+void PitDiag_BuildHealth(uint16_t free_heap, uint16_t min_free_heap,
+                         uint8_t task_ran_mask, uint8_t reset_cause,
+                         uint8_t uptime_s, uint8_t last_fault, can_msg_t *m)
+{
+  PitDiag_health_t h = {0};
+  frame_init(m, PitDiag_health_ID, PitDiag_health_DLC);
+  h.free_heap     = free_heap;
+  h.min_free_heap = min_free_heap;
+  h.task_ran_mask = task_ran_mask;
+  h.reset_cause   = reset_cause;
+  h.uptime_s      = uptime_s;
+  h.last_fault    = last_fault;
+  encode_PitDiag_health(&h, m->data);
+}
+
 uint8_t PitDiag_Collect(const app_inputs_t *in, const control_out_t *out,
                         uint8_t major, uint8_t minor, uint8_t patch,
                         const uint8_t *git4, can_msg_t *frames, uint8_t max)

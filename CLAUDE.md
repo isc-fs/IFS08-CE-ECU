@@ -51,7 +51,17 @@ ACTIVE               →  torque runtime
 | ACU    | FDCAN2| AMS/precarga (RX 0x020/0x12C, TX 0x100/0x600) |
 | DASH   | FDCAN3| Reservado (no fuente de pedales) |
 
-Tramas TX 0x100 y 0x600: **FDCAN_EXTENDED_ID**, bus ACU, verificadas correctas vs legacy.
+`0x100` (heartbeat DC-bus) es **standard ID** (`ide=0`), bus ACU, ~10 ms en todos
+los estados. `0x600` está **retirado** (la AMS auto-dispara precarga por GPIO).
+
+**Stream pit-diag** (bus ACU, gated por `0x7E0` = `DEADBEEF`, ACK `0x7E1`):
+`0x700` estado · `0x701` pedales · `0x702` inversor · `0x703` fwinfo ·
+`0x704` **firmware-health** (heap, liveness por tarea, reset cause, fault —
+paridad con AMS `0x4A2/0x4A3`, emitido desde DiagTask, [#36]). `0x704` sobrevive
+un cuelgue de ControlTask por diseño.
+
+El **mapa CAN generado (fuente de verdad)** es [`docs/dbc/ecu.dbc`](docs/dbc/ecu.dbc),
+producido por el DSL code-first (`Core/Inc/can/messages/*.def`) + el bot dbcinator.
 
 ---
 

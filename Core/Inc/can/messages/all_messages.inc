@@ -21,3 +21,4 @@
 #include "pit_diag_pedals.def"
 #include "pit_diag_inverter.def"
 #include "pit_diag_fwinfo.def"
+#include "pit_diag_health.def"

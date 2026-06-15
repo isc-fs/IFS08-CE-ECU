@@ -42,6 +42,11 @@ void PitDiag_BuildPedals(const app_inputs_t *in, can_msg_t *m);
 void PitDiag_BuildInverter(const app_inputs_t *in, can_msg_t *m);
 void PitDiag_BuildFwInfo(uint8_t major, uint8_t minor, uint8_t patch,
                          const uint8_t *git4, can_msg_t *m);
+/* 0x704 firmware-health (IFS08-CE-ECU#36). Built from values the caller has
+ * already gathered (DiagTask), so this stays pure/host-testable. */
+void PitDiag_BuildHealth(uint16_t free_heap, uint16_t min_free_heap,
+                         uint8_t task_ran_mask, uint8_t reset_cause,
+                         uint8_t uptime_s, uint8_t last_fault, can_msg_t *m);
 
 /* Runtime enable state. */
 uint8_t PitDiag_Enabled(void);
