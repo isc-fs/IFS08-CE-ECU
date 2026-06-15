@@ -54,6 +54,32 @@ void Diag_LatchFault(uint8_t code)
   __DSB();
 }
 
+/* FreeRTOS fault hooks (configCHECK_FOR_STACK_OVERFLOW / configUSE_MALLOC_
+ * FAILED_HOOK). Each latches its sentinel then resets cleanly, so the cause
+ * surfaces in the 0x704 last_fault byte after the next app boot instead of
+ * silently corrupting into an IWDG reset. Which task overflowed is read off
+ * the health frame's task_ran_mask (the frozen bit). */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  (void)xTask;
+  (void)pcTaskName;
+  Diag_LatchFault(DIAG_FAULT_STACKOVF);
+  NVIC_SystemReset();
+}
+
+void vApplicationMallocFailedHook(void)
+{
+  Diag_LatchFault(DIAG_FAULT_MALLOC);
+  NVIC_SystemReset();
+}
+
+void Diag_AssertFault(void)
+{
+  Diag_LatchFault(DIAG_FAULT_ASSERT);
+  taskDISABLE_INTERRUPTS();
+  for (;;) { }
+}
+
 void Diag_Report(osMessageQueueId_t rxQ, osMessageQueueId_t txQ)
 {
   char buf[160];
