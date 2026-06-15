@@ -1262,6 +1262,15 @@ static void test_dsl_parity(void)
                   m.data[3] == 0xDEu && m.data[4] == 0xADu &&
                   m.data[5] == 0xBEu && m.data[6] == 0xEFu,
                   "D8: pit-diag fwinfo -> version + git4 (BE u32)");
+
+        /* D9: health (0x704, #36) -- heap BE u16s, then 4 status bytes. */
+        PitDiag_BuildHealth(12000u, 8000u, 0x05u, 4u /*IWDG*/, 10u, 0xF1u /*HardFault*/, &m);
+        sil_check(m.id == 0x704u && m.dlc == 8u &&
+                  m.data[0] == 0x2Eu && m.data[1] == 0xE0u &&   /* free_heap 12000 BE */
+                  m.data[2] == 0x1Fu && m.data[3] == 0x40u &&   /* min_free_heap 8000 BE */
+                  m.data[4] == 0x05u && m.data[5] == 0x04u &&   /* task_ran_mask, reset_cause */
+                  m.data[6] == 0x0Au && m.data[7] == 0xF1u,     /* uptime_s, last_fault */
+                  "D9: pit-diag health -> heap BE u16 + status bytes");
     }
 
     SIL_Results_Log("DSL_PARITY", (sil_test_failures == 0) ? "SUCCESS" : "FAIL", "CAN DSL parity");

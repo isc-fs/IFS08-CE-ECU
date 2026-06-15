@@ -66,8 +66,17 @@ BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_patch : 16|8@1+ (1,0) [0|0] "" Vector__XXX
  SG_ git_hash : 31|32@0+ (1,0) [0|0] "hex" Vector__XXX
 
+BO_ 1796 PitDiag_health: 8 VCU
+ SG_ free_heap : 7|16@0+ (1,0) [0|0] "B" Vector__XXX
+ SG_ min_free_heap : 23|16@0+ (1,0) [0|0] "B" Vector__XXX
+ SG_ task_ran_mask : 32|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ reset_cause : 40|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
+ SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
+
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
+BA_ "GenMsgCycleTime" BO_ 1796 1000;
