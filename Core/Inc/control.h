@@ -22,4 +22,9 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out);
 /* Computes torque percent and updates flags in a copy; caller decides what to store. */
 uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uint8_t *flag_t11_8_9);
 
+/* Raw APPS ADC -> 0..100% pedal travel for sensor 1 or 2 (same calibration the
+ * torque calc uses). Pure; used by Control_ComputeTorque and the pit-diag
+ * pedals frame so the displayed % can't drift from the control %. */
+uint8_t Control_AppsPct(uint8_t sensor, uint16_t raw);
+
 #endif /* CONTROL_H */

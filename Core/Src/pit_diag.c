@@ -59,6 +59,8 @@ void PitDiag_BuildPedals(const app_inputs_t *in, can_msg_t *m)
   p.apps1_raw = in->s1_aceleracion;
   p.apps2_raw = in->s2_aceleracion;
   p.brake_raw = in->s_freno;
+  p.apps1_pct = Control_AppsPct(1u, in->s1_aceleracion);
+  p.apps2_pct = Control_AppsPct(2u, in->s2_aceleracion);
   encode_PitDiag_pedals(&p, m->data);
 }
 

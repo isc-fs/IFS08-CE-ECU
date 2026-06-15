@@ -70,6 +70,14 @@ static uint16_t saturate_pct(float value)
   return (uint16_t)value;
 }
 
+uint8_t Control_AppsPct(uint8_t sensor, uint16_t raw)
+{
+  const uint16_t mn = (sensor == 2u) ? APPS2_ADC_MIN : APPS1_ADC_MIN;
+  const uint16_t mx = (sensor == 2u) ? APPS2_ADC_MAX : APPS1_ADC_MAX;
+  return (uint8_t)saturate_pct(((float)raw - (float)mn) /
+                               ((float)(mx - mn) / 100.0f));
+}
+
 static uint16_t torque_pct_to_legacy_command(uint16_t torque_pct)
 {
   uint16_t scaled = torque_pct;
@@ -245,10 +253,8 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 
   if (!in) return 0u;
 
-  s1_pct = saturate_pct(((float)in->s1_aceleracion - (float)APPS1_ADC_MIN) /
-                        ((float)(APPS1_ADC_MAX - APPS1_ADC_MIN) / 100.0f));
-  s2_pct = saturate_pct(((float)in->s2_aceleracion - (float)APPS2_ADC_MIN) /
-                        ((float)(APPS2_ADC_MAX - APPS2_ADC_MIN) / 100.0f));
+  s1_pct = Control_AppsPct(1u, in->s1_aceleracion);
+  s2_pct = Control_AppsPct(2u, in->s2_aceleracion);
 
   torque = 0u;
   if (s1_pct > 8u && s2_pct > 8u)
