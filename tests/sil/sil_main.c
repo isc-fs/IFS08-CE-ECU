@@ -1225,24 +1225,44 @@ static void test_dsl_parity(void)
         memset(&in, 0, sizeof(in));
         memset(&out, 0, sizeof(out));
 
-        /* D5: status -- id/dlc from .def + flags bitmask + BE v_cell_min. */
+        /* D5: status -- flags bitmask + BE v_cell_min + signed BE torque_cmd. */
         out.fsm_state = 3u; in.inv_state = 6u; out.torque_pct = 50u;
         out.flag_ev_2_3 = 1u; in.ok_precarga = 1u; in.v_celda_min = 0x0E74u;
+        out.torque_cmd = -1234; /* 0xFB2E big-endian */
         PitDiag_BuildStatus(&in, &out, &m);
-        sil_check(m.id == 0x700u && m.dlc == 6u &&
+        sil_check(m.id == 0x700u && m.dlc == 8u &&
                   m.data[0] == 3u && m.data[1] == 6u &&
                   m.data[2] == (0x01u | 0x08u) && m.data[3] == 50u &&
-                  m.data[4] == 0x0Eu && m.data[5] == 0x74u,
-                  "D5: pit-diag status -> legacy byte layout (flags + BE v_cell_min)");
+                  m.data[4] == 0x0Eu && m.data[5] == 0x74u &&
+                  m.data[6] == 0xFBu && m.data[7] == 0x2Eu,
+                  "D5: pit-diag status -> flags + BE v_cell_min + BE torque_cmd");
 
-        /* D6: pedals -- three BE u16 raw ADC channels. */
+        /* D6: pedals -- three BE u16 raw + two apps pct bytes (dlc 8). The raws
+           here are above the APPS band, so both pcts saturate to 100. */
         in.s1_aceleracion = 0x1234u; in.s2_aceleracion = 0x5678u; in.s_freno = 0x9ABCu;
         PitDiag_BuildPedals(&in, &m);
-        sil_check(m.id == 0x701u &&
+        sil_check(m.id == 0x701u && m.dlc == 8u &&
                   m.data[0] == 0x12u && m.data[1] == 0x34u &&
                   m.data[2] == 0x56u && m.data[3] == 0x78u &&
-                  m.data[4] == 0x9Au && m.data[5] == 0xBCu,
-                  "D6: pit-diag pedals -> three BE u16");
+                  m.data[4] == 0x9Au && m.data[5] == 0xBCu &&
+                  m.data[6] == 100u && m.data[7] == 100u,
+                  "D6: pit-diag pedals -> 3x BE u16 raw + apps pct (over-range -> 100)");
+
+        /* D6b: under-range APPS raw saturates to 0% (robust vs the exact cal). */
+        in.s1_aceleracion = 0u; in.s2_aceleracion = 0u;
+        PitDiag_BuildPedals(&in, &m);
+        sil_check(m.data[6] == 0u && m.data[7] == 0u,
+                  "D6b: under-range APPS raw -> 0%");
+
+        /* D6c: brake (0x705) -- under-range raw -> 0 bar / 0%; over-range -> 100%. */
+        in.s_freno = 0u;
+        PitDiag_BuildBrake(&in, &m);
+        sil_check(m.id == 0x705u && m.dlc == 3u &&
+                  m.data[0] == 0u && m.data[1] == 0u && m.data[2] == 0u,
+                  "D6c: pit-diag brake under-range -> 0 bar / 0%");
+        in.s_freno = 0xFFFFu;
+        PitDiag_BuildBrake(&in, &m);
+        sil_check(m.data[2] == 100u, "D6d: brake over-range -> 100%");
 
         /* D7: inverter -- SIGNED big-endian 32-bit rpm (FIELD_BE_S). The new
            variant; -1000 must encode as 0xFFFFFC18 in bytes 2..5. */

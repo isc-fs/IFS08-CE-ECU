@@ -8,10 +8,11 @@
  *   bit3 ok_precarga   bit4 boton_arranque
  */
 
-CAN_MSG(PitDiag_status, 0x700, 6, "VCU", 100)
-    FIELD_LE (fsm_state,     uint8_t,  0, 8,  1, 0, "enum")
-    FIELD_LE (inv_state,     uint8_t,  1, 8,  1, 0, "enum")
-    FIELD_LE (flags,         uint8_t,  2, 8,  1, 0, "bitmask")
-    FIELD_LE (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
-    FIELD_BE (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
+CAN_MSG(PitDiag_status, 0x700, 8, "VCU", 100)
+    FIELD_LE   (fsm_state,     uint8_t,  0, 8,  1, 0, "enum")
+    FIELD_LE   (inv_state,     uint8_t,  1, 8,  1, 0, "enum")
+    FIELD_LE   (flags,         uint8_t,  2, 8,  1, 0, "bitmask")
+    FIELD_LE   (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
+    FIELD_BE   (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
+    FIELD_BE_S (torque_cmd,    int16_t,  6, 16, 1, 0, "cmd")
 CAN_MSG_END(PitDiag_status)

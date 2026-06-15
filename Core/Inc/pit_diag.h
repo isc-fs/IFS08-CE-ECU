@@ -39,6 +39,7 @@ static inline uint8_t PitDiag_MatchCommand(const can_msg_t *m, uint8_t *enable)
 void PitDiag_BuildAck(uint8_t enabled, can_msg_t *m);
 void PitDiag_BuildStatus(const app_inputs_t *in, const control_out_t *out, can_msg_t *m);
 void PitDiag_BuildPedals(const app_inputs_t *in, can_msg_t *m);
+void PitDiag_BuildBrake(const app_inputs_t *in, can_msg_t *m);
 void PitDiag_BuildInverter(const app_inputs_t *in, can_msg_t *m);
 void PitDiag_BuildFwInfo(uint8_t major, uint8_t minor, uint8_t patch,
                          const uint8_t *git4, can_msg_t *m);

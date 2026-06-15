@@ -12,6 +12,12 @@
 /* Thresholds */
 #define UMBRAL_FRENO_APPS 3000u
 #define UMBRAL_FRENO_ARRANQUE 900u
+
+/* Brake-pressure sensor (S_BRAKE, PF7/ADC3) calibration — measure on-car.
+ * Travel% and pressure are both linear from rest (0 bar) to full braking. */
+#define BRAKE_ADC_MIN           400u   /* raw ADC at 0 bar / pedal rest  — PENDING CALIBRATION */
+#define BRAKE_ADC_MAX          3500u   /* raw ADC at full braking        — PENDING CALIBRATION */
+#define BRAKE_PRESSURE_MAX_BAR  100u   /* bar at BRAKE_ADC_MAX           — PENDING CALIBRATION */
 /* 0x100 (DC-bus heartbeat) id/dlc now come from the .def via VCU_heartbeat_ID/
  * VCU_heartbeat_DLC (can/can_codecs.h) — single source of truth. */
 #define RX_SETPOINT_1     0x360u
@@ -68,6 +74,30 @@ static uint16_t saturate_pct(float value)
   if (value < 0.0f) return 0u;
   if (value > 100.0f) return 100u;
   return (uint16_t)value;
+}
+
+uint8_t Control_AppsPct(uint8_t sensor, uint16_t raw)
+{
+  const uint16_t mn = (sensor == 2u) ? APPS2_ADC_MIN : APPS1_ADC_MIN;
+  const uint16_t mx = (sensor == 2u) ? APPS2_ADC_MAX : APPS1_ADC_MAX;
+  return (uint8_t)saturate_pct(((float)raw - (float)mn) /
+                               ((float)(mx - mn) / 100.0f));
+}
+
+uint8_t Control_BrakePct(uint16_t raw)
+{
+  return (uint8_t)saturate_pct(((float)raw - (float)BRAKE_ADC_MIN) /
+                               ((float)(BRAKE_ADC_MAX - BRAKE_ADC_MIN) / 100.0f));
+}
+
+uint16_t Control_BrakePressure(uint16_t raw)
+{
+  /* Linear from rest; clamped to [0, max]. Returned in 0.1-bar units. */
+  float bar = ((float)raw - (float)BRAKE_ADC_MIN) /
+              (float)(BRAKE_ADC_MAX - BRAKE_ADC_MIN) * (float)BRAKE_PRESSURE_MAX_BAR;
+  if (bar < 0.0f) bar = 0.0f;
+  if (bar > (float)BRAKE_PRESSURE_MAX_BAR) bar = (float)BRAKE_PRESSURE_MAX_BAR;
+  return (uint16_t)(bar * 10.0f);
 }
 
 static uint16_t torque_pct_to_legacy_command(uint16_t torque_pct)
@@ -150,6 +180,7 @@ static void emit_inv_mode(control_out_t *out, uint8_t mode)
 static void emit_inv_torque(control_out_t *out, uint16_t legacy_torque)
 {
   can_msg_t msg;
+  out->torque_cmd = (int16_t)legacy_torque;  /* surface the 0x362 command for pit-diag */
   build_inv_torque_cmd(legacy_torque, &msg);
   out_push(out, &msg);
 }
@@ -245,10 +276,8 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 
   if (!in) return 0u;
 
-  s1_pct = saturate_pct(((float)in->s1_aceleracion - (float)APPS1_ADC_MIN) /
-                        ((float)(APPS1_ADC_MAX - APPS1_ADC_MIN) / 100.0f));
-  s2_pct = saturate_pct(((float)in->s2_aceleracion - (float)APPS2_ADC_MIN) /
-                        ((float)(APPS2_ADC_MAX - APPS2_ADC_MIN) / 100.0f));
+  s1_pct = Control_AppsPct(1u, in->s1_aceleracion);
+  s2_pct = Control_AppsPct(2u, in->s2_aceleracion);
 
   torque = 0u;
   if (s1_pct > 8u && s2_pct > 8u)
