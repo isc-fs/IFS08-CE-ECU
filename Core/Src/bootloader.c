@@ -33,10 +33,7 @@ void Bootloader_RequestReboot(void)
   for (;;) { }  /* unreachable; silences no-return warnings */
 }
 
-void Bootloader_KickWatchdog(void)
-{
-  /* Reload key for the independent watchdog the bootloader started (~8 s)
-   * before jumping to us. Writing 0xAAAA to a non-running IWDG is a harmless
-   * no-op, so this is safe even for a standalone (no-bootloader) debug image. */
-  IWDG1->KR = 0x0000AAAAu;
-}
+/* The IWDG is now owned by the app via HAL (Core/Src/iwdg.c) — re-armed to
+ * ~500 ms in MX_IWDG1_Init() and refreshed by ControlTask via IWDG_Refresh().
+ * The old raw Bootloader_KickWatchdog() (which just poked the BL-inherited
+ * IWDG) is retired. */
