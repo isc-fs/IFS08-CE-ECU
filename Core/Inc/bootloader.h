@@ -45,10 +45,7 @@ static inline uint8_t Bootloader_MatchesTrigger(const can_msg_t *m)
  * Never returns. Firmware-only (touches HAL / system registers). */
 void Bootloader_RequestReboot(void);
 
-/* Refresh the IWDG the bootloader started (~8 s) before jumping to us. Must be
- * serviced well within that window or the chip resets; we call it every control
- * step. A no-op if no IWDG is running (e.g. a standalone debug image), so it is
- * always safe to call. Firmware-only. */
-void Bootloader_KickWatchdog(void);
+/* The IWDG is owned by the app via HAL now (Core/Src/iwdg.c: MX_IWDG1_Init +
+ * IWDG_Refresh) -- the old Bootloader_KickWatchdog() is retired. */
 
 #endif /* BOOTLOADER_H */

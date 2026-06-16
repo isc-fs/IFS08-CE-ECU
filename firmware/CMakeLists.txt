@@ -75,6 +75,7 @@ set(APP_SRC
   ${REPO}/Core/Src/adc.c
   ${REPO}/Core/Src/gpio.c
   ${REPO}/Core/Src/i2c.c
+  ${REPO}/Core/Src/iwdg.c
   ${REPO}/Core/Src/io_signals.c
   ${REPO}/Core/Src/memorymap.c
   ${REPO}/Core/Src/nrf24.c
@@ -127,6 +128,12 @@ add_executable(ECU08
   ${APP_SRC} ${HAL_SRC} ${RTOS_SRC} ${FATFS_SRC}
   ${REPO}/Core/Startup/startup_stm32h733zgtx.s
 )
+
+# Enable the HAL IWDG driver. The app owns the IWDG (Core/Src/iwdg.c), but the
+# .ioc doesn't declare IWDG1 yet, so hal_conf.h still has the module commented
+# out. Defining it here (rather than uncommenting hal_conf.h) keeps it from
+# being reverted by a CubeMX regen. Drop this once IWDG1 is added to the .ioc.
+target_compile_definitions(ECU08 PRIVATE HAL_IWDG_MODULE_ENABLED)
 
 target_link_options(ECU08 PRIVATE
   -T${LINKER_SCRIPT}

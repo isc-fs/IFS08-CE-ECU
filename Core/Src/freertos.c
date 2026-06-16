@@ -32,6 +32,7 @@
 #include "app_state.h"
 #include "app_runtime.h"
 #include "bootloader.h"
+#include "iwdg.h"
 #include "pit_diag.h"
 #include "firmware_info.h"
 #include "control.h"
@@ -865,7 +866,7 @@ void StartControlTask(void *argument)
   {
     app_task_stepped(APP_TASK_ID_CONTROL);
     AppRuntime_ControlStep();
-    Bootloader_KickWatchdog();   /* service the BL-inherited IWDG (~8 s) */
+    IWDG_Refresh();   /* refresh the app-owned IWDG (~500 ms); see iwdg.c */
     next_release += period_ticks;
     (void)osDelayUntil(next_release);
   }

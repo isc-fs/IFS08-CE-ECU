@@ -34,6 +34,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "diag.h"
+#include "iwdg.h"
 
 /* USER CODE END Includes */
 
@@ -131,6 +132,11 @@ int main(void)
   Diag_Log("BOOT: i2c2 init ok");
   /* USER CODE BEGIN 2 */
   Diag_Log("BOOT: peripherals initialized");
+  /* App-owned IWDG (parity with the AMS): re-arm the BL's watchdog to ~500 ms
+   * here -- after the slow peripheral init, before osKernelStart -- so it is
+   * alive in the pre-scheduler window. ControlTask refreshes it via
+   * IWDG_Refresh(). See Core/Src/iwdg.c. */
+  MX_IWDG1_Init();
   Diag_Log("BOOT: entering RTOS startup");
 
   /* USER CODE END 2 */
