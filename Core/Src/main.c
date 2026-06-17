@@ -18,12 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "cmsis_os2.h"
 #include "adc.h"
 #include "fatfs.h"
 #include "fdcan.h"
 #include "i2c.h"
-#include "memorymap.h"
+#include "iwdg.h"
 #include "sdmmc.h"
 #include "spi.h"
 #include "tim.h"
@@ -102,6 +103,9 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  /* NOTE: the per-step Diag_Log() calls below sit between the CubeMX MX_*_Init()
+   * calls -- CubeMX-owned code, so a regen wipes them. Re-add after any
+   * "Generate Code". They trace boot progress to the diag sink. */
   Diag_Log("BOOT: starting peripheral init sequence");
   MX_GPIO_Init();
   Diag_Log("BOOT: gpio init ok");
@@ -127,6 +131,8 @@ int main(void)
   Diag_Log("BOOT: usb otg init ok");
   MX_FATFS_Init();
   Diag_Log("BOOT: fatfs init ok");
+  MX_IWDG1_Init();   /* app-owned IWDG (~500 ms), parity with the AMS; see iwdg.c */
+  Diag_Log("BOOT: iwdg armed");
   MX_I2C2_Init();
   Diag_Log("BOOT: i2c2 init ok");
   /* USER CODE BEGIN 2 */
@@ -182,8 +188,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_LSI
+                              |RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
@@ -251,6 +259,28 @@ void PeriphCommonClock_Config(void)
 /* USER CODE END 4 */
 
 /**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM23 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM23)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
+
+/**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
@@ -265,8 +295,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

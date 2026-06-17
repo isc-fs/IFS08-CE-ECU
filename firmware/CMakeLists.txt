@@ -53,6 +53,7 @@ include_directories(
   ${REPO}/Drivers/CMSIS/Include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+  ${REPO}/Drivers/CMSIS/RTOS2/Include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
   ${REPO}/Middlewares/Third_Party/FatFs/src
   ${REPO}/FATFS/App
@@ -75,6 +76,7 @@ set(APP_SRC
   ${REPO}/Core/Src/adc.c
   ${REPO}/Core/Src/gpio.c
   ${REPO}/Core/Src/i2c.c
+  ${REPO}/Core/Src/iwdg.c
   ${REPO}/Core/Src/io_signals.c
   ${REPO}/Core/Src/memorymap.c
   ${REPO}/Core/Src/nrf24.c
@@ -89,6 +91,7 @@ set(APP_SRC
   ${REPO}/Core/Src/usb_otg.c
   ${REPO}/Core/Src/stm32h7xx_it.c
   ${REPO}/Core/Src/stm32h7xx_hal_msp.c
+  ${REPO}/Core/Src/stm32h7xx_hal_timebase_tim.c
   ${REPO}/Core/Src/system_stm32h7xx.c
   ${REPO}/Core/Src/syscalls.c
   ${REPO}/Core/Src/sysmem.c
@@ -117,6 +120,7 @@ set(FATFS_SRC
   ${REPO}/FATFS/App/fatfs.c
   ${REPO}/FATFS/Target/sd_diskio.c
   ${REPO}/FATFS/Target/bsp_driver_sd.c
+  ${REPO}/FATFS/Target/fatfs_platform.c
   ${REPO}/Middlewares/Third_Party/FatFs/src/ff.c
   ${REPO}/Middlewares/Third_Party/FatFs/src/ff_gen_drv.c
   ${REPO}/Middlewares/Third_Party/FatFs/src/diskio.c
@@ -127,6 +131,10 @@ add_executable(ECU08
   ${APP_SRC} ${HAL_SRC} ${RTOS_SRC} ${FATFS_SRC}
   ${REPO}/Core/Startup/startup_stm32h733zgtx.s
 )
+
+# IWDG1 is declared in the .ioc now, so CubeMX's hal_conf.h defines
+# HAL_IWDG_MODULE_ENABLED itself and the HAL glob picks up stm32h7xx_hal_iwdg.c
+# -- no build-time IWDG shim needed.
 
 target_link_options(ECU08 PRIVATE
   -T${LINKER_SCRIPT}

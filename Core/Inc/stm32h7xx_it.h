@@ -52,7 +52,6 @@ void MemManage_Handler(void);
 void BusFault_Handler(void);
 void UsageFault_Handler(void);
 void DebugMon_Handler(void);
-void SysTick_Handler(void);
 void FDCAN1_IT0_IRQHandler(void);
 void FDCAN2_IT0_IRQHandler(void);
 void SPI1_IRQHandler(void);
@@ -60,6 +59,7 @@ void SDMMC1_IRQHandler(void);
 void TIM16_IRQHandler(void);
 void USART10_IRQHandler(void);
 void FDCAN3_IT0_IRQHandler(void);
+void TIM23_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */

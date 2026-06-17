@@ -21,17 +21,18 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "main.h"
-#include "cmsis_os.h"
-#include "can.h"
-#include "diag.h"
-#include "telemetry.h"
-#include "test_integration.h"
+#include "FreeRTOS.h"
+#include "cmsis_os2.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "diag.h"
 #include "app_state.h"
 #include "app_runtime.h"
 #include "bootloader.h"
+#ifndef SIL_BUILD
+#include "iwdg.h"   /* HAL-typed (CubeMX-owned); the IWDG_Refresh() call is SIL-guarded */
+#endif
 #include "pit_diag.h"
 #include "firmware_info.h"
 #include "control.h"
@@ -602,6 +603,11 @@ const osMessageQueueAttr_t telemetryDashQueue_attributes = {
   .name = "telemetryDashQueue"
 };
 
+/* telemetryEventQueue: hand-managed (not declared in the .ioc). Kept in USER
+ * CODE so a CubeMX regen can't wipe it -- the pre-6.17 copy lived in the auto
+ * queue-definition section and was lost in the 6.17/HAL-1.13.0 upgrade. */
+osMessageQueueId_t telemetryEventQueueHandle;
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -662,11 +668,6 @@ osMessageQueueId_t canTxQueueHandle;
 const osMessageQueueAttr_t canTxQueue_attributes = {
   .name = "canTxQueue"
 };
-/* Definitions for telemetryEventQueue */
-osMessageQueueId_t telemetryEventQueueHandle;
-const osMessageQueueAttr_t telemetryEventQueue_attributes = {
-  .name = "telemetryEventQueue"
-};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -721,24 +722,20 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* creation of canRxQueue */
-  canRxQueueHandle = osMessageQueueNew(128, sizeof(can_qitem16_t), NULL);
-  Diag_Log("RTOS: canRxQueue %s", (canRxQueueHandle != NULL) ? "ok" : "FAIL");
+  canRxQueueHandle = osMessageQueueNew (128, sizeof(can_msg_t), &canRxQueue_attributes);
 
   /* creation of canTxQueue */
-  canTxQueueHandle = osMessageQueueNew(64, sizeof(can_qitem16_t), NULL);
-  Diag_Log("RTOS: canTxQueue %s", (canTxQueueHandle != NULL) ? "ok" : "FAIL");
-
-  /* creation of telemetryEventQueue */
-  telemetryEventQueueHandle = osMessageQueueNew(32, sizeof(telemetry_event_t), NULL);
-  Diag_Log("RTOS: telemetryEventQueue %s", (telemetryEventQueueHandle != NULL) ? "ok" : "FAIL");
+  canTxQueueHandle = osMessageQueueNew (64, sizeof(can_msg_t), &canTxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
 telemetryRadioQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
 telemetrySdQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
 telemetryDashQueueHandle = osMessageQueueNew(64, sizeof(telemetry_frame_t), NULL);
+telemetryEventQueueHandle = osMessageQueueNew(32, sizeof(telemetry_event_t), NULL);
   Diag_Log("RTOS: telemetryRadioQueue %s", (telemetryRadioQueueHandle != NULL) ? "ok" : "FAIL");
   Diag_Log("RTOS: telemetrySdQueue %s", (telemetrySdQueueHandle != NULL) ? "ok" : "FAIL");
   Diag_Log("RTOS: telemetryDashQueue %s", (telemetryDashQueueHandle != NULL) ? "ok" : "FAIL");
+  Diag_Log("RTOS: telemetryEventQueue %s", (telemetryEventQueueHandle != NULL) ? "ok" : "FAIL");
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -860,7 +857,7 @@ void StartControlTask(void *argument)
   {
     app_task_stepped(APP_TASK_ID_CONTROL);
     AppRuntime_ControlStep();
-    Bootloader_KickWatchdog();   /* service the BL-inherited IWDG (~8 s) */
+    IWDG_Refresh();   /* refresh the app-owned IWDG (~500 ms); see iwdg.c */
     next_release += period_ticks;
     (void)osDelayUntil(next_release);
   }
