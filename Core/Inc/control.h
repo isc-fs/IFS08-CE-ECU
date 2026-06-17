@@ -18,6 +18,10 @@ typedef struct
 } control_out_t;
 
 void Control_Init(void);
+/* Compute AMS-status / precharge-ACK staleness into the input booleans, using the
+ * caller's clock (osKernelGetTickCount on the target). Call once per cycle BEFORE
+ * Control_Step10ms so the FSM reads freshness as plain booleans and stays pure. */
+void Control_UpdateAmsStaleness(app_inputs_t *in, uint32_t now_tick);
 void Control_Step10ms(const app_inputs_t *in, control_out_t *out);
 
 /* Computes torque percent and updates flags in a copy; caller decides what to store. */

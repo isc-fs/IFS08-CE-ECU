@@ -1216,6 +1216,7 @@ void AppRuntime_ControlStep(void)
 
   IoSignals_InputStep();
   AppState_Snapshot(&state_snapshot);
+  Control_UpdateAmsStaleness(&state_snapshot, osKernelGetTickCount());
   Control_Step10ms(&state_snapshot, &control_output);
 
   if (g_inMutex) {

@@ -335,6 +335,12 @@ static void test_legacy_compat_harness(void)
     sil_check_bus_empty(&hfdcan2, "P2: solo el heartbeat 0x100 en el ciclo");
 
     SIL_Results_LogEvent(sil_get_time_ms(), "PHASE3", "PRECHARGE_ACK");
+    /* Model a present, running AMS (0x4A0 state = Run) before the ACK: the ECU's
+     * precharge gate now requires a fresh, non-Start AMS status alongside 0x020. */
+    {
+        uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+        (void)sil_inject_rx_frame(&hfdcan2, 0x4A0u, FDCAN_STANDARD_ID, ams, 8u);
+    }
     memset(data, 0, sizeof(data));
     data[0] = 0x01u;
     sil_check(sil_inject_rx_frame(&hfdcan2, TINT_ID_ACK_PRECARGA, FDCAN_STANDARD_ID, data, 1u) == HAL_OK,
