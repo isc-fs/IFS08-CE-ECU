@@ -120,7 +120,9 @@ void ControlTask(void *argument)
     in_snap = g_in; /* structure copy */
     osMutexRelease(g_inMutex);
 
-    /* Compute control step (pure logic) */
+    /* AMS-status / precharge-ACK staleness from the reception ticks (real clock),
+     * then the pure control step. */
+    Control_UpdateAmsStaleness(&in_snap, osKernelGetTickCount());
     Control_Step10ms(&in_snap, &out);
 
     /* Persist derived values so telemetry mirrors the active control step. */

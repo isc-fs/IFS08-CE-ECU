@@ -174,6 +174,16 @@ static void bt_reset(void)
     bt_drain(&hfdcan1);
     bt_drain(&hfdcan2);
     bt_drain(&hfdcan3);
+
+    /* Model a present, running AMS (0x4A0 byte0=3=Run) as the bench default: the
+     * precharge gate now requires a fresh, non-Start AMS status alongside the
+     * 0x020 ACK, and the staleness guard bounces the FSM back to the boot gate
+     * without it. Tests that exercise a different AMS state (e.g. Error=5) just
+     * re-inject 0x4A0 to override this default. */
+    {
+        uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+        bt_inject(&hfdcan2, 0x4A0u, ams, 8u);
+    }
 }
 
 /* ============================================================================
