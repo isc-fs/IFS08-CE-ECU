@@ -491,5 +491,57 @@ HAL_StatusTypeDef FDCAN_RuntimeBringUp(void)
   return HAL_OK;
 }
 
+/* Periodic FDCAN bus-off recovery. On the H733 M_CAN, sustained TX errors (e.g.
+ * transmitting into a bus with nothing ACKing, or a transient bus fault) drive
+ * the node to bus-off, which sets CCCR.INIT and halts BOTH TX and RX -- the node
+ * goes silent and does NOT auto-clear without a software Stop->Start. Mirrors the
+ * bootloader's Bootloader_FdcanBusOffRecover (#125 C1 / #174 NG-9). Call
+ * periodically from CanTxTask -- the only task touching FDCAN registers (RX is
+ * ISR-driven and the ISR doesn't fire on a dead bus), so there's no race.
+ * now_ms is osKernelGetTickCount() (ticks == ms at the 1 kHz tick rate). */
+void FDCAN_BusOffPoll(uint32_t now_ms)
+{
+  FDCAN_HandleTypeDef *const buses[3] = { &hfdcan1, &hfdcan2, &hfdcan3 };
+  static uint8_t  s_was_busoff[3]   = { 0U };
+  static uint32_t s_last_attempt[3] = { 0U };
+  const uint32_t RETRY_MS = 100U;
+
+  for (uint8_t b = 0U; b < 3U; b++)
+  {
+    FDCAN_HandleTypeDef *h = buses[b];
+    FDCAN_ProtocolStatusTypeDef ps = {0};
+
+    if (HAL_FDCAN_GetProtocolStatus(h, &ps) != HAL_OK)
+    {
+      continue;
+    }
+    if (ps.BusOff == 0U)
+    {
+      s_was_busoff[b] = 0U;
+      continue;
+    }
+
+    /* Bus-off: act on the first detection, then at most once per RETRY_MS --
+     * calling Stop/Start every pass would restart the rejoin sequence and the
+     * node would never actually re-join the bus. */
+    if (s_was_busoff[b] != 0U && (now_ms - s_last_attempt[b]) < RETRY_MS)
+    {
+      continue;
+    }
+    s_was_busoff[b]   = 1U;
+    s_last_attempt[b] = now_ms;
+
+    (void)HAL_FDCAN_Stop(h);            /* -> READY, INIT stays set */
+    if (HAL_FDCAN_Start(h) != HAL_OK)   /* clears INIT, arms the M_CAN auto-rejoin */
+    {
+      /* #174: a Stop/Start timeout latches State=ERROR, after which every later
+       * Stop/Start silently no-ops and the bus wedges deaf forever. Force back to
+       * READY so the next poll genuinely re-attempts the rejoin. */
+      h->State     = HAL_FDCAN_STATE_READY;
+      h->ErrorCode = HAL_FDCAN_ERROR_NONE;
+    }
+  }
+}
+
 /* USER CODE END 1 */
 

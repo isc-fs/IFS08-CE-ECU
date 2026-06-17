@@ -44,6 +44,7 @@
 #include <string.h>
 #ifndef SIL_BUILD
 extern HAL_StatusTypeDef FDCAN_RuntimeBringUp(void);
+extern void FDCAN_BusOffPoll(uint32_t now_ms);
 #endif
 
 /* USER CODE END Includes */
@@ -933,12 +934,17 @@ void StartCanTxTask(void *argument)
   can_qitem16_t tx_qitem;
   for (;;)
   {
-    if (osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, osWaitForever) == osOK)
+    /* Wake on a queued TX item, or every ~100 ms to poll FDCAN bus-off and
+     * recover (Stop/Start) -- otherwise a transient bus fault leaves us deaf
+     * with no auto-clear. Polling here (the only task touching FDCAN registers)
+     * keeps it race-free with the ISR-driven RX path. */
+    if (osMessageQueueGet(canTxQueueHandle, &tx_qitem, NULL, app_ms_to_ticks(100u)) == osOK)
     {
       app_task_stepped(APP_TASK_ID_CAN_TX);
       app_runtime_process_can_tx_item(&tx_qitem);
       AppRuntime_CanTxStep();
     }
+    FDCAN_BusOffPoll(osKernelGetTickCount());
   }
 #endif
   /* USER CODE END StartCanTxTask */
