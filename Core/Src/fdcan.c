@@ -51,6 +51,16 @@ void MX_FDCAN1_Init(void)
   /* USER CODE END FDCAN1_Init 0 */
 
   /* USER CODE BEGIN FDCAN1_Init 1 */
+  /* #48 -- FDCAN message-RAM layout. FDCAN1/2/3 share one SRAMCAN region (2560
+   * words); each instance sits at its MessageRAMOffset (in words) and the
+   * regions MUST NOT overlap. Footprints (8-byte elements): FDCAN1 = 387 words,
+   * FDCAN2 = FDCAN3 = 195 words. So:
+   *     FDCAN1 -> offset 0    [0   .. 387)
+   *     FDCAN2 -> offset 387  [387 .. 582)
+   *     FDCAN3 -> offset 582  [582 .. 777)   (end 777 < 2560, no overflow)
+   * All three were 0 -> total overlap -> cross-bus RX corruption -> boot hang.
+   * MessageRAMOffset is NOT a CubeMX .ioc parameter, so a regen resets all three
+   * to 0 -- RE-APPLY 0 / 387 / 582 after any "Generate Code". */
 
   /* USER CODE END FDCAN1_Init 1 */
   hfdcan1.Instance = FDCAN1;
@@ -112,6 +122,8 @@ void MX_FDCAN2_Init(void)
   /* USER CODE END FDCAN2_Init 0 */
 
   /* USER CODE BEGIN FDCAN2_Init 1 */
+  /* #48: MessageRAMOffset below MUST be 387, not CubeMX's 0 (overlaps FDCAN1).
+   * See the layout in MX_FDCAN1_Init. Re-apply after any CubeMX regen. */
 
   /* USER CODE END FDCAN2_Init 1 */
   hfdcan2.Instance = FDCAN2;
@@ -128,7 +140,7 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Init.DataSyncJumpWidth = 1;
   hfdcan2.Init.DataTimeSeg1 = 1;
   hfdcan2.Init.DataTimeSeg2 = 1;
-  hfdcan2.Init.MessageRAMOffset = 0;
+  hfdcan2.Init.MessageRAMOffset = 387;   /* #48: was 0; FDCAN1 occupies [0,387). */
   hfdcan2.Init.StdFiltersNbr = 1;
   hfdcan2.Init.ExtFiltersNbr = 1;
   hfdcan2.Init.RxFifo0ElmtsNbr = 16;
@@ -191,6 +203,8 @@ void MX_FDCAN3_Init(void)
   /* USER CODE END FDCAN3_Init 0 */
 
   /* USER CODE BEGIN FDCAN3_Init 1 */
+  /* #48: MessageRAMOffset below MUST be 582, not CubeMX's 0 (overlaps FDCAN1/2).
+   * See the layout in MX_FDCAN1_Init. Re-apply after any CubeMX regen. */
 
   /* USER CODE END FDCAN3_Init 1 */
   hfdcan3.Instance = FDCAN3;
@@ -207,7 +221,7 @@ void MX_FDCAN3_Init(void)
   hfdcan3.Init.DataSyncJumpWidth = 1;
   hfdcan3.Init.DataTimeSeg1 = 1;
   hfdcan3.Init.DataTimeSeg2 = 1;
-  hfdcan3.Init.MessageRAMOffset = 0;
+  hfdcan3.Init.MessageRAMOffset = 582;   /* #48: was 0; FDCAN2 occupies [387,582). */
   hfdcan3.Init.StdFiltersNbr = 1;
   hfdcan3.Init.ExtFiltersNbr = 1;
   hfdcan3.Init.RxFifo0ElmtsNbr = 16;
