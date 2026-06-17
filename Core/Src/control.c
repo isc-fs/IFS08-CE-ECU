@@ -29,6 +29,9 @@
 #define VMIN_FULL_TORQUE  3500u
 #define VMIN_MIN_TORQUE   2800u
 #define PRECHARGE_TIMEOUT_MS 10000u
+#define AMS_STATUS_STALE_MS 1000u
+#define PRECHARGE_ACK_STALE_MS 1000u
+#define AMS_STATE_START      0u
 #define AMS_STATE_ERROR      5u  /* ams::fsm::State::Error in 0x4A0[0] */
 
 /* Very small helper */
@@ -58,6 +61,8 @@ static uint32_t s_precharge_start_tick;
 static uint8_t s_ev23_latched;
 static uint8_t s_flag_r2d;
 static uint8_t s_flag_react;
+static uint8_t s_armed_ams_session_id;
+static uint8_t s_armed_ams_session_valid;
 
 void Control_Init(void)
 {
@@ -67,6 +72,8 @@ void Control_Init(void)
   s_ev23_latched = 0u;
   s_flag_r2d = 0u;
   s_flag_react = 0u;
+  s_armed_ams_session_id = 0u;
+  s_armed_ams_session_valid = 0u;
 }
 
 static uint16_t saturate_pct(float value)
@@ -149,6 +156,31 @@ static void build_acu_dc_bus_frame(uint16_t dc_bus_voltage, can_msg_t *m)
   encode_VCU_heartbeat(&in, m->data);
 }
 
+static uint8_t tick_is_fresh(uint32_t now_tick, uint32_t last_tick, uint32_t window_ms)
+{
+  if (last_tick == 0u) return 0u;
+  return (uint8_t)((now_tick - last_tick) < window_ms);
+}
+
+/* AMS-status / precharge-ACK staleness is computed once per cycle from the
+ * reception ticks here -- called by the task layer with the real clock -- and
+ * stored as plain input booleans. The FSM then reads those booleans, so there is
+ * no wall-clock read in the freshness path and Control_Step10ms stays pure +
+ * directly testable (the SIL drives it with a discrete clock; the booleans
+ * default fresh and are set stale only when a test models a stale/absent AMS). */
+void Control_UpdateAmsStaleness(app_inputs_t *in, uint32_t now_tick)
+{
+  if (!in) return;
+  in->ams_status_stale    = (uint8_t)(tick_is_fresh(now_tick, in->last_ams_status_tick,    AMS_STATUS_STALE_MS)    == 0u);
+  in->precharge_ack_stale = (uint8_t)(tick_is_fresh(now_tick, in->last_precharge_ack_tick, PRECHARGE_ACK_STALE_MS) == 0u);
+}
+
+static uint8_t ams_status_fresh(const app_inputs_t *in)
+{
+  if (!in) return 0u;
+  return (uint8_t)(in->ams_status_stale == 0u);
+}
+
 static uint8_t precharge_complete(const app_inputs_t *in)
 {
   if (!in) return 0u;
@@ -160,8 +192,24 @@ static uint8_t precharge_complete(const app_inputs_t *in)
    * non-adaptive (~75% of a full pack, unreachable on a low pack) and, being
    * below the AMS gate, let the ECU's startup run ahead of the contactors.
    * Gate solely on the AMS ACK; PRECHARGE_TIMEOUT_MS is the fallback if it
-   * never arrives. This is an intentional divergence from main_polling.c. */
-  return (uint8_t)(in->ok_precarga != 0u);
+   * never arrives. This is an intentional divergence from main_polling.c.
+   *
+   * Also require a fresh AMS status + a fresh 0x020 reception so the ECU
+   * can't keep using a copied "precharge complete" across an AMS reset or a
+   * temporary AMS disappearance. */
+  if (in->ok_precarga == 0u) return 0u;
+  if (in->ams_state == AMS_STATE_START || in->ams_state == AMS_STATE_ERROR) return 0u;
+  if (!ams_status_fresh(in)) return 0u;
+  if (in->precharge_ack_stale != 0u) return 0u;
+  return 1u;
+}
+
+static uint8_t ams_session_changed(const app_inputs_t *in)
+{
+  if (!in) return 0u;
+  if (in->ams_session_valid == 0u) return 0u;
+  if (s_armed_ams_session_valid == 0u) return 0u;
+  return (uint8_t)(in->ams_session_id != s_armed_ams_session_id);
 }
 
 static uint8_t inverter_vdc_configured(const app_inputs_t *in)
@@ -319,6 +367,7 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 /* Main 10ms step */
 void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
 {
+  const uint32_t now_tick = osKernelGetTickCount();
   uint8_t ev23 = 0u;
   uint8_t t1189 = 0u;
   uint8_t rerun = 0u;
@@ -334,13 +383,64 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
   out->flag_t11_8_9 = t1189;
   /* out->torque_pct stays 0 until the inverter reaches torque state */
 
+  /* Missing AMS is not a hard ECU fault, but it is not safe to keep drive
+   * armed with stale AMS state either. If 0x4A0 goes stale after we've left
+   * the initial inverter-wait gate, drop back to the safe boot gate and
+   * clear the local drive latch so a re-appearance re-runs the sequence. */
+  if (s_state != CTRL_ST_WAIT_INV_VDC_CONFIG && !ams_status_fresh(in))
+  {
+    s_flag_r2d = 0u;
+    s_armed_ams_session_valid = 0u;
+    s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
+    emit_inv_mode(out, INV_MODE_STANDBY);
+  }
+
+  if (ams_status_fresh(in) &&
+      ams_session_changed(in) &&
+      (s_state == CTRL_ST_WAIT_START_BRAKE ||
+       s_state == CTRL_ST_R2D_DELAY ||
+       s_state == CTRL_ST_WAIT_INV_STANDBY ||
+       s_state == CTRL_ST_ACTIVE))
+  {
+    /* A new AMS session invalidates any local "precharge complete" context
+     * inherited from the previous one. The ECU may already have a fresh
+     * 0x020 cached from before the reboot; clearing the session latch alone
+     * is not enough because the FSM can otherwise re-enter BOOT and consume
+     * the old ACK before the AMS republishes a session-local precharge
+     * completion. */
+    ((app_inputs_t*)in)->ok_precarga = 0u;
+    ((app_inputs_t*)in)->last_precharge_ack_tick = 0u;
+    s_flag_r2d = 0u;
+    s_armed_ams_session_valid = 0u;
+    s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
+    emit_inv_mode(out, INV_MODE_STANDBY);
+  }
+
+  /* A fresh AMS Start means the accumulator has returned to the de-energised
+   * session entry point (for example after a short AMS reboot). If the ECU was
+   * already beyond precharge, it must not keep the previous armed session
+   * alive just because 0x4A0 never went stale. Treat this as an explicit
+   * de-arm request and force the control FSM back through the safe gate. */
+  if (ams_status_fresh(in) &&
+      in->ams_state == AMS_STATE_START &&
+      (s_state == CTRL_ST_WAIT_START_BRAKE ||
+       s_state == CTRL_ST_R2D_DELAY ||
+       s_state == CTRL_ST_WAIT_INV_STANDBY ||
+       s_state == CTRL_ST_ACTIVE))
+  {
+    s_flag_r2d = 0u;
+    s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
+    emit_inv_mode(out, INV_MODE_STANDBY);
+  }
+
   /* AMS authority: a latched AMS Error (0x4A0[0] == 5) will not re-arm without
    * a power cycle, so inhibit immediately and stop retrying precharge --
    * ok_precarga alone can't tell Error from a re-armable Start. Overrides the
    * FSM from any state (including ACTIVE, which cuts torque). */
-  if (in->ams_state == AMS_STATE_ERROR)
+  if (ams_status_fresh(in) && in->ams_state == AMS_STATE_ERROR)
   {
     s_flag_r2d = 0u;
+    s_armed_ams_session_valid = 0u;
     s_state = CTRL_ST_AMS_ERROR;
   }
 
@@ -351,7 +451,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
     switch (s_state)
     {
       case CTRL_ST_WAIT_INV_VDC_CONFIG:
-        if (inverter_vdc_configured(in))
+        if (inverter_vdc_configured(in) && ams_status_fresh(in))
         {
           s_state = CTRL_ST_BOOT;
           rerun = 1u;
@@ -361,6 +461,8 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
       case CTRL_ST_BOOT:
         if (precharge_complete(in))
         {
+          s_armed_ams_session_id = in->ams_session_id;
+          s_armed_ams_session_valid = in->ams_session_valid;
           s_state = CTRL_ST_WAIT_START_BRAKE;
           rerun = 1u;
         }
@@ -370,7 +472,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
            * The AMS self-triggers precharge from its own TSMS/DASH_CHG inputs
            * (CAN 0x600 was retired AMS-side), so the ECU sends no precharge
            * command here — it just waits for the 0x020 completion ack. */
-          s_precharge_start_tick = osKernelGetTickCount();
+          s_precharge_start_tick = now_tick;
           s_state = CTRL_ST_WAIT_PRECHARGE_ACK;
         }
         break;
@@ -378,10 +480,12 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
       case CTRL_ST_WAIT_PRECHARGE_ACK:
         if (precharge_complete(in))
         {
+          s_armed_ams_session_id = in->ams_session_id;
+          s_armed_ams_session_valid = in->ams_session_valid;
           s_state = CTRL_ST_WAIT_START_BRAKE;
           rerun = 1u;
         }
-        else if ((osKernelGetTickCount() - s_precharge_start_tick) >= PRECHARGE_TIMEOUT_MS)
+        else if ((now_tick - s_precharge_start_tick) >= PRECHARGE_TIMEOUT_MS)
         {
           /* Precharge did not complete in time — retry from BOOT. */
           s_state = CTRL_ST_BOOT;
@@ -396,9 +500,11 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         break;
 
       case CTRL_ST_WAIT_START_BRAKE:
-        if (in->boton_arranque && in->s_freno > UMBRAL_FRENO_ARRANQUE)
+        if (ams_status_fresh(in) &&
+            in->boton_arranque &&
+            in->s_freno > UMBRAL_FRENO_ARRANQUE)
         {
-          s_r2d_start_tick = osKernelGetTickCount();
+          s_r2d_start_tick = now_tick;
           s_flag_r2d = 1u;
           out->rtds_active = 1u;
           s_state = CTRL_ST_R2D_DELAY;
@@ -406,7 +512,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         break;
 
       case CTRL_ST_R2D_DELAY:
-        if ((osKernelGetTickCount() - s_r2d_start_tick) >= 2000u)
+        if ((now_tick - s_r2d_start_tick) >= 2000u)
         {
           s_state = CTRL_ST_WAIT_INV_STANDBY;
           rerun = 1u;
@@ -418,7 +524,7 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         break;
 
       case CTRL_ST_WAIT_INV_STANDBY:
-        if (in->inv_state == 3u)
+        if (ams_status_fresh(in) && in->inv_state == 3u)
         {
           s_state = CTRL_ST_ACTIVE;
           emit_legacy_inverter_runtime(in, out, torque);
@@ -441,8 +547,9 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
         {
           emit_inv_mode(out, INV_MODE_STANDBY);
         }
-        if (in->ams_state != AMS_STATE_ERROR)
+        if (!ams_status_fresh(in) || in->ams_state != AMS_STATE_ERROR)
         {
+          s_armed_ams_session_valid = 0u;
           s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
           rerun = 1u;
         }

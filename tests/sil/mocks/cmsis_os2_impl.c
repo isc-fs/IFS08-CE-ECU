@@ -111,9 +111,15 @@ static sil_thread_t *sil_pick_next_ready_thread(void)
     return best;
 }
 
+extern uint32_t sil_get_time_ms(void);   /* harness clock, advanced by the SIL test loops */
 uint32_t osKernelGetTickCount(void)
 {
-    return s_tick_ms;
+    /* The fixture-based harnesses advance sil_get_time_ms(), not this mock's
+     * s_tick_ms (they call Control_Step10ms() directly, no osDelay). Return
+     * whichever clock is live so the firmware's tick-based logic sees real
+     * simulated time instead of a frozen 0. */
+    uint32_t harness = sil_get_time_ms();
+    return (harness > s_tick_ms) ? harness : s_tick_ms;
 }
 
 uint32_t osKernelGetTickFreq(void)

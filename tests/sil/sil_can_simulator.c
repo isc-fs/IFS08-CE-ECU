@@ -117,7 +117,16 @@ void SIL_CAN_Process(void)
         uint8_t data[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};  /* AMS v1.2+: ACK=1 => precarga OK */
 
         SIL_CAN_SendFrame(0x20, data, 8);
-        
+
+        /* AMS status 0x4A0: byte0 = FSM state (3 = Run -- not Start(0)/Error(5)),
+         * byte3 = session id. The ECU's precharge gate now requires a fresh,
+         * running AMS status alongside the 0x020 precharge ACK, so the simulated
+         * AMS must stream it like real hardware does. */
+        {
+            uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+            SIL_CAN_SendFrame(0x4A0, ams, 8);
+        }
+
         /* Send inverter DC bus voltage feedback (legacy TX_STATE_7 / 0x466). */
         data[2] = (uint8_t)(sim_state.dc_voltage & 0xFF);
         data[3] = (uint8_t)((sim_state.dc_voltage >> 8) & 0xFF);
