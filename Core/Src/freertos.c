@@ -694,11 +694,6 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   Diag_Log("RTOS: MX_FREERTOS_Init enter");
-#ifndef SIL_BUILD
-  /* Latch reset cause (RCC->RSR) + sticky fault (RTC BKP1R) before anything
-   * clears them, so the 0x704 health frame can report why we last reset (#36). */
-  Diag_CaptureResetCause();
-#endif
   AppRuntime_TaskMetricsReset();
 
   s_periodic_generation++;
@@ -1181,9 +1176,15 @@ void StartDashTask(void *argument)
 
 void AppRuntime_InitStep(void)
 {
-  Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
+    Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
 
-  AppState_Init();
+#ifndef SIL_BUILD
+    /* Defer reset-cause / sticky-fault capture until app init starts instead
+     * of touching PWR/RTC backup-domain state during early RTOS bring-up. */
+    Diag_CaptureResetCause();
+#endif
+
+    AppState_Init();
   Diag_Log("State machine initialized (WAIT_INV_VDC_CONFIG)\n");
 
   Telemetry_Init();
