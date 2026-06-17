@@ -432,8 +432,14 @@ uint32_t test_suite_boot_sequence(void)
   ASSERT_EQUAL(out.msgs[0].id, 0x100u, S, "3.1_boot_dc_bus_frame_id");
   ASSERT_EQUAL(out.msgs[0].bus, (uint32_t)CAN_BUS_ACU, S, "3.1_boot_dc_bus_frame_bus");
 
-  /* S3.2 – Precarga completada (ok_precarga=1), todavía sin botón ni freno */
+  /* S3.2 – Precarga completada (ok_precarga=1), todavía sin botón ni freno.
+   *        Modelamos además un AMS presente y en marcha (0x4A0 byte0=3=Run): el
+   *        gate de precarga exige ahora un estado AMS fresco y distinto de Start
+   *        junto al ACK 0x020, y la guarda de staleness devuelve la FSM al gate
+   *        de arranque si 0x4A0 falta. */
   {
+    uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+    (void)inject_can_and_process(0x4A0u, CAN_BUS_ACU, ams, 8);
     uint8_t d[8] = {0x01, 0, 0, 0, 0, 0, 0, 0};
     ASSERT_EQUAL((uint32_t)inject_can_and_process(TINT_ID_ACK_PRECARGA, CAN_BUS_ACU, d, 1),
                  (uint32_t)HAL_OK, S, "3.2_precharge_rx_ok");

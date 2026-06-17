@@ -29,6 +29,12 @@ typedef struct
   uint16_t v_celda_min;      /* raw / scaled */
   uint8_t  ok_precarga;      /* ack from ACU, etc. */
   uint8_t  ams_state;        /* AMS FSM state from 0x4A0[0]: 0=Start..5=Error */
+  uint8_t  ams_session_id;   /* AMS boot/session identifier from 0x4A0[3] */
+  uint8_t  ams_session_valid;/* 1 once a valid 0x4A0 session_id has been seen */
+  uint32_t last_precharge_ack_tick; /* last 0x020 reception tick */
+  uint32_t last_ams_status_tick;    /* last 0x4A0 reception tick */
+  uint8_t  ams_status_stale;        /* 0=fresh (default); set by Control_UpdateAmsStaleness */
+  uint8_t  precharge_ack_stale;     /* 0=fresh (default); set by Control_UpdateAmsStaleness */
 
   /* Battery expansion */
   uint8_t  soc;              /* 0..100 or project-specific scaling */
