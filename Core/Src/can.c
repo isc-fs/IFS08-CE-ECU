@@ -24,6 +24,8 @@ extern FDCAN_HandleTypeDef hfdcan3;
 #define TX_STATE_5             0x464u
 #define TX_STATE_6             0x465u
 #define TX_STATE_7             0x466u
+#define AMS_STATE_START        0u
+#define AMS_STATE_ERROR        5u
 
 static uint16_t read_u16_le(const uint8_t *data)
 {
@@ -82,6 +84,8 @@ void CAN_Unpack16(const can_qitem16_t *q, can_msg_t *m)
 /* === RX parser: move your ISR switch() here === */
 void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
 {
+  const uint32_t now_tick = osKernelGetTickCount();
+
   if (!m || !st) return;
 
   switch (m->bus)
@@ -147,12 +151,23 @@ void CanRx_ParseAndUpdate(const can_msg_t *m, app_inputs_t *st)
         case ID_ACK_PRECARGA:
           /* AMS v1.2+ publishes 0x020[0] = 1 when precharge is complete. */
           st->ok_precarga = (m->data[0] != 0u) ? 1u : 0u;
+          st->last_precharge_ack_tick = now_tick;
           break;
 
         case ID_AMS_STATUS:
           /* AMS FSM state (0x4A0[0]): 0=Start..5=Error. Lets the ECU tell a
            * re-armable Start from a latched Error (ok_precarga can't). */
           st->ams_state = m->data[0];
+          st->ams_session_id = m->data[3];
+          st->ams_session_valid = 1u;
+          st->last_ams_status_tick = now_tick;
+          if (st->ams_state == AMS_STATE_START || st->ams_state == AMS_STATE_ERROR)
+          {
+            /* A fresh Start/Error opens a new AMS session boundary: don't keep
+             * a precharge-complete ACK copied from the previous one. */
+            st->ok_precarga = 0u;
+            st->last_precharge_ack_tick = 0u;
+          }
           break;
 
         case ID_V_CELDA_MIN:
