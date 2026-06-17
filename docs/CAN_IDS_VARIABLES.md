@@ -1,47 +1,64 @@
-# Mapa CAN actual — IDs y variables
+# ECU dev clone - mapa CAN actual
 
-Fecha: 18-may-2026
-
----
+Fecha: 17-jun-2026
 
 ## 1. Alcance
 
-Este documento resume los IDs CAN usados por el firmware actual y qué variable viaja en cada uno.
+Este documento describe lo que hace hoy el `dev clone` de la ECU.
+La referencia de verdad es el codigo en:
 
-Se separan dos grupos:
+- `Core/Src/control.c`
+- `Core/Src/can.c`
+- `Core/Inc/can/messages/vcu_heartbeat.def`
+- `Core/Inc/app_state.h`
 
-- CAN crítico de funcionamiento de ECU
-- CAN de visualización para dash
+La documentacion anterior mezclaba comportamiento legacy con el actual. En
+particular, el comando de precarga `0x600` ya no forma parte del contrato
+vigente ECU <-> AMS.
 
-Cuando un valor ocupa más de un byte, se indica el orden usado.
+## 2. Resumen del contrato ECU <-> AMS actual
 
----
+La ECU ya no ordena la precarga por CAN. El flujo vigente es:
 
-## 2. CAN crítico
+1. La ECU publica continuamente `0x100` con `inv_dc_bus_voltage`.
+2. El AMS decide la precarga con su propia logica interna.
+3. El AMS publica `0x020[0]` cuando la precarga ha terminado.
+4. El AMS publica `0x4A0[0]` con su estado FSM.
+5. La ECU usa `0x020` para avanzar y `0x4A0` para distinguir `Start` de
+   `Error`.
 
-## 2.1 ECU -> Inversor
+Consecuencia importante:
 
-### ID `0x360` — `RX_SETPOINT_1`
+- `0x600` esta retirado en `dev`.
+- La ECU espera `0x020`.
+- Si `0x4A0[0] == 5`, la ECU entra en `CTRL_ST_AMS_ERROR` y no rearma hasta
+  que el AMS salga de `Error`.
+
+## 3. CAN critico
+
+### 3.1 ECU -> inversor
+
+#### ID `0x360` - `RX_SETPOINT_1`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: ECU -> inversor
+- Direccion: ECU -> inversor
 - DLC: `3`
-- Uso: selección de modo del inversor
+- Uso: seleccion de modo del inversor
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[0]` | `0x00` | no usado |
 | `data[1]` | `0x00` | no usado |
 | `data[2]` | modo | `INV_MODE_STANDBY`, `INV_MODE_READY`, `INV_MODE_TORQUE`, `INV_MODE_RESET` |
 
-### ID `0x362` — `RX_SETPOINT_3`
+#### ID `0x362` - `RX_SETPOINT_3`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: ECU -> inversor
+- Direccion: ECU -> inversor
 - DLC: `4`
 - Uso: consigna legacy de par
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[0]` | `0x00` | no usado |
 | `data[1]` | `0x00` | no usado |
@@ -50,330 +67,391 @@ Cuando un valor ocupa más de un byte, se indica el orden usado.
 
 Nota: `legacy_torque` sale de `torque_pct_to_legacy_command()`.
 
-## 2.2 ECU -> ACU / acumulador
+### 3.2 ECU -> AMS
 
-### ID `0x100` — `ID_DC_BUS_VOLTAGE`
+#### ID `0x100` - `VCU_heartbeat`
 
 - Bus: `CAN_BUS_ACU` (`FDCAN2`)
-- Dirección: ECU -> ACU
+- Direccion: ECU -> AMS
 - DLC: `2`
-- IDE: estándar
-- Uso: reenvío de tensión de bus DC al sistema de acumulador
+- IDE: estandar de 11 bits
+- Fuente de verdad: `Core/Inc/can/messages/vcu_heartbeat.def`
+- Uso: heartbeat de tension de bus DC
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[0]` | byte bajo | `inv_dc_bus_voltage` |
 | `data[1]` | byte alto | `inv_dc_bus_voltage` |
 
-### ID `0x600` — `ID_PRECHARGE_CMD`
+Notas:
 
-- Bus: `CAN_BUS_ACU` (`FDCAN2`)
-- Dirección: ECU -> ACU
-- DLC: `2`
-- IDE: estándar
-- Uso: orden de precarga
+- El valor se codifica en little-endian.
+- La ECU lo emite en cada `Control_Step10ms()`, en todos los estados.
+- Este frame ya no se usa solo para precarga; es un heartbeat permanente hacia
+  el AMS.
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | `0` o `1` | `boton_arranque ? 1 : 0` |
-| `data[1]` | `0x00` | no usado |
+#### ID `0x600` - retirado
 
-## 2.3 Inversor -> ECU
+El comando de precarga `0x600` ya no se emite en la rama `dev`.
 
-### ID `0x461` — `TX_STATE_2`
+Estado actual:
+
+- No se construye en `Core/Src/control.c`.
+- La ECU no ordena la precarga por CAN.
+- La precarga queda gobernada por el AMS a partir de sus entradas propias y del
+  heartbeat `0x100`.
+
+### 3.3 Inversor -> ECU
+
+#### ID `0x461` - `TX_STATE_2`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: inversor -> ECU
-- DLC esperado: variable
+- Direccion: inversor -> ECU
 - Uso: estado principal del inversor
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[2]` | error | `inv_error` cuando `inv_state == 10` o `11` |
 | `data[4]` nibble bajo | estado | `inv_state` |
 
-### ID `0x463` — `TX_STATE_4`
+#### ID `0x463` - `TX_STATE_4`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: inversor -> ECU
+- Direccion: inversor -> ECU
 - DLC esperado: `8`
 - Uso: rpm del inversor
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[5]` | byte bajo | `inv_rpm` |
 | `data[6]` | byte medio | `inv_rpm` |
 | `data[7]` nibble bajo | nibble alto | `inv_rpm` |
 
-Nota: el firmware recompone un valor de 20 bits con signo.
+Nota: el firmware recompone un entero con signo de 20 bits.
 
-### ID `0x464` — `TX_STATE_5`
+#### ID `0x464` - `TX_STATE_5`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: inversor -> ECU
+- Direccion: inversor -> ECU
 - DLC esperado: `8`
-- Uso: temperaturas
+- Uso: temperaturas del inversor
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[0]` | temperatura | `inv_motor_temp` |
 | `data[1]` | temperatura | `inv_igbt_temp` |
 | `data[2]` | temperatura | `inv_air_temp` |
 
-### ID `0x465` — `TX_STATE_6`
+#### ID `0x465` - `TX_STATE_6`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: inversor -> ECU
+- Direccion: inversor -> ECU
 - DLC esperado: `8`
 - Uso: velocidad y corriente medidas
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[2]` | byte bajo | `inv_speed_actual` |
 | `data[3]` | byte alto | `inv_speed_actual` |
 | `data[4]` | byte bajo | `inv_current_actual` |
 | `data[5]` | byte alto | `inv_current_actual` |
 
-Nota: ambos valores se leen en little-endian de 16 bits.
+Nota: ambos campos se leen en little-endian de 16 bits y se guardan como
+`int32_t`.
 
-### ID `0x466` — `TX_STATE_7`
+#### ID `0x466` - `TX_STATE_7`
 
 - Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Dirección: inversor -> ECU
+- Direccion: inversor -> ECU
 - DLC esperado: `6`
-- Uso: tensión de bus DC y habilitación lógica de arranque
+- Uso: tension de bus DC y marca de VDC listo
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[2]` | byte bajo | `inv_dc_bus_voltage` |
 | `data[3]` | byte alto | `inv_dc_bus_voltage` |
 
-Además, al recibir esta trama válida el firmware pone:
+Ademas, al recibir esta trama valida:
 
 - `inv_vdc_ready = 1`
 
-## 2.4 ACU / acumulador -> ECU
+### 3.4 AMS -> ECU
 
-### ID `0x20` — `ID_ACK_PRECARGA`
+#### ID `0x020` - `ID_ACK_PRECARGA`
 
 - Bus: `CAN_BUS_ACU` (`FDCAN2`)
-- Dirección: ACU -> ECU
-- DLC esperado: variable
-- Uso: confirmación de precarga
+- Direccion: AMS -> ECU
+- Uso: confirmacion de precarga completada
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
 |---|---|---|
-| `data[0]` | `1` | `ok_precarga = 1` |
 | `data[0]` | `0` | `ok_precarga = 0` |
+| `data[0]` | distinto de `0` | `ok_precarga = 1` |
 
-### ID `0x12C` — `ID_V_CELDA_MIN`
+Notas:
+
+- La ECU usa este bit como criterio de `precharge_complete()`.
+- La ECU ya no aplica la heuristica antigua de tension fija para asumir que la
+  precarga ha terminado.
+
+#### ID `0x4A0` - `ID_AMS_STATUS`
 
 - Bus: `CAN_BUS_ACU` (`FDCAN2`)
-- Dirección: ACU -> ECU
-- DLC esperado: variable
-- Uso: tensión mínima de celda
+- Direccion: AMS -> ECU
+- Uso: estado FSM del AMS
 
-| Byte | Contenido | Variable / significado |
+| Byte | Contenido | Significado |
+|---|---|---|
+| `data[0]` | estado | `ams_state` |
+
+Mapa consumido por la ECU:
+
+- `0` = `Start`
+- `1` = `Precharge`
+- `2` = `Transition`
+- `3` = `Run`
+- `4` = `Charge`
+- `5` = `Error`
+
+Nota importante:
+
+- `0x020` por si solo no distingue entre "todavia no ha terminado" y "AMS en
+  error".
+- Por eso `0x4A0[0]` forma parte del contrato operativo actual.
+
+#### ID `0x12C` - `ID_V_CELDA_MIN`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- Uso: tension minima de celda
+
+| Byte | Contenido | Significado |
 |---|---|---|
 | `data[0]` | byte alto | `v_celda_min` |
 | `data[1]` | byte bajo | `v_celda_min` |
 
-Nota: esta trama se interpreta en big-endian.
+Nota: la ECU la interpreta en big-endian.
 
-### IDs `0x136` y `0x137` — temperaturas AMS
+#### ID `0x130` - `ID_ACU_SOC`
 
 - Bus: `CAN_BUS_ACU` (`FDCAN2`)
-- Dirección: ACU -> ECU
-- DLC esperado: `6`
-- Uso: temperaturas máximas por módulo y temperatura DCDC
+- Direccion: AMS -> ECU
+- Uso: estado de carga
 
-Nota: el firmware actual las interpreta como enteros con signo de 16 bits en big-endian. En `0x137`, `temp_dcdc = -32768` actúa como sentinel de “no disponible”.
+| Byte | Contenido | Significado |
+|---|---|---|
+| `data[0]` | SOC | `soc` |
 
----
+#### ID `0x131` - `ID_ACU_VMIN_012`
 
-## 3. CAN dash
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 6`
+- Uso: tension minima de modulos 0, 1 y 2
 
-Estas tramas se generan en `DashTask` a partir del `telemetry_frame_t` recibido desde `TelemetryTask`.
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `vmin_modulo[0]` big-endian |
+| `data[2..3]` | `vmin_modulo[1]` big-endian |
+| `data[4..5]` | `vmin_modulo[2]` big-endian |
 
-La transmisión al cuadro se hace directamente desde `DashTask` por `CAN_BUS_DASH` (`FDCAN3`), no pasando por la tarea general `CanTxTask`.
+#### ID `0x132` - `ID_ACU_VMIN_34`
 
-## 3.1 ECU -> Dash
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 4`
+- Uso: tension minima de modulos 3 y 4
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `vmin_modulo[3]` big-endian |
+| `data[2..3]` | `vmin_modulo[4]` big-endian |
+
+#### ID `0x133` - `ID_ACU_VMAX_012`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 6`
+- Uso: tension maxima de modulos 0, 1 y 2
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `vmax_modulo[0]` big-endian |
+| `data[2..3]` | `vmax_modulo[1]` big-endian |
+| `data[4..5]` | `vmax_modulo[2]` big-endian |
+
+#### ID `0x134` - `ID_ACU_VMAX_34`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 4`
+- Uso: tension maxima de modulos 3 y 4
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `vmax_modulo[3]` big-endian |
+| `data[2..3]` | `vmax_modulo[4]` big-endian |
+
+#### ID `0x135` - `ID_ACU_CURR_PACK_DCDC`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 4`
+- Uso: corriente del acumulador y del DCDC
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `corriente_accu` signed big-endian |
+| `data[2..3]` | `corriente_dcdc` signed big-endian |
+
+#### ID `0x136` - `ID_ACU_TMAX_012`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 6`
+- Uso: temperatura maxima de modulos 0, 1 y 2
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `temp_max_modulo[0]` signed big-endian |
+| `data[2..3]` | `temp_max_modulo[1]` signed big-endian |
+| `data[4..5]` | `temp_max_modulo[2]` signed big-endian |
+
+#### ID `0x137` - `ID_ACU_TMAX_34_DCDC`
+
+- Bus: `CAN_BUS_ACU` (`FDCAN2`)
+- Direccion: AMS -> ECU
+- DLC esperado: `>= 6`
+- Uso: temperatura maxima de modulos 3 y 4 y temperatura DCDC
+
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `temp_max_modulo[3]` signed big-endian |
+| `data[2..3]` | `temp_max_modulo[4]` signed big-endian |
+| `data[4..5]` | `temp_dcdc` signed big-endian |
+
+## 4. Estado de control relevante para el contrato con AMS
+
+La FSM de control de la ECU tiene estos estados internos:
+
+- `CTRL_ST_WAIT_INV_VDC_CONFIG`
+- `CTRL_ST_BOOT`
+- `CTRL_ST_WAIT_PRECHARGE_ACK`
+- `CTRL_ST_WAIT_START_BRAKE`
+- `CTRL_ST_R2D_DELAY`
+- `CTRL_ST_WAIT_INV_STANDBY`
+- `CTRL_ST_ACTIVE`
+- `CTRL_ST_AMS_ERROR`
+
+Comportamiento relevante:
+
+- La ECU espera a ver `TX_STATE_7` del inversor antes de salir de
+  `CTRL_ST_WAIT_INV_VDC_CONFIG`.
+- En `CTRL_ST_BOOT` y `CTRL_ST_WAIT_PRECHARGE_ACK`, la ECU no manda comando de
+  precarga; solo mantiene `0x100` y espera `0x020`.
+- Si la precarga no termina en `PRECHARGE_TIMEOUT_MS = 10000`, vuelve a
+  `CTRL_ST_BOOT`.
+- Si `ams_state == 5`, entra en `CTRL_ST_AMS_ERROR`, inhibe drive y no reintenta
+  precarga hasta que el AMS salga de `Error`.
+
+## 5. CAN dash
+
+Estas tramas se generan en `DashTask` a partir de `telemetry_frame_t`.
+La salida al dash va por `CAN_BUS_DASH` (`FDCAN3`).
 
 ### ID `0x510`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `8`
 - Uso: estado general, flags y secuencia
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | estado inversor | `inv_state` |
-| `data[1]` | par total | `torque_total` truncado a `uint8_t` |
-| `data[2]` | flags | `bit0=flag_EV_2_3`, `bit1=flag_T11_8_9`, `bit2=inv_error!=0` |
-| `data[3]` | precarga | `ok_precarga` |
-| `data[4]` | botón | `boton_arranque` |
-| `data[5]` | tipo de frame | `frame->kind` |
-| `data[6]` | secuencia LSB | `sequence` byte bajo |
-| `data[7]` | secuencia MSB | `sequence` byte alto |
+| Byte | Significado |
+|---|---|
+| `data[0]` | `inv_state` |
+| `data[1]` | `torque_total` truncado a `uint8_t` |
+| `data[2]` | flags: `bit0=flag_EV_2_3`, `bit1=flag_T11_8_9`, `bit2=inv_error!=0` |
+| `data[3]` | `ok_precarga` |
+| `data[4]` | `boton_arranque` |
+| `data[5]` | `frame->kind` |
+| `data[6]` | `sequence` byte bajo |
+| `data[7]` | `sequence` byte alto |
 
 ### ID `0x511`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `6`
 - Uso: entradas del conductor
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte bajo | `s1_aceleracion` |
-| `data[1]` | byte alto | `s1_aceleracion` |
-| `data[2]` | byte bajo | `s2_aceleracion` |
-| `data[3]` | byte alto | `s2_aceleracion` |
-| `data[4]` | byte bajo | `s_freno` |
-| `data[5]` | byte alto | `s_freno` |
-
-Nota: todos los valores van en little-endian de 16 bits.
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `s1_aceleracion` little-endian |
+| `data[2..3]` | `s2_aceleracion` little-endian |
+| `data[4..5]` | `s_freno` little-endian |
 
 ### ID `0x512`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `6`
-- Uso: variables eléctricas y de estado
+- Uso: variables electricas y de estado
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte bajo | `inv_dc_bus_voltage` |
-| `data[1]` | byte alto | `inv_dc_bus_voltage` |
-| `data[2]` | byte bajo | `v_celda_min` |
-| `data[3]` | byte alto | `v_celda_min` |
-| `data[4]` | error | `inv_error` |
-| `data[5]` | Vdc ready | `inv_vdc_ready` |
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `inv_dc_bus_voltage` little-endian |
+| `data[2..3]` | `v_celda_min` little-endian |
+| `data[4]` | `inv_error` |
+| `data[5]` | `inv_vdc_ready` |
 
 ### ID `0x513`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `6`
 - Uso: temperaturas del inversor
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte bajo | `inv_motor_temp` |
-| `data[1]` | byte alto | `inv_motor_temp` |
-| `data[2]` | byte bajo | `inv_igbt_temp` |
-| `data[3]` | byte alto | `inv_igbt_temp` |
-| `data[4]` | byte bajo | `inv_air_temp` |
-| `data[5]` | byte alto | `inv_air_temp` |
-
-Nota: aunque las temperaturas sean `int16_t`, se transmiten como sus 16 bits crudos en little-endian.
+| Bytes | Significado |
+|---|---|
+| `data[0..1]` | `inv_motor_temp` little-endian |
+| `data[2..3]` | `inv_igbt_temp` little-endian |
+| `data[4..5]` | `inv_air_temp` little-endian |
 
 ### ID `0x514`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `4`
-- Uso: rpm del inversor completas
-
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte 0 | `inv_rpm` |
-| `data[1]` | byte 1 | `inv_rpm` |
-| `data[2]` | byte 2 | `inv_rpm` |
-| `data[3]` | byte 3 | `inv_rpm` |
-
-Nota: se manda el valor completo de `inv_rpm` como 32 bits little-endian.
+- Uso: `inv_rpm` completo
 
 ### ID `0x515`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `4`
-- Uso: velocidad actual del inversor
-
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte 0 | `inv_speed_actual` |
-| `data[1]` | byte 1 | `inv_speed_actual` |
-| `data[2]` | byte 2 | `inv_speed_actual` |
-| `data[3]` | byte 3 | `inv_speed_actual` |
+- Uso: `inv_speed_actual` completo
 
 ### ID `0x516`
 
-- Bus: `CAN_BUS_DASH`
-- Dirección: ECU -> dash
 - DLC: `4`
-- Uso: corriente actual del inversor
+- Uso: `inv_current_actual` completo
 
-| Byte | Contenido | Variable / significado |
-|---|---|---|
-| `data[0]` | byte 0 | `inv_current_actual` |
-| `data[1]` | byte 1 | `inv_current_actual` |
-| `data[2]` | byte 2 | `inv_current_actual` |
-| `data[3]` | byte 3 | `inv_current_actual` |
+## 6. Snapshot interno (`app_inputs_t`)
 
----
+El snapshot interno compartido por la aplicacion contiene, entre otros, estos
+campos relevantes para ECU <-> AMS:
 
-## 4. Observaciones
+- `inv_dc_bus_voltage`
+- `inv_vdc_ready`
+- `v_celda_min`
+- `ok_precarga`
+- `ams_state`
+- `soc`
+- `vmin_modulo[5]`
+- `vmax_modulo[5]`
+- `corriente_accu`
+- `corriente_dcdc`
+- `temp_dcdc`
+- `temp_max_modulo[5]`
 
-- `FDCAN1` queda para inversor.
-- `FDCAN2` queda para acumulador / ACU.
-- `CAN_BUS_DASH` existe en software para el cuadro y no forma parte del lazo crítico de control.
-- El dash no recibe el `telemetry_frame_t` serializado tal cual: la `DashTask` lo adapta a estas tres tramas CAN específicas.
+Definicion: `Core/Inc/app_state.h`
 
----
+## 7. Notas de mantenimiento
 
-## 5. Contenido completo del snapshot
+Si cambia el contrato ECU <-> AMS, hay que revisar como minimo:
 
-El `snapshot` que viaja dentro de `telemetry_frame_t` contiene un `app_inputs_t` completo. Es decir, la telemetría interna no guarda solo lo que luego se manda al dash, sino todo este bloque de estado:
+- `Core/Src/control.c`
+- `Core/Src/can.c`
+- `Core/Inc/can/messages/vcu_heartbeat.def`
+- este documento
 
-## 5.1 Entradas físicas
-
-| Campo | Tipo | Significado |
-|---|---|---|
-| `s1_aceleracion` | `uint16_t` | lectura ADC cruda de APPS1 |
-| `s2_aceleracion` | `uint16_t` | lectura ADC cruda de APPS2 |
-| `s_freno` | `uint16_t` | lectura ADC cruda de freno |
-| `boton_arranque` | `uint8_t` | botón de arranque `0/1` |
-
-## 5.2 Feedback del inversor
-
-| Campo | Tipo | Significado |
-|---|---|---|
-| `inv_state` | `uint8_t` | estado reportado por el inversor |
-| `inv_dc_bus_voltage` | `uint16_t` | tensión de bus DC |
-| `inv_vdc_ready` | `uint8_t` | indica que ya se observó `TX_STATE_7` válido |
-| `inv_motor_temp` | `int16_t` | temperatura de motor |
-| `inv_igbt_temp` | `int16_t` | temperatura de inversor / IGBT |
-| `inv_air_temp` | `int16_t` | temperatura de aire interno del inversor |
-| `inv_rpm` | `int32_t` | rpm del inversor |
-| `inv_speed_actual` | `int32_t` | velocidad medida reportada por inversor |
-| `inv_current_actual` | `int32_t` | corriente medida reportada por inversor |
-| `inv_error` | `uint8_t` | código de error del inversor |
-
-## 5.3 Batería / acumulador
-
-| Campo | Tipo | Significado |
-|---|---|---|
-| `v_celda_min` | `uint16_t` | tensión mínima de celda recibida desde ACU |
-| `ok_precarga` | `uint8_t` | confirmación lógica de precarga |
-
-## 5.4 Seguridad y plausibilidad
-
-| Campo | Tipo | Significado |
-|---|---|---|
-| `flag_EV_2_3` | `uint8_t` | flag de plausibilidad EV 2.3 |
-| `flag_T11_8_9` | `uint8_t` | flag de plausibilidad / seguridad T11.8.9 |
-
-## 5.5 Variables derivadas
-
-| Campo | Tipo | Significado |
-|---|---|---|
-| `torque_total` | `uint16_t` | torque total calculado en porcentaje |
-
-## 5.6 Nota importante
-
-- Que un campo exista en el `snapshot` no significa que ya se esté transmitiendo por CAN al dash.
-- Ahora mismo el dash publica prácticamente todo el snapshot disponible mediante `0x510` a `0x516`.
-- Lo que sigue sin existir en el snapshot actual es, por ejemplo, una temperatura propia del acumulador; por tanto tampoco puede mapearse todavía al dash.
+En particular, no reintroducir `0x600` en la documentacion salvo que vuelva a
+existir en codigo.
