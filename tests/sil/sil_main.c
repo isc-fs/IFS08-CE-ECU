@@ -143,10 +143,28 @@ static void sil_runtime_step_1ms(void)
     SIL_RTOS_RunReadyThreads();
 }
 
+/* Forward decl: the quiet RX injector is defined further down, but the manual
+ * run-loop below needs it to stream the AMS status heartbeat. */
+static HAL_StatusTypeDef sil_inject_rx_frame(FDCAN_HandleTypeDef *hfdcan,
+                                             uint32_t id, uint32_t id_type,
+                                             const uint8_t *data, uint8_t dlc);
+
 static void sil_runtime_step_manual_1ms(uint8_t process_can_sim)
 {
     sil_tick_ms++;
     SIL_AdvanceTick(1);
+    /* A present AMS streams its status (0x4A0, byte0=3=Run) continuously. The
+     * ECU's staleness guard drops the drive latch and bounces the FSM back to
+     * the safe boot gate if 0x4A0 is silent for >1s (AMS_STATUS_STALE_MS), so
+     * the manual run-loop keeps that heartbeat alive every 100 ms -- mirroring
+     * what SIL_CAN_Process does for the simulation loop -- WITHOUT injecting the
+     * precharge-ACK (0x020) or inverter frames, which the manual harnesses drive
+     * explicitly. Without it, any wait longer than 1s (e.g. the 2s R2D delay)
+     * would falsely read as an AMS dropout and abort the start sequence. */
+    if ((sil_tick_ms % 100u) == 0u) {
+        uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+        (void)sil_inject_rx_frame(&hfdcan2, 0x4A0u, FDCAN_STANDARD_ID, ams, 8u);
+    }
     if (process_can_sim) {
         SIL_CAN_Process();
     }
