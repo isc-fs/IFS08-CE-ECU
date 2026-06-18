@@ -18,7 +18,7 @@ typedef struct
 } control_out_t;
 
 void Control_Init(void);
-void Control_Step10ms(const app_inputs_t *in, control_out_t *out);
+void Control_Step10ms(app_inputs_t *in, control_out_t *out);
 
 /* Computes torque percent and updates flags in a copy; caller decides what to store. */
 uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uint8_t *flag_t11_8_9);

@@ -352,7 +352,7 @@ uint16_t Control_ComputeTorque(const app_inputs_t *in, uint8_t *flag_ev_2_3, uin
 }
 
 /* Main 10ms step */
-void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
+void Control_Step10ms(app_inputs_t *in, control_out_t *out)
 {
   const uint32_t now_tick = osKernelGetTickCount();
   uint8_t ev23 = 0u;
@@ -395,8 +395,8 @@ void Control_Step10ms(const app_inputs_t *in, control_out_t *out)
      * is not enough because the FSM can otherwise re-enter BOOT and consume
      * the old ACK before the AMS republishes a session-local precharge
      * completion. */
-    ((app_inputs_t*)in)->ok_precarga = 0u;
-    ((app_inputs_t*)in)->last_precharge_ack_tick = 0u;
+    in->ok_precarga = 0u;
+    in->last_precharge_ack_tick = 0u;
     s_flag_r2d = 0u;
     s_armed_ams_session_valid = 0u;
     s_state = CTRL_ST_WAIT_INV_VDC_CONFIG;
