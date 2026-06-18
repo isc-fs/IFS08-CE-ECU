@@ -37,9 +37,67 @@ typedef struct
 
 typedef struct
 {
+  uint32_t tick_ms;
+  uint16_t sequence;
+
+  struct
+  {
+    uint8_t boton_arranque;
+    uint16_t s1_aceleracion;
+    uint16_t s2_aceleracion;
+    uint16_t s_freno;
+    uint16_t torque_total;
+    uint8_t flag_ev_2_3;
+    uint8_t flag_t11_8_9;
+    uint8_t fsm_state;
+  } ecu;
+
+  struct
+  {
+    uint8_t ok_precarga;
+    uint8_t ams_state;
+    uint16_t v_celda_min;
+    uint8_t soc;
+    uint16_t vmin_modulo[5];
+    uint16_t vmax_modulo[5];
+    int16_t corriente_accu;
+    int16_t corriente_dcdc;
+    int16_t temp_dcdc;
+    int16_t temp_max_modulo[5];
+  } ams;
+
+  struct
+  {
+    uint8_t inv_state;
+    uint8_t inv_vdc_ready;
+    uint8_t inv_error;
+    uint16_t inv_dc_bus_voltage;
+    int16_t inv_motor_temp;
+    int16_t inv_igbt_temp;
+    int16_t inv_air_temp;
+    int32_t inv_rpm;
+    int32_t inv_speed_actual;
+    int32_t inv_current_actual;
+  } inverter;
+
+  struct
+  {
+    uint16_t speed;
+    uint16_t course_deg;
+    int32_t altitude;
+    uint8_t fix_type;
+    uint8_t sat_count;
+    uint16_t hdop;
+    int32_t latitude;
+    int32_t longitude;
+  } gps;
+} telemetry_snapshot_t;
+
+typedef struct
+{
   telemetry_frame_kind_t kind;
   telemetry_event_t event;
-  app_inputs_t snapshot;
+  telemetry_snapshot_t snapshot;
   uint16_t sequence;
 } telemetry_frame_t;
 
@@ -48,7 +106,7 @@ extern osMessageQueueId_t telemetryRadioQueueHandle;
 extern osMessageQueueId_t telemetrySdQueueHandle;
 extern osMessageQueueId_t telemetryDashQueueHandle;
 
-#define TELEMETRY_RADIO_FRAGMENT_COUNT 3u
+#define TELEMETRY_RADIO_FRAGMENT_COUNT 2u
 
 void Telemetry_Init(void);
 void Telemetry_BuildFrame(const app_inputs_t *in,
@@ -58,6 +116,9 @@ void Telemetry_BuildFrameWithKind(const app_inputs_t *in,
                                   const telemetry_event_t *event,
                                   telemetry_frame_kind_t kind,
                                   telemetry_frame_t *out);
+void Telemetry_BuildSnapshot(const app_inputs_t *in,
+                             uint16_t sequence,
+                             telemetry_snapshot_t *out);
 void Telemetry_SerializeFrame(const telemetry_frame_t *frame, uint8_t out32[32]);
 void Telemetry_SerializeRadioFragment(const telemetry_frame_t *frame,
                                       uint8_t fragment_index,

@@ -23,6 +23,7 @@ set(APP_SOURCES
     ../../Core/Src/freertos.c
     ../../Core/Src/io_signals.c
     ../../Core/Src/telemetry.c
+    ../../Core/Src/telemetry_dashboard.c
     ../../Core/Src/test_integration.c   # suites de integración S1-S10
 )
 

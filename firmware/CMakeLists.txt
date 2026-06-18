@@ -81,6 +81,7 @@ set(APP_SRC
   ${REPO}/Core/Src/sdmmc.c
   ${REPO}/Core/Src/spi.c
   ${REPO}/Core/Src/telemetry.c
+  ${REPO}/Core/Src/telemetry_dashboard.c
   ${REPO}/Core/Src/diag.c
   ${REPO}/Core/Src/app_state.c
   ${REPO}/Core/Src/app_tasks.c

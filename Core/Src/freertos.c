@@ -25,6 +25,7 @@
 #include "can.h"
 #include "diag.h"
 #include "telemetry.h"
+#include "telemetry_dashboard.h"
 #include "test_integration.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -76,7 +77,7 @@ typedef struct
 
 static uint32_t s_periodic_generation;
 static uint8_t s_telemetry_radio_divider;
-static uint8_t s_telemetry_sd_divider;
+static uint32_t s_telemetry_diag_counter;
 static app_task_metrics_internal_t s_task_metrics[APP_TASK_ID_COUNT] = {
   { "defaultTask", 0u, 0u, 0u, 0u },
   { "App_InitTask", 0u, 0u, 0u, 0u },
@@ -374,8 +375,6 @@ static void app_diag_log_imu_snapshot(void)
            (int)snapshot.imu_pitch_deg,
            (int)snapshot.imu_yaw_deg);
 }
-
-static void app_dash_publish_frame(const telemetry_frame_t *frame);
 
 static uint32_t app_ms_to_ticks(uint32_t ms)
 {
@@ -1167,7 +1166,7 @@ void StartDashTask(void *argument)
     if (osMessageQueueGet(telemetryDashQueueHandle, &frame, NULL, osWaitForever) == osOK)
     {
       app_task_stepped(APP_TASK_ID_DASH);
-      app_dash_publish_frame(&frame);
+      Telemetry_DashboardPublishFrame(&frame);
       AppRuntime_DashStep();
     }
   }
@@ -1188,8 +1187,7 @@ void AppRuntime_InitStep(void)
   Diag_Log("State machine initialized (WAIT_INV_VDC_CONFIG)\n");
 
   Telemetry_Init();
-  s_telemetry_radio_divider = 2u;
-  s_telemetry_sd_divider = 9u;
+  s_telemetry_radio_divider = 4u;
   Diag_Log("Telemetry subsystem initialized\n");
 
   Control_Init();
@@ -1221,6 +1219,7 @@ void AppRuntime_ControlStep(void)
   if (g_inMutex) {
     osMutexAcquire(g_inMutex, osWaitForever);
   }
+  g_in.fsm_state = control_output.fsm_state;
   g_in.torque_total = control_output.torque_pct;
   g_in.flag_EV_2_3 = control_output.flag_ev_2_3;
   g_in.flag_T11_8_9 = control_output.flag_t11_8_9;
@@ -1283,48 +1282,51 @@ void AppRuntime_TelemetryStep(void)
   telemetry_frame_t dash_frame;
   telemetry_frame_t radio_frame;
   telemetry_frame_t sd_frame;
-  uint8_t send_radio;
-  uint8_t send_sd;
+  uint8_t send_radio_slow;
 
   AppState_Snapshot(&state_snapshot);
+  s_telemetry_diag_counter++;
+
+  if ((s_telemetry_diag_counter % 10u) == 1u)
+  {
+    Diag_Log("TEL step #%lu inv=%u ams=%u torque=%u vmin=%u",
+             (unsigned long)s_telemetry_diag_counter,
+             (unsigned)state_snapshot.inv_state,
+             (unsigned)state_snapshot.ams_state,
+             (unsigned)state_snapshot.torque_total,
+             (unsigned)state_snapshot.v_celda_min);
+  }
+
   Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_DASH, &dash_frame);
   (void)Telemetry_EnqueueFrameTargets(&dash_frame, 0u, 0u, 1u);
 
+  Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_FAST, &radio_frame);
+  (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
+
+  if ((s_telemetry_diag_counter % 10u) == 1u)
+  {
+    Diag_Log("TEL radio fast seq=%u kind=%u", (unsigned)radio_frame.sequence, (unsigned)radio_frame.kind);
+  }
+
+  Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_SD, &sd_frame);
+  (void)Telemetry_EnqueueFrameTargets(&sd_frame, 0u, 1u, 0u);
+
   s_telemetry_radio_divider++;
-  if (s_telemetry_radio_divider >= 3u)
+  if (s_telemetry_radio_divider >= 5u)
   {
     s_telemetry_radio_divider = 0u;
-    send_radio = 1u;
+    send_radio_slow = 1u;
   }
   else
   {
-    send_radio = 0u;
+    send_radio_slow = 0u;
   }
 
-  s_telemetry_sd_divider++;
-  if (s_telemetry_sd_divider >= 10u)
-  {
-    s_telemetry_sd_divider = 0u;
-    send_sd = 1u;
-  }
-  else
-  {
-    send_sd = 0u;
-  }
-
-  if (send_radio)
-  {
-    Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_FAST, &radio_frame);
-    (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
-  }
-
-  if (send_sd)
+  if (send_radio_slow)
   {
     Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_SLOW, &radio_frame);
     (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
-
-    Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_SD, &sd_frame);
-    (void)Telemetry_EnqueueFrameTargets(&sd_frame, 0u, 1u, 0u);
+    Diag_Log("TEL radio slow seq=%u kind=%u", (unsigned)radio_frame.sequence, (unsigned)radio_frame.kind);
   }
 }
 
@@ -1374,101 +1376,6 @@ void AppRuntime_SdLogStep(void)
   }
 }
 
-static void app_dash_push_u16le(uint16_t value, uint8_t out[2])
-{
-  out[0] = (uint8_t)(value & 0xFFu);
-  out[1] = (uint8_t)((value >> 8) & 0xFFu);
-}
-
-static void app_dash_push_u32le(uint32_t value, uint8_t out[4])
-{
-  out[0] = (uint8_t)(value & 0xFFu);
-  out[1] = (uint8_t)((value >> 8) & 0xFFu);
-  out[2] = (uint8_t)((value >> 16) & 0xFFu);
-  out[3] = (uint8_t)((value >> 24) & 0xFFu);
-}
-
-static void app_dash_send_msg(const can_msg_t *msg)
-{
-  if (!msg) return;
-  (void)CanTx_SendHal(msg);
-}
-
-static void app_dash_publish_frame(const telemetry_frame_t *frame)
-{
-  can_msg_t msg;
-  uint8_t fault_bits = 0u;
-
-  if (!frame) return;
-
-  if (frame->snapshot.flag_EV_2_3)  fault_bits |= 0x01u;
-  if (frame->snapshot.flag_T11_8_9) fault_bits |= 0x02u;
-  if (frame->snapshot.inv_error)    fault_bits |= 0x04u;
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x510u;
-  msg.dlc = 8u;
-  msg.data[0] = frame->snapshot.inv_state;
-  msg.data[1] = (uint8_t)frame->snapshot.torque_total;
-  msg.data[2] = fault_bits;
-  msg.data[3] = frame->snapshot.ok_precarga;
-  msg.data[4] = frame->snapshot.boton_arranque;
-  msg.data[5] = (uint8_t)frame->kind;
-  msg.data[6] = (uint8_t)(frame->sequence & 0xFFu);
-  msg.data[7] = (uint8_t)((frame->sequence >> 8) & 0xFFu);
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x511u;
-  msg.dlc = 6u;
-  app_dash_push_u16le(frame->snapshot.s1_aceleracion, &msg.data[0]);
-  app_dash_push_u16le(frame->snapshot.s2_aceleracion, &msg.data[2]);
-  app_dash_push_u16le(frame->snapshot.s_freno, &msg.data[4]);
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x512u;
-  msg.dlc = 6u;
-  app_dash_push_u16le(frame->snapshot.inv_dc_bus_voltage, &msg.data[0]);
-  app_dash_push_u16le(frame->snapshot.v_celda_min, &msg.data[2]);
-  msg.data[4] = frame->snapshot.inv_error;
-  msg.data[5] = frame->snapshot.inv_vdc_ready;
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x513u;
-  msg.dlc = 6u;
-  app_dash_push_u16le((uint16_t)frame->snapshot.inv_motor_temp, &msg.data[0]);
-  app_dash_push_u16le((uint16_t)frame->snapshot.inv_igbt_temp, &msg.data[2]);
-  app_dash_push_u16le((uint16_t)frame->snapshot.inv_air_temp, &msg.data[4]);
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x514u;
-  msg.dlc = 4u;
-  app_dash_push_u32le((uint32_t)frame->snapshot.inv_rpm, &msg.data[0]);
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x515u;
-  msg.dlc = 4u;
-  app_dash_push_u32le((uint32_t)frame->snapshot.inv_speed_actual, &msg.data[0]);
-  app_dash_send_msg(&msg);
-
-  memset(&msg, 0, sizeof(msg));
-  msg.bus = CAN_BUS_DASH;
-  msg.id = 0x516u;
-  msg.dlc = 4u;
-  app_dash_push_u32le((uint32_t)frame->snapshot.inv_current_actual, &msg.data[0]);
-  app_dash_send_msg(&msg);
-}
-
 void AppRuntime_DashStep(void)
 {
   telemetry_frame_t frame;
@@ -1477,7 +1384,7 @@ void AppRuntime_DashStep(void)
   status = osMessageQueueGet(telemetryDashQueueHandle, &frame, NULL, 0u);
   while (status == osOK)
   {
-    app_dash_publish_frame(&frame);
+    Telemetry_DashboardPublishFrame(&frame);
     status = osMessageQueueGet(telemetryDashQueueHandle, &frame, NULL, 0u);
   }
 }

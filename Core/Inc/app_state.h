@@ -65,6 +65,7 @@ typedef struct
   uint8_t flag_T11_8_9;
 
   /* Derived */
+  uint8_t  fsm_state;        /* ECU control state machine state */
   uint16_t torque_total;     /* 0..100% */
 
 } app_inputs_t;
