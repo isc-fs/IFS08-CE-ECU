@@ -84,7 +84,6 @@ set(APP_SRC
   ${REPO}/Core/Src/telemetry_dashboard.c
   ${REPO}/Core/Src/diag.c
   ${REPO}/Core/Src/app_state.c
-  ${REPO}/Core/Src/app_tasks.c
   ${REPO}/Core/Src/tim.c
   ${REPO}/Core/Src/usart.c
   ${REPO}/Core/Src/usb_otg.c

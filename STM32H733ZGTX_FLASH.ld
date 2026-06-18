@@ -45,10 +45,8 @@ MEMORY
 {
   ITCMRAM (xrw)    : ORIGIN = 0x00000000,   LENGTH = 64K
   DTCMRAM (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
-  /* App region for the isc-fs/stm32-can-bootloader. Sector 0 (0x08000000)
-     holds the bootloader; sector 7 (0x080E0000) is BL NVM + app metadata.
-     The app occupies sectors 1..6 = 768 KB. See bl_memmap.h in that repo. */
-  FLASH    (rx)    : ORIGIN = 0x08020000,   LENGTH = 768K
+  /* Normal app layout: full internal flash available from 0x08000000. */
+  FLASH    (rx)    : ORIGIN = 0x08000000,   LENGTH = 1024K
   RAM_D1  (xrw)    : ORIGIN = 0x24000000,   LENGTH = 320K
   RAM_D2  (xrw)    : ORIGIN = 0x30000000,   LENGTH = 32K
   RAM_D3  (xrw)    : ORIGIN = 0x38000000,   LENGTH = 16K
@@ -65,11 +63,8 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
-  /* Bootloader firmware-info record, pinned at app base + 0x400 (= 0x08020400).
-     stm32-can-bootloader reads this to mark the app valid; JUMP is rejected
-     with NO_VALID_APP if magic / record_version don't match. Emitted by
-     Core/Src/firmware_info.c. Layout: stm32-can-bootloader Core/Inc/bl_fwinfo.h. */
-  .firmware_info 0x08020400 :
+  /* Keep firmware info near the image start; harmless in a normal layout. */
+  .firmware_info 0x08000400 :
   {
     KEEP(*(.firmware_info))
   } >FLASH

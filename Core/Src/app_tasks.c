@@ -152,7 +152,9 @@ void TelemetryTask(void *argument)
   uint8_t slow_divider = 4U;
 
   app_inputs_t in_snap;
-  telemetry_frame_t frame;
+  telemetry_frame_t dash_frame;
+  telemetry_frame_t radio_frame;
+  telemetry_frame_t sd_frame;
 
   for (;;)
   {
@@ -163,17 +165,21 @@ void TelemetryTask(void *argument)
     in_snap = g_in;
     osMutexRelease(g_inMutex);
 
-    Telemetry_BuildFrame(&in_snap, NULL, &frame);
+    Telemetry_BuildFrameWithKind(&in_snap, NULL, TELEMETRY_FRAME_DASH, &dash_frame);
+    (void)Telemetry_EnqueueFrameTargets(&dash_frame, 0U, 0U, 1U);
+
+    Telemetry_BuildFrameWithKind(&in_snap, NULL, TELEMETRY_FRAME_RF_FAST, &radio_frame);
+    (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1U, 0U, 0U);
+
+    Telemetry_BuildFrameWithKind(&in_snap, NULL, TELEMETRY_FRAME_SD, &sd_frame);
+    (void)Telemetry_EnqueueFrameTargets(&sd_frame, 0U, 1U, 0U);
 
     slow_divider++;
     if (slow_divider >= 5U)
     {
       slow_divider = 0U;
-      (void)Telemetry_EnqueueFrameTargets(&frame, 1U, 1U, 1U);
-    }
-    else
-    {
-      (void)Telemetry_EnqueueFrameTargets(&frame, 0U, 0U, 1U);
+      Telemetry_BuildFrameWithKind(&in_snap, NULL, TELEMETRY_FRAME_RF_SLOW, &radio_frame);
+      (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1U, 0U, 0U);
     }
   }
 }

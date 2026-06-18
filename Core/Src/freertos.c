@@ -78,6 +78,7 @@ typedef struct
 static uint32_t s_periodic_generation;
 static uint8_t s_telemetry_radio_divider;
 static uint32_t s_telemetry_diag_counter;
+static uint32_t s_radio_uart_log_count;
 static app_task_metrics_internal_t s_task_metrics[APP_TASK_ID_COUNT] = {
   { "defaultTask", 0u, 0u, 0u, 0u },
   { "App_InitTask", 0u, 0u, 0u, 0u },
@@ -473,16 +474,48 @@ static void app_runtime_process_radio_frame(const telemetry_frame_t *frame)
 {
   uint8_t fragment_count;
   uint8_t fragment_index;
+  const char *kind_name;
 
   if (!frame)
   {
     return;
   }
 
+  switch (frame->kind)
+  {
+    case TELEMETRY_FRAME_RF_FAST:
+      kind_name = "RF_FAST";
+      break;
+    case TELEMETRY_FRAME_RF_SLOW:
+      kind_name = "RF_SLOW";
+      break;
+    case TELEMETRY_FRAME_RF_EVENT:
+      kind_name = "RF_EVENT";
+      break;
+    default:
+      kind_name = "RF_UNKNOWN";
+      break;
+  }
+
   fragment_count = Telemetry_RadioFragmentCount(frame);
   if (fragment_count == 0u)
   {
     return;
+  }
+
+  s_radio_uart_log_count++;
+  if ((s_radio_uart_log_count <= 20u) || ((s_radio_uart_log_count % 20u) == 0u))
+  {
+    Diag_Log("UART TEL frame #%lu seq=%u kind=%u(%s) frags=%u torque=%u vdc=%u vmin=%u rpm=%ld",
+             (unsigned long)s_radio_uart_log_count,
+             (unsigned)frame->sequence,
+             (unsigned)frame->kind,
+             kind_name,
+             (unsigned)fragment_count,
+             (unsigned)frame->snapshot.ecu.torque_total,
+             (unsigned)frame->snapshot.inverter.inv_dc_bus_voltage,
+             (unsigned)frame->snapshot.ams.v_celda_min,
+             (long)frame->snapshot.inverter.inv_rpm);
   }
 
   for (fragment_index = 0u; fragment_index < fragment_count; fragment_index++)
@@ -569,7 +602,7 @@ osThreadId_t RadioTxTaskHandle;
 const osThreadAttr_t RadioTxTask_attributes = {
   .name = "RadioTxTask",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 
 osThreadId_t SdLogTaskHandle;
@@ -642,7 +675,7 @@ osThreadId_t TelemetryTaskHandle;
 const osThreadAttr_t TelemetryTask_attributes = {
   .name = "TelemetryTask",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for DiagTask */
 osThreadId_t DiagTaskHandle;
@@ -1098,6 +1131,7 @@ void StartDiagTask(void *argument)
 void StartRadioTxTask(void *argument)
 {
   (void)argument;
+  static uint32_t s_radio_dequeue_count = 0u;
   if (app_task_started(APP_TASK_ID_RADIO_TX))
   {
     Diag_Log("TASK: RadioTxTask enter");
@@ -1114,6 +1148,16 @@ void StartRadioTxTask(void *argument)
     if (osMessageQueueGet(telemetryRadioQueueHandle, &frame, NULL, osWaitForever) == osOK)
     {
       app_task_stepped(APP_TASK_ID_RADIO_TX);
+      s_radio_dequeue_count++;
+      if ((s_radio_dequeue_count <= 10u) || ((s_radio_dequeue_count % 20u) == 0u))
+      {
+        Diag_Log("TELQ RADIO GET #%lu seq=%u kind=%u count=%lu space=%lu",
+                 (unsigned long)s_radio_dequeue_count,
+                 (unsigned)frame.sequence,
+                 (unsigned)frame.kind,
+                 (unsigned long)osMessageQueueGetCount(telemetryRadioQueueHandle),
+                 (unsigned long)osMessageQueueGetSpace(telemetryRadioQueueHandle));
+      }
       app_runtime_process_radio_frame(&frame);
       AppRuntime_RadioTxStep();
     }
@@ -1175,6 +1219,7 @@ void StartDashTask(void *argument)
 
 void AppRuntime_InitStep(void)
 {
+    Diag_Log("BOT BUILD RADIO CLEAN 2026-06-18\n");
     Diag_Log("\n=== ECU08 NSIL INITIALIZATION ===\n");
 
 #ifndef SIL_BUILD
@@ -1301,6 +1346,15 @@ void AppRuntime_TelemetryStep(void)
   (void)Telemetry_EnqueueFrameTargets(&dash_frame, 0u, 0u, 1u);
 
   Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_FAST, &radio_frame);
+  if ((s_telemetry_diag_counter <= 10u) || ((s_telemetry_diag_counter % 10u) == 0u))
+  {
+    Diag_Log("TELGEN fast seq=%u kind=%u torque=%u rpm=%ld vdc=%u",
+             (unsigned)radio_frame.sequence,
+             (unsigned)radio_frame.kind,
+             (unsigned)radio_frame.snapshot.ecu.torque_total,
+             (long)radio_frame.snapshot.inverter.inv_rpm,
+             (unsigned)radio_frame.snapshot.inverter.inv_dc_bus_voltage);
+  }
   (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
 
   if ((s_telemetry_diag_counter % 10u) == 1u)
@@ -1325,6 +1379,11 @@ void AppRuntime_TelemetryStep(void)
   if (send_radio_slow)
   {
     Telemetry_BuildFrameWithKind(&state_snapshot, NULL, TELEMETRY_FRAME_RF_SLOW, &radio_frame);
+    Diag_Log("TELGEN slow seq=%u kind=%u soc=%u gpsfix=%u",
+             (unsigned)radio_frame.sequence,
+             (unsigned)radio_frame.kind,
+             (unsigned)radio_frame.snapshot.ams.soc,
+             (unsigned)radio_frame.snapshot.gps.fix_type);
     (void)Telemetry_EnqueueFrameTargets(&radio_frame, 1u, 0u, 0u);
     Diag_Log("TEL radio slow seq=%u kind=%u", (unsigned)radio_frame.sequence, (unsigned)radio_frame.kind);
   }

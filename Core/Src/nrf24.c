@@ -29,6 +29,7 @@ static uint8_t s_nrf24_ready;
 static uint8_t s_nrf24_diag_reported;
 static uint8_t s_sd_diag_reported;
 static uint32_t s_nrf24_tx_ok_count;
+static uint32_t s_nrf24_uart_trace_count;
 
 #define NRF24_CMD_R_REGISTER   0x00u
 #define NRF24_CMD_W_REGISTER   0x20u
@@ -478,15 +479,35 @@ static uint8_t sd_mount_once(void)
 
 void Telemetry_Send32(const uint8_t payload[32])
 {
+  uint16_t seq;
+
   nrf24_init_once();
   if (!s_nrf24_ready) return;
+
+  seq = (uint16_t)payload[4] | ((uint16_t)payload[5] << 8);
 
   if (nrf24_tx32(payload))
   {
     s_nrf24_tx_ok_count++;
+    s_nrf24_uart_trace_count++;
+    if ((s_nrf24_uart_trace_count <= 40u) || ((s_nrf24_uart_trace_count % 40u) == 0u))
+    {
+      Diag_Log("BOT UART NRF TX #%lu magic=%02X ver=%02X frag=%u/%u seq=%u kind=%u p8=%02X p9=%02X p10=%02X p11=%02X",
+               (unsigned long)s_nrf24_uart_trace_count,
+               (unsigned)payload[0],
+               (unsigned)payload[1],
+               (unsigned)payload[2],
+               (unsigned)payload[3],
+               (unsigned)seq,
+               (unsigned)payload[6],
+               (unsigned)payload[8],
+               (unsigned)payload[9],
+               (unsigned)payload[10],
+               (unsigned)payload[11]);
+    }
     if ((s_nrf24_tx_ok_count <= 3u) || ((s_nrf24_tx_ok_count % 10u) == 0u))
     {
-      Diag_Log("NRF24 TX ok #%lu magic=%02X frag=%u/%u seq=%u kind=%u",
+      Diag_Log("BOT NRF24 TX ok #%lu magic=%02X frag=%u/%u seq=%u kind=%u",
                (unsigned long)s_nrf24_tx_ok_count,
                (unsigned)payload[0],
                (unsigned)payload[2],
@@ -503,7 +524,7 @@ void Telemetry_Send32(const uint8_t payload[32])
     uint8_t fifo = 0xFFu;
     (void)nrf24_read_reg(NRF24_REG_STATUS, &status);
     (void)nrf24_read_reg(NRF24_REG_FIFO_STATUS, &fifo);
-    Diag_Log("NRF24 telemetry TX failed status=%02X fifo=%02X frag=%u/%u seq=%u kind=%u",
+    Diag_Log("BOT NRF24 telemetry TX failed status=%02X fifo=%02X frag=%u/%u seq=%u kind=%u",
              (unsigned)status,
              (unsigned)fifo,
              (unsigned)payload[2],

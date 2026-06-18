@@ -393,7 +393,7 @@ uint8_t Telemetry_EnqueueFrameTargets(const telemetry_frame_t *frame,
                                       uint8_t to_dash)
 {
   uint8_t queued = 1u;
-  static uint8_t s_radio_enqueue_log_count = 0u;
+  static uint32_t s_radio_enqueue_ok_count = 0u;
 
   if (!frame)
   {
@@ -404,17 +404,25 @@ uint8_t Telemetry_EnqueueFrameTargets(const telemetry_frame_t *frame,
       telemetryRadioQueueHandle &&
       osMessageQueuePut(telemetryRadioQueueHandle, frame, 0u, 0u) != osOK)
   {
-    Diag_Log("TEL enqueue RADIO FAIL seq=%u kind=%u",
+    Diag_Log("TELQ RADIO PUT FAIL seq=%u kind=%u count=%lu space=%lu",
              (unsigned)frame->sequence,
-             (unsigned)frame->kind);
+             (unsigned)frame->kind,
+             (unsigned long)osMessageQueueGetCount(telemetryRadioQueueHandle),
+             (unsigned long)osMessageQueueGetSpace(telemetryRadioQueueHandle));
     queued = 0u;
   }
-  else if (to_radio && s_radio_enqueue_log_count < 3u)
+  else if (to_radio)
   {
-    s_radio_enqueue_log_count++;
-    Diag_Log("TEL enqueue RADIO ok seq=%u kind=%u",
-             (unsigned)frame->sequence,
-             (unsigned)frame->kind);
+    s_radio_enqueue_ok_count++;
+    if ((s_radio_enqueue_ok_count <= 10u) || ((s_radio_enqueue_ok_count % 20u) == 0u))
+    {
+      Diag_Log("TELQ RADIO PUT #%lu seq=%u kind=%u count=%lu space=%lu",
+               (unsigned long)s_radio_enqueue_ok_count,
+               (unsigned)frame->sequence,
+               (unsigned)frame->kind,
+               (unsigned long)osMessageQueueGetCount(telemetryRadioQueueHandle),
+               (unsigned long)osMessageQueueGetSpace(telemetryRadioQueueHandle));
+    }
   }
 
   if (to_sd &&
