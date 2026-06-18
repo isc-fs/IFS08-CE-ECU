@@ -472,20 +472,26 @@ HAL_StatusTypeDef FDCAN_RuntimeBringUp(void)
     return HAL_OK;
   }
 
-  if (fdcan_start_with_fifo0_irq(&hfdcan1) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
+  /* #48: bring each bus up INDEPENDENTLY -- one bus failing to start must NOT
+   * take down the whole ECU. FDCAN2 (ACU) is the external shared bus carrying
+   * the safety-critical AMS heartbeat (0x100) + flash/uDV, so it is mandatory.
+   * FDCAN1 (INV) and FDCAN3 (DASH) are point-to-point internal buses: an
+   * unplugged inverter or dash -- on the bench, or a single-node fault on the
+   * car -- must never silence the heartbeat, so they are best-effort (and
+   * recovered later by FDCAN_BusOffPoll() if they bus-off). Only FDCAN2 gates a
+   * successful bring-up.
+   *
+   * Was: Start(1) -> Start(2) -> Start(3), returning HAL_ERROR on the FIRST
+   * failure -> caller Error_Handler() -> ECU hang -> ALL TX (incl. the
+   * heartbeat) dead if ANY one bus couldn't start. That is the #48
+   * FDCAN-TX-dead failure mode (DASH is physically disconnected on the bench). */
   if (fdcan_start_with_fifo0_irq(&hfdcan2) != HAL_OK)
   {
-    return HAL_ERROR;
+    return HAL_ERROR;   /* shared / heartbeat bus -- mandatory */
   }
 
-  if (fdcan_start_with_fifo0_irq(&hfdcan3) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
+  (void)fdcan_start_with_fifo0_irq(&hfdcan1);   /* INV  -- best effort */
+  (void)fdcan_start_with_fifo0_irq(&hfdcan3);   /* DASH -- best effort */
 
   bringup_done = 1U;
   return HAL_OK;
