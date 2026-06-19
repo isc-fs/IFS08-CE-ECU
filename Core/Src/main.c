@@ -21,12 +21,8 @@
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
 #include "adc.h"
-#include "fatfs.h"
 #include "fdcan.h"
-#include "i2c.h"
 #include "iwdg.h"
-#include "sdmmc.h"
-#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "usb_otg.h"
@@ -34,7 +30,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "diag.h"
 
 /* USER CODE END Includes */
 
@@ -61,7 +56,6 @@
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void PeriphCommonClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -95,62 +89,29 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
-  /* Configure the peripherals common clocks */
-  PeriphCommonClock_Config();
-
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-  /* NOTE: the per-step Diag_Log() calls below sit between the CubeMX MX_*_Init()
-   * calls -- CubeMX-owned code, so a regen wipes them. Re-add after any
-   * "Generate Code". They trace boot progress to the diag sink. */
-  Diag_Log("BOOT: starting peripheral init sequence");
   MX_GPIO_Init();
-  Diag_Log("BOOT: gpio init ok");
   MX_FDCAN1_Init();
-  Diag_Log("BOOT: fdcan1 init ok");
   MX_FDCAN2_Init();
-  Diag_Log("BOOT: fdcan2 init ok");
   MX_TIM1_Init();
-  Diag_Log("BOOT: tim1 init ok");
   MX_TIM16_Init();
-  Diag_Log("BOOT: tim16 init ok");
-  MX_FDCAN3_Init();
-  Diag_Log("BOOT: fdcan3 init ok");
   MX_ADC3_Init();
-  Diag_Log("BOOT: adc3 init ok");
   MX_USART10_UART_Init();
-  Diag_Log("BOOT: uart up");
-  MX_SDMMC1_SD_Init();
-  Diag_Log("BOOT: sdmmc init ok");
-  MX_SPI1_Init();
-  Diag_Log("BOOT: spi1 init ok");
   MX_USB_OTG_HS_PCD_Init();
-  Diag_Log("BOOT: usb otg init ok");
-  MX_FATFS_Init();
-  Diag_Log("BOOT: fatfs init ok");
-  MX_IWDG1_Init();   /* app-owned IWDG (~500 ms), parity with the AMS; see iwdg.c */
-  Diag_Log("BOOT: iwdg armed");
-  MX_I2C2_Init();
-  Diag_Log("BOOT: i2c2 init ok");
+  MX_IWDG1_Init();
   /* USER CODE BEGIN 2 */
-  Diag_Log("BOOT: peripherals initialized");
-  Diag_Log("BOOT: entering RTOS startup");
 
   /* USER CODE END 2 */
 
   /* Init scheduler */
-  osKernelInitialize();
-  Diag_Log("BOOT: kernel initialized");
-
-  /* Call init function for freertos objects (in cmsis_os2.c) */
+  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
   MX_FREERTOS_Init();
-  Diag_Log("BOOT: RTOS objects created");
 
   /* Start scheduler */
-  Diag_Log("BOOT: starting scheduler");
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
@@ -227,33 +188,6 @@ void SystemClock_Config(void)
   }
 }
 
-/**
-  * @brief Peripherals Common Clock Configuration
-  * @retval None
-  */
-void PeriphCommonClock_Config(void)
-{
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-
-  /** Initializes the peripherals clock
-  */
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC|RCC_PERIPHCLK_SDMMC;
-  PeriphClkInitStruct.PLL2.PLL2M = 2;
-  PeriphClkInitStruct.PLL2.PLL2N = 16;
-  PeriphClkInitStruct.PLL2.PLL2P = 2;
-  PeriphClkInitStruct.PLL2.PLL2Q = 2;
-  PeriphClkInitStruct.PLL2.PLL2R = 1;
-  PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_3;
-  PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
-  PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
-  PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL2;
-  PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
@@ -288,7 +222,6 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  Diag_Log("BOOT: Error_Handler reached");
   __disable_irq();
   while (1)
   {

@@ -1,11 +1,8 @@
 /* SPDX-License-Identifier: proprietary */
 /*
- * 0x705  PitDiag_brake -- physical brake values derived from the S_BRAKE
- * pressure sensor (raw is in 0x701). Mirrors PitDiag_BuildBrake(). 100 ms
- * while enabled.
- *   brake_pressure = Control_BrakePressure() in 0.1-bar units (factor 0.1)
- *   brake_pct      = Control_BrakePct() pedal travel 0..100%
- * Both depend on the PENDING brake calibration in control.c.
+ * 0x705  PitDiag_brake -- physical brake values from the S_BRAKE pressure
+ * sensor (raw is in 0x701). 100 ms while enabled. Both depend on the PENDING
+ * brake calibration in ecu_config.hpp.
  */
 
 CAN_MSG(PitDiag_brake, 0x705, 3, "VCU", 100)

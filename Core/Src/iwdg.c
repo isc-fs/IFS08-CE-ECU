@@ -52,12 +52,6 @@ void MX_IWDG1_Init(void)
 }
 
 /* USER CODE BEGIN 1 */
-/* App-owned IWDG refresh, called every ControlTask cycle (~10 ms). On a fault
- * path it stops being called, so the ~500 ms watchdog resets the chip back to
- * the bootloader. Lives in USER CODE so it survives a CubeMX regen. */
-void IWDG_Refresh(void)
-{
-  (void)HAL_IWDG_Refresh(&hiwdg1);
-}
+
 /* USER CODE END 1 */
 

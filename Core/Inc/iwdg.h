@@ -41,7 +41,7 @@ extern IWDG_HandleTypeDef hiwdg1;
 void MX_IWDG1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-void IWDG_Refresh(void);
+
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
