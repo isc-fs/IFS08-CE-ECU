@@ -32,17 +32,15 @@ target_compile_options(ecu08_sil PRIVATE
 target_compile_definitions(ecu08_sil PRIVATE SIL_BUILD=1)
 target_link_libraries(ecu08_sil m)
 
-# Host tool: regenerate docs/dbc/ecu.dbc from the code-first CAN DSL.
-# DISABLED by default -- tools/dbc_dump.c is the pre-rewrite C tool (it includes
-# the old C "can/can_codecs.h"; the rewrite's DSL is the C++ can_codecs.hpp).
-# Porting the DBC generator to the C++ DSL is part of #9; enable with
-# -DBUILD_DBC_DUMP=ON once ported.
-option(BUILD_DBC_DUMP "Build the DBC regen tool (needs C++ DSL port, #9)" OFF)
-if(BUILD_DBC_DUMP AND EXISTS ${REPO}/tools/dbc_dump.c)
-    add_executable(ecu_dbc_dump ${REPO}/tools/dbc_dump.c)
-    target_include_directories(ecu_dbc_dump PRIVATE ${REPO}/Core/Inc)
-    target_compile_options(ecu_dbc_dump PRIVATE -Wall -Wextra)
-endif()
+# Host tool: regenerate docs/dbc/ecu.dbc from the code-first CAN DSL. The
+# dbcinator bot (.github/workflows/dbc-bot.yml, on every PR to dev/main) builds
+# this target and force-pushes the regenerated DBC, so it must always build --
+# and it's compiled by the SIL job too, so it must compile cleanly. C++ TU
+# against the rewrite's C++ DSL (can_codecs.hpp / ECU_CAN_DESCRIPTORS ->
+# ecu::ALL_MSGS of can_dsl::MsgDesc).
+add_executable(ecu_dbc_dump ${REPO}/tools/dbc_dump.cpp)
+target_include_directories(ecu_dbc_dump PRIVATE ${REPO}/Core/Inc)
+target_compile_options(ecu_dbc_dump PRIVATE -Wall -Wextra)
 
 enable_testing()
 add_test(NAME SIL_Apps            COMMAND ecu08_sil --test-apps)
