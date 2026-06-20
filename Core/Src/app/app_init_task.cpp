@@ -3,8 +3,10 @@
 // App_InitTask: runs once at high priority after the scheduler starts, brings
 // up the two FDCAN instances, then self-deletes. The bring-up is the heart of
 // the #48 fix:
-//   1. FDCAN2 is re-initialised with a NON-OVERLAPPING MessageRAM offset so it
-//      doesn't share SRAMCAN with FDCAN1 (the overlap was what corrupted TX).
+//   1. The non-overlapping MessageRAM offsets (FDCAN1=0 / FDCAN2=387 words) are
+//      set at the single MX_FDCAN1/2_Init in fdcan.c -- FDCAN2 no longer shares
+//      SRAMCAN with FDCAN1 (the overlap was what corrupted TX). NOT re-applied
+//      here: a DeInit/Init dance gates the SHARED FDCAN kernel clock and faults.
 //   2. Each bus is started INDEPENDENTLY and success is gated on FDCAN2 alone
 //      -- a dead/unpeered FDCAN1 (the inverter bus) must never take down the
 //      heartbeat on FDCAN2 (the shared bus the AMS watches). We deliberately do
@@ -36,7 +38,6 @@ extern "C" {
 volatile std::uint8_t  g_app_init_progress    = 0;
 volatile std::uint32_t g_fdcan1_start_result  = 0xFFFFFFFFu;
 volatile std::uint32_t g_fdcan2_start_result  = 0xFFFFFFFFu;
-volatile std::uint32_t g_fdcan2_init_result   = 0xFFFFFFFFu;
 }
 
 namespace {
@@ -68,15 +69,12 @@ extern "C" void ecu_app_init_task_run(void *argument) {
     g_app_init_progress = 2u;
 #endif
 
-    // (1) Re-init FDCAN2 with a non-overlapping MessageRAM offset (the #48 fix).
-    // DeInit -> set offset -> Init; the rest of hfdcan2.Init (element map, bit
-    // timing) is preserved by CubeMX's MX_FDCAN2_Init.
-    HAL_FDCAN_DeInit(&hfdcan2);
-    hfdcan2.Init.MessageRAMOffset = ecu::config::Fdcan2MessageRamOffset;
-    g_fdcan2_init_result = static_cast<std::uint32_t>(HAL_FDCAN_Init(&hfdcan2));
-    g_app_init_progress  = 3u;
+    // FDCAN MessageRAM offsets (FDCAN1=0 / FDCAN2=387 words) are applied at the
+    // single MX_FDCAN_Init in fdcan.c -- we do NOT DeInit/Init here (that gates
+    // the shared FDCAN kernel clock and faults).
+    g_app_init_progress = 3u;
 
-    // (2) Resilient bring-up. FDCAN2 first (the load-bearing bus); FDCAN1 is
+    // Resilient bring-up. FDCAN2 first (the load-bearing bus); FDCAN1 is
     // best-effort. Neither failure Error_Handler()s the ECU.
     g_fdcan2_start_result = static_cast<std::uint32_t>(bring_up(&hfdcan2));
     g_app_init_progress   = 4u;

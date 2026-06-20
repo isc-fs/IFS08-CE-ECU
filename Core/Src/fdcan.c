@@ -100,7 +100,7 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Init.DataSyncJumpWidth = 1;
   hfdcan2.Init.DataTimeSeg1 = 1;
   hfdcan2.Init.DataTimeSeg2 = 1;
-  hfdcan2.Init.MessageRAMOffset = 0;
+  hfdcan2.Init.MessageRAMOffset = 387;  /* #48 fix: FDCAN1 occupies [0,387) words of the shared SRAMCAN; FDCAN2 starts here so they don't overlap. RE-APPLY after any CubeMX regen (CubeMX resets this to 0 and there is no USER CODE slot before HAL_FDCAN_Init). */
   hfdcan2.Init.StdFiltersNbr = 1;
   hfdcan2.Init.ExtFiltersNbr = 1;
   hfdcan2.Init.RxFifo0ElmtsNbr = 16;

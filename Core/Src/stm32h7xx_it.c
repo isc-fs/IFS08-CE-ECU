@@ -22,6 +22,7 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app/app_globals.h"   /* ecu_fault_latch_set_c -- latch a fault sentinel before the hang */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -89,7 +90,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  ecu_fault_latch_set_c(0xF1u);   /* FaultCode::HardFault -> 0x704 last_fault */
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -104,7 +105,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-
+  ecu_fault_latch_set_c(0xF2u);   /* FaultCode::MemManage -> 0x704 last_fault */
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
@@ -119,7 +120,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-
+  ecu_fault_latch_set_c(0xF3u);   /* FaultCode::BusFault -> 0x704 last_fault */
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
@@ -134,7 +135,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-
+  ecu_fault_latch_set_c(0xF4u);   /* FaultCode::UsageFault -> 0x704 last_fault */
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {
