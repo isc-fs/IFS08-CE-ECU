@@ -95,6 +95,25 @@ inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
 inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (DCBus_Voltage_V)
 
+// ---- Inverter (NX/EMC) TX setpoints (FDCAN1, standard IDs) -----------------
+// IDs / mode words / byte layout / torque map all verified against the original
+// VCU (IFS08-CE/VCU pre-jarama). The control core's InvMode values ARE the
+// App_State_Req mode words (Off 0x01 / Ready 0x04 / TorqueEnable 0x06).
+inline constexpr uint32_t InvTxSetpointModeId    = 0x360u;   // EMC_RX_SETPOINT_1 (App_State_Req @ byte2)
+inline constexpr uint8_t  InvTxSetpointModeDlc   = 3u;
+inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
+inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;
+// Torque map (reuses InvTorqueMap* above): pct>=10 -> pct*240/90 - 2400/90
+// (10%->0, 100%->240), then NEGATED. The negation is a MECHANICAL constraint of
+// the motor (its mounting): forward drive = NEGATIVE Torque_Nm_Req. NOT optional
+// and NOT a protocol quirk -- removing it drives the car the wrong way (verified
+// against the original VCU + confirmed mechanically).
+//
+// The inverter takes these setpoints WITHOUT E2E -- bytes 0-1 go out as 0x00,
+// matching the original VCU's inverter comms byte-for-byte. (The NX DBC does
+// define E2E Profile 1 fields, so if the new inverter turns out to enforce them
+// on the bench, an E2E CRC engine can be added -- the original code did not.)
+
 // ---- Bootloader / firmware-info / backup domain ----------------------------
 inline constexpr uint8_t  EcuNodeId            = 0x01;        // stm32-can-bootloader multi-node id (ECU=0x01, AMS=0x02, uDV=0x03)
 

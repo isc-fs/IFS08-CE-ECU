@@ -21,6 +21,7 @@ set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 add_executable(ecu08_sil
     sil_control_tests.cpp
     ${REPO}/Core/Src/app/control.cpp
+    ${REPO}/Core/Src/app/inverter.cpp
 )
 
 target_include_directories(ecu08_sil PRIVATE ${REPO}/Core/Inc)

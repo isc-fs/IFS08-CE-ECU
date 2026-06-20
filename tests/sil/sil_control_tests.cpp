@@ -20,6 +20,7 @@
 #include "app/control.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
+#include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
 
 using namespace ecu;
 using namespace ecu::config;
@@ -289,6 +290,32 @@ static void test_dsl_parity() {
     CHECK(static_cast<uint32_t>(BL_boot_trigger_ID)  == BlBootTriggerCanId, "BL_boot_trigger_ID == config");
 }
 
+// Inverter TX adapter -- IDs / modes / byte layout / torque map matched
+// byte-for-byte to the original VCU; the torque sign is negated for the motor's
+// mechanical mounting; the E2E bytes go out as 0 (as the original VCU sent them).
+static void test_inverter() {
+    std::printf("[inverter]\n");
+    CHECK(Inverter::torque_to_nm_req(5)   == 0,    "<10% (deadband) -> 0");
+    CHECK(Inverter::torque_to_nm_req(10)  == 0,    "10% -> 0 (map start)");
+    CHECK(Inverter::torque_to_nm_req(100) == -240, "100% -> -240 (mapped + mechanically negated)");
+    CHECK(Inverter::torque_to_nm_req(100) <  0,    "forward torque is NEGATIVE (mechanical mounting)");
+
+    // 0x360 mode frame: FDCAN1, id 0x360, dlc 3, {0, 0, App_State_Req}.
+    const CanFrame md = Inverter::build_setpoint_mode(InvMode::TorqueEnable);
+    CHECK(md.bus == static_cast<uint8_t>(CanBus::Inv), "mode frame on FDCAN1 (Inv)");
+    CHECK(md.id == InvTxSetpointModeId && md.dlc == 3, "mode frame id 0x360 dlc 3");
+    CHECK(md.data[0] == 0 && md.data[1] == 0, "0x360 bytes 0-1 = 0 (as the original VCU)");
+    CHECK(md.data[2] == 0x06, "App_State_Req = InvMode::TorqueEnable (0x06)");
+
+    // 0x362 torque frame: id 0x362, dlc 4, {0, 0, torque_lo, torque_hi} (LE, negated).
+    const CanFrame tq = Inverter::build_setpoint_torque(100);
+    CHECK(tq.id == InvTxSetpointTorqueId && tq.dlc == 4, "torque frame id 0x362 dlc 4");
+    CHECK(tq.data[0] == 0 && tq.data[1] == 0, "0x362 bytes 0-1 = 0 (as the original VCU)");
+    const int16_t sent = static_cast<int16_t>(
+        static_cast<uint16_t>(tq.data[2] | (static_cast<uint16_t>(tq.data[3]) << 8)));
+    CHECK(sent == -240, "Torque_Nm_Req @ bytes 2-3 LE == -240");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -304,6 +331,7 @@ static void run_all() {
     test_cell_v_derate();
     test_bootloader_trigger();
     test_dsl_parity();
+    test_inverter();
 }
 
 int main(int argc, char** argv) {
@@ -323,6 +351,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-plausibility"))     { test_ev_2_3(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
+    else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);
