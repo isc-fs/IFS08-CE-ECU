@@ -1,6 +1,6 @@
 /* USER CODE BEGIN Header */
 /*
- * FreeRTOS Kernel V10.3.1
+ * FreeRTOS Kernel V10.6.2
  * Portion Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  * Portion Copyright (C) 2019 StMicroelectronics, Inc.  All Rights Reserved.
  *
@@ -19,7 +19,7 @@
  * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
  * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
  * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE .
  *
  * http://www.FreeRTOS.org
  * http://aws.amazon.com/freertos
@@ -55,7 +55,7 @@ extern uint32_t SystemCoreClock;
 #define CMSIS_device_header "stm32h7xx.h"
 #endif /* CMSIS_device_header */
 
-#define configENABLE_FPU                         0
+#define configENABLE_FPU                         1
 #define configENABLE_MPU                         0
 
 #define configUSE_PREEMPTION                     1
@@ -69,14 +69,16 @@ extern uint32_t SystemCoreClock;
 #define configUSE_SB_COMPLETED_CALLBACK          ( 0 )
 #define configUSE_MINI_LIST_ITEM                ( 1 )
 #define configMINIMAL_STACK_SIZE                 ((uint16_t)128)
-#define configTOTAL_HEAP_SIZE                    ((size_t)15360)
+#define configTOTAL_HEAP_SIZE                    ((size_t)65536)
 #define configMAX_TASK_NAME_LEN                  ( 16 )
 #define configHEAP_CLEAR_MEMORY_ON_FREE          0
 #define configUSE_TRACE_FACILITY                 1
 #define configUSE_16_BIT_TICKS                   0
 #define configUSE_MUTEXES                        1
 #define configQUEUE_REGISTRY_SIZE                8
+#define configCHECK_FOR_STACK_OVERFLOW           2
 #define configUSE_RECURSIVE_MUTEXES              1
+#define configUSE_MALLOC_FAILED_HOOK             1
 #define configUSE_COUNTING_SEMAPHORES            1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION  0
 /* USER CODE BEGIN MESSAGE_BUFFER_LENGTH_TYPE */
@@ -156,25 +158,7 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
 /* USER CODE BEGIN 1 */
-/* Fault detection for the firmware-health frame (0x704, IFS08-CE-ECU#36/IWDG
- * chase): catch the silent-corruption paths that otherwise vanish into an IWDG
- * reset, and route each to a distinct sticky last_fault sentinel. #undef-first
- * so this survives a CubeMX regen that might emit a default 0. */
-#undef  configCHECK_FOR_STACK_OVERFLOW
-#define configCHECK_FOR_STACK_OVERFLOW  2
-#undef  configUSE_MALLOC_FAILED_HOOK
-#define configUSE_MALLOC_FAILED_HOOK    1
-
-/* FreeRTOS heap: the app creates ~10 tasks + the telemetry frame queues
- * dynamically (needs ~50 KB). CubeMX's default (15360 B) is far too small, and a
- * regen resets the managed define to it, so pin 64 KB here in USER CODE. */
-#undef  configTOTAL_HEAP_SIZE
-#define configTOTAL_HEAP_SIZE           ((size_t)(64 * 1024))
-
-/* configASSERT latches DIAG_FAULT_ASSERT then disables IRQs + spins (as before)
- * so a FreeRTOS/HAL assert is reported on the bus instead of a silent hang. */
-extern void Diag_AssertFault(void);
-#define configASSERT( x ) if ((x) == 0) { Diag_AssertFault(); }
+#define configASSERT( x ) if ((x) == 0) {taskDISABLE_INTERRUPTS(); for( ;; );}
 /* USER CODE END 1 */
 
 /* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS

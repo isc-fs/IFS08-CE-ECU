@@ -21,26 +21,11 @@
 #include "fdcan.h"
 
 /* USER CODE BEGIN 0 */
-static HAL_StatusTypeDef fdcan_start_with_fifo0_irq(FDCAN_HandleTypeDef *hfdcan)
-{
-  if (HAL_FDCAN_Start(hfdcan) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  if (HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0U) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  return HAL_OK;
-}
 
 /* USER CODE END 0 */
 
 FDCAN_HandleTypeDef hfdcan1;
 FDCAN_HandleTypeDef hfdcan2;
-FDCAN_HandleTypeDef hfdcan3;
 
 /* FDCAN1 init function */
 void MX_FDCAN1_Init(void)
@@ -51,16 +36,6 @@ void MX_FDCAN1_Init(void)
   /* USER CODE END FDCAN1_Init 0 */
 
   /* USER CODE BEGIN FDCAN1_Init 1 */
-  /* #48 -- FDCAN message-RAM layout. FDCAN1/2/3 share one SRAMCAN region (2560
-   * words); each instance sits at its MessageRAMOffset (in words) and the
-   * regions MUST NOT overlap. Footprints (8-byte elements): FDCAN1 = 387 words,
-   * FDCAN2 = FDCAN3 = 195 words. So:
-   *     FDCAN1 -> offset 0    [0   .. 387)
-   *     FDCAN2 -> offset 387  [387 .. 582)
-   *     FDCAN3 -> offset 582  [582 .. 777)   (end 777 < 2560, no overflow)
-   * All three were 0 -> total overlap -> cross-bus RX corruption -> boot hang.
-   * MessageRAMOffset is NOT a CubeMX .ioc parameter, so a regen resets all three
-   * to 0 -- RE-APPLY 0 / 387 / 582 after any "Generate Code". */
 
   /* USER CODE END FDCAN1_Init 1 */
   hfdcan1.Instance = FDCAN1;
@@ -96,19 +71,6 @@ void MX_FDCAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
-  FDCAN_FilterTypeDef sFilterConfig = {0};
-
-  sFilterConfig.IdType = FDCAN_STANDARD_ID;
-  sFilterConfig.FilterIndex = 0;
-  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
-  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  sFilterConfig.FilterID1 = 0x0;
-  sFilterConfig.FilterID2 = 0x0;
-
-  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
 
   /* USER CODE END FDCAN1_Init 2 */
 
@@ -122,14 +84,12 @@ void MX_FDCAN2_Init(void)
   /* USER CODE END FDCAN2_Init 0 */
 
   /* USER CODE BEGIN FDCAN2_Init 1 */
-  /* #48: MessageRAMOffset below MUST be 387, not CubeMX's 0 (overlaps FDCAN1).
-   * See the layout in MX_FDCAN1_Init. Re-apply after any CubeMX regen. */
 
   /* USER CODE END FDCAN2_Init 1 */
   hfdcan2.Instance = FDCAN2;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan2.Init.AutoRetransmission = DISABLE;
+  hfdcan2.Init.AutoRetransmission = ENABLE;   /* BL #94: MUST be ENABLE -- single-shot silently drops lost-arbitration frames on the shared ACU bus (FDCAN1 already ENABLE) */
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
   hfdcan2.Init.NominalPrescaler = 3;
@@ -140,7 +100,7 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Init.DataSyncJumpWidth = 1;
   hfdcan2.Init.DataTimeSeg1 = 1;
   hfdcan2.Init.DataTimeSeg2 = 1;
-  hfdcan2.Init.MessageRAMOffset = 387;   /* #48: was 0; FDCAN1 occupies [0,387). */
+  hfdcan2.Init.MessageRAMOffset = 387;  /* #48 fix: FDCAN1 occupies [0,387) words of the shared SRAMCAN; FDCAN2 starts here so they don't overlap. RE-APPLY after any CubeMX regen (CubeMX resets this to 0 and there is no USER CODE slot before HAL_FDCAN_Init). */
   hfdcan2.Init.StdFiltersNbr = 1;
   hfdcan2.Init.ExtFiltersNbr = 1;
   hfdcan2.Init.RxFifo0ElmtsNbr = 16;
@@ -159,102 +119,8 @@ void MX_FDCAN2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN2_Init 2 */
-  /* FDCAN2 is the accumulator / uDV bus and carries STANDARD ids (AMS
-   * 0x020 / 0x12C / 0x131-0x137 / 0x002, uDV 0x504 / 0x505 / 0x507 / 0x510 ...).
-   * Previously only an EXTENDED accept-all filter was configured here, so
-   * standard frames reached RX FIFO0 only via the FDCAN hardware default for
-   * non-matching frames -- implicit and never hardware-validated. Add an
-   * explicit STANDARD accept-all filter so the RX path no longer depends on
-   * that default. (A narrower standard accept-list to trim FIFO load on the
-   * shared bus is a follow-up, once the uDV id contract is finalised.) */
-  FDCAN_FilterTypeDef sFilterConfig = {0};
-
-  sFilterConfig.FilterType   = FDCAN_FILTER_MASK;
-  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  sFilterConfig.FilterID1    = 0x0;
-  sFilterConfig.FilterID2    = 0x0;   /* mask 0 -> accept any id */
-
-  /* Standard ids (AMS + uDV). */
-  sFilterConfig.IdType      = FDCAN_STANDARD_ID;
-  sFilterConfig.FilterIndex = 0;
-  if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* Extended ids (kept; nothing the ECU needs on this bus is extended, but
-   * harmless to keep accepting them). */
-  sFilterConfig.IdType      = FDCAN_EXTENDED_ID;
-  sFilterConfig.FilterIndex = 0;
-  if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
 
   /* USER CODE END FDCAN2_Init 2 */
-
-}
-/* FDCAN3 init function */
-void MX_FDCAN3_Init(void)
-{
-
-  /* USER CODE BEGIN FDCAN3_Init 0 */
-
-  /* USER CODE END FDCAN3_Init 0 */
-
-  /* USER CODE BEGIN FDCAN3_Init 1 */
-  /* #48: MessageRAMOffset below MUST be 582, not CubeMX's 0 (overlaps FDCAN1/2).
-   * See the layout in MX_FDCAN1_Init. Re-apply after any CubeMX regen. */
-
-  /* USER CODE END FDCAN3_Init 1 */
-  hfdcan3.Instance = FDCAN3;
-  hfdcan3.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
-  hfdcan3.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan3.Init.AutoRetransmission = DISABLE;
-  hfdcan3.Init.TransmitPause = DISABLE;
-  hfdcan3.Init.ProtocolException = DISABLE;
-  hfdcan3.Init.NominalPrescaler = 3;
-  hfdcan3.Init.NominalSyncJumpWidth = 1;
-  hfdcan3.Init.NominalTimeSeg1 = 13;
-  hfdcan3.Init.NominalTimeSeg2 = 2;
-  hfdcan3.Init.DataPrescaler = 1;
-  hfdcan3.Init.DataSyncJumpWidth = 1;
-  hfdcan3.Init.DataTimeSeg1 = 1;
-  hfdcan3.Init.DataTimeSeg2 = 1;
-  hfdcan3.Init.MessageRAMOffset = 582;   /* #48: was 0; FDCAN2 occupies [387,582). */
-  hfdcan3.Init.StdFiltersNbr = 1;
-  hfdcan3.Init.ExtFiltersNbr = 1;
-  hfdcan3.Init.RxFifo0ElmtsNbr = 16;
-  hfdcan3.Init.RxFifo0ElmtSize = FDCAN_DATA_BYTES_8;
-  hfdcan3.Init.RxFifo1ElmtsNbr = 16;
-  hfdcan3.Init.RxFifo1ElmtSize = FDCAN_DATA_BYTES_8;
-  hfdcan3.Init.RxBuffersNbr = 0;
-  hfdcan3.Init.RxBufferSize = FDCAN_DATA_BYTES_8;
-  hfdcan3.Init.TxEventsNbr = 0;
-  hfdcan3.Init.TxBuffersNbr = 0;
-  hfdcan3.Init.TxFifoQueueElmtsNbr = 16;
-  hfdcan3.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
-  hfdcan3.Init.TxElmtSize = FDCAN_DATA_BYTES_8;
-  if (HAL_FDCAN_Init(&hfdcan3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN FDCAN3_Init 2 */
-  FDCAN_FilterTypeDef sFilterConfig = {0};
-
-  sFilterConfig.IdType = FDCAN_EXTENDED_ID;
-  sFilterConfig.FilterIndex = 0;
-  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
-  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  sFilterConfig.FilterID1 = 0x0;
-  sFilterConfig.FilterID2 = 0x0;
-
-  if (HAL_FDCAN_ConfigFilter(&hfdcan3, &sFilterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* USER CODE END FDCAN3_Init 2 */
 
 }
 
@@ -302,7 +168,16 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
     HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
   /* USER CODE BEGIN FDCAN1_MspInit 1 */
-
+  /* H7 FDCAN message RAM is ECC-protected and powers up uninitialised. The
+   * controller bus-faults on the first access to a never-written word -- which
+   * killed every app TX (the 32-deep TX FIFO sits in RAM the BL never wrote).
+   * Zero the shared SRAMCAN once, here: after the FDCAN clock is enabled (above)
+   * and before HAL_FDCAN_Init lays out the filters/FIFOs. FDCAN1 MspInit runs
+   * first, so this covers FDCAN2's region too (640 words >= the 582-word
+   * footprint of FDCAN1@0 + FDCAN2@387). */
+  for (uint32_t i = 0; i < 640u; ++i) {
+    ((volatile uint32_t *)SRAMCAN_BASE)[i] = 0u;
+  }
   /* USER CODE END FDCAN1_MspInit 1 */
   }
   else if(fdcanHandle->Instance==FDCAN2)
@@ -344,46 +219,6 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
   /* USER CODE BEGIN FDCAN2_MspInit 1 */
 
   /* USER CODE END FDCAN2_MspInit 1 */
-  }
-  else if(fdcanHandle->Instance==FDCAN3)
-  {
-  /* USER CODE BEGIN FDCAN3_MspInit 0 */
-
-  /* USER CODE END FDCAN3_MspInit 0 */
-
-  /** Initializes the peripherals clock
-  */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_FDCAN;
-    PeriphClkInitStruct.FdcanClockSelection = RCC_FDCANCLKSOURCE_HSE;
-    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* FDCAN3 clock enable */
-    HAL_RCC_FDCAN_CLK_ENABLED++;
-    if(HAL_RCC_FDCAN_CLK_ENABLED==1){
-      __HAL_RCC_FDCAN_CLK_ENABLE();
-    }
-
-    __HAL_RCC_GPIOG_CLK_ENABLE();
-    /**FDCAN3 GPIO Configuration
-    PG9     ------> FDCAN3_TX
-    PG10     ------> FDCAN3_RX
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF2_FDCAN3;
-    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-    /* FDCAN3 interrupt Init */
-    HAL_NVIC_SetPriority(FDCAN3_IT0_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(FDCAN3_IT0_IRQn);
-  /* USER CODE BEGIN FDCAN3_MspInit 1 */
-
-  /* USER CODE END FDCAN3_MspInit 1 */
   }
 }
 
@@ -436,60 +271,9 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef* fdcanHandle)
 
   /* USER CODE END FDCAN2_MspDeInit 1 */
   }
-  else if(fdcanHandle->Instance==FDCAN3)
-  {
-  /* USER CODE BEGIN FDCAN3_MspDeInit 0 */
-
-  /* USER CODE END FDCAN3_MspDeInit 0 */
-    /* Peripheral clock disable */
-    HAL_RCC_FDCAN_CLK_ENABLED--;
-    if(HAL_RCC_FDCAN_CLK_ENABLED==0){
-      __HAL_RCC_FDCAN_CLK_DISABLE();
-    }
-
-    /**FDCAN3 GPIO Configuration
-    PG9     ------> FDCAN3_TX
-    PG10     ------> FDCAN3_RX
-    */
-    HAL_GPIO_DeInit(GPIOG, GPIO_PIN_9|GPIO_PIN_10);
-
-    /* FDCAN3 interrupt Deinit */
-    HAL_NVIC_DisableIRQ(FDCAN3_IT0_IRQn);
-  /* USER CODE BEGIN FDCAN3_MspDeInit 1 */
-
-  /* USER CODE END FDCAN3_MspDeInit 1 */
-  }
 }
 
 /* USER CODE BEGIN 1 */
-
-HAL_StatusTypeDef FDCAN_RuntimeBringUp(void)
-{
-  static uint8_t bringup_done = 0U;
-
-  if (bringup_done != 0U)
-  {
-    return HAL_OK;
-  }
-
-  if (fdcan_start_with_fifo0_irq(&hfdcan1) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  if (fdcan_start_with_fifo0_irq(&hfdcan2) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  if (fdcan_start_with_fifo0_irq(&hfdcan3) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  bringup_done = 1U;
-  return HAL_OK;
-}
 
 /* USER CODE END 1 */
 

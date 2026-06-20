@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x702  PitDiag_inverter -- inverter DC-bus voltage, motor RPM (SIGNED), and
- * the inverter error code. Mirrors PitDiag_BuildInverter(). 100 ms while
- * enabled. inv_rpm is a 32-bit big-endian SIGNED value (FIELD_BE_S).
+ * the inverter error/state code, decoded from the NX/EMC inverter frames
+ * (0x466 DCBus_Voltage_V, 0x463 EMachine_Speed_erpm, 0x461 DEM_Code).
+ * 100 ms while enabled.
  */
 
 CAN_MSG(PitDiag_inverter, 0x702, 7, "VCU", 100)

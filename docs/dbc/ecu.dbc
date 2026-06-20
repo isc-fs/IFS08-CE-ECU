@@ -81,6 +81,26 @@ BO_ 1796 PitDiag_health: 8 VCU
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
 
+BO_ 32 ACU_ok_precharge: 1 AMS
+ SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
+
+BO_ 300 ACU_v_cell_min: 2 AMS
+ SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 1184 AMS_status: 8 AMS
+ SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ ams_ok : 8|8@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ module_online_mask : 16|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ reserved_b3 : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ min_cell_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ max_cell_mV : 55|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 2 BL_boot_trigger: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
+
+BO_ 2016 PitDiag_cmd: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
+
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
@@ -88,3 +108,6 @@ BA_ "GenMsgCycleTime" BO_ 1797 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
+BA_ "GenMsgCycleTime" BO_ 32 100;
+BA_ "GenMsgCycleTime" BO_ 300 100;
+BA_ "GenMsgCycleTime" BO_ 1184 500;

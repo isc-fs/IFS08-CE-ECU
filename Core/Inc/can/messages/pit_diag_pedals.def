@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: proprietary */
 /*
- * 0x701  PitDiag_pedals -- raw ADC + computed % for the two APPS channels, plus
- * raw ADC for the brake. Mirrors PitDiag_BuildPedals(). 100 ms while enabled.
- * apps*_pct = Control_AppsPct() (same calibration as the torque path). Brake is
- * raw-only -- it is a thresholded input with no continuous travel calibration.
+ * 0x701  PitDiag_pedals -- raw ADC + computed % for the two APPS channels,
+ * plus raw ADC for the brake. 100 ms while enabled. apps*_pct use the same
+ * calibration as the torque path; brake is raw-only (a thresholded input).
  */
 
 CAN_MSG(PitDiag_pedals, 0x701, 8, "VCU", 100)

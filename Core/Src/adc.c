@@ -89,11 +89,30 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
 {
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
   if(adcHandle->Instance==ADC3)
   {
   /* USER CODE BEGIN ADC3_MspInit 0 */
 
   /* USER CODE END ADC3_MspInit 0 */
+
+  /** Initializes the peripherals clock
+  */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+    PeriphClkInitStruct.PLL2.PLL2M = 2;
+    PeriphClkInitStruct.PLL2.PLL2N = 16;
+    PeriphClkInitStruct.PLL2.PLL2P = 2;
+    PeriphClkInitStruct.PLL2.PLL2Q = 2;
+    PeriphClkInitStruct.PLL2.PLL2R = 1;
+    PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_3;
+    PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
+    PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
+    PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
     /* ADC3 clock enable */
     __HAL_RCC_ADC3_CLK_ENABLE();
 
@@ -108,7 +127,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     PC0     ------> ADC3_INP10
     PC1     ------> ADC3_INP11
     */
-    GPIO_InitStruct.Pin = A1_Pin|A2_Pin|A3_Pin|A4_Pin;
+    GPIO_InitStruct.Pin = S_BRAKE_Pin|APPS_1_Pin|APPS_2_Pin|A4_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
@@ -144,7 +163,7 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     PC0     ------> ADC3_INP10
     PC1     ------> ADC3_INP11
     */
-    HAL_GPIO_DeInit(GPIOF, A1_Pin|A2_Pin|A3_Pin|A4_Pin);
+    HAL_GPIO_DeInit(GPIOF, S_BRAKE_Pin|APPS_1_Pin|APPS_2_Pin|A4_Pin);
 
     HAL_GPIO_DeInit(GPIOC, A5_Pin|A6_Pin);
 
