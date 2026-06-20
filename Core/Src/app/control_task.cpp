@@ -13,6 +13,7 @@
 #include "app/can_tx.hpp"
 #include "app/control.hpp"
 #include "app/ecu_config.hpp"
+#include "app/inverter.hpp"
 #include "app/io_signals.hpp"
 #include "app/pit_diag.hpp"
 #include "app/vehicle_service.hpp"
@@ -75,9 +76,11 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(f);
         }
 
-        // TODO(#10): inverter command TX (0x360 mode <- out.inv_mode, 0x362
-        // torque <- out.torque_pct) is AUTOSAR E2E Profile-1 protected -> lands
-        // with the inverter adapter. The values are computed and ready here.
+        // --- inverter setpoints (FDCAN1), every cycle -- matches the original
+        //     VCU byte-for-byte: 0x360 mode (App_State_Req <- out.inv_mode) +
+        //     0x362 torque (Torque_Nm_Req <- out.torque_pct), E2E bytes = 0 ---
+        can_tx_post(Inverter::build_setpoint_mode(out.inv_mode));
+        can_tx_post(Inverter::build_setpoint_torque(out.torque_pct));
 
         // --- outputs: RTDS + status LEDs ---
         HAL_GPIO_WritePin(RTDS_GPIO_Port, RTDS_Pin,
