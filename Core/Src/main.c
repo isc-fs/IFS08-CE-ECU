@@ -90,7 +90,19 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  /* Bootloader-handoff hardening (fixes the intermittent IWDG boot crash; SWD
+   * confirmed the app re-inits FDCAN over the BL's LIVE state, while the clean
+   * reset path never faults):
+   *   1) The BL leaves its IWDG running -- we inherit it across the jump and
+   *      can't stop it. Refresh it now so a slow early init can't trip it before
+   *      MX_IWDG1_Init re-owns it. Harmless no-op if no IWDG is running.
+   *   2) The BL leaves FDCAN started + the shared message RAM populated. Force
+   *      the FDCAN peripheral back to its reset state so MX_FDCAN1/2_Init configure
+   *      from a known-clean baseline, exactly like a cold power-on (one reset line
+   *      covers all FDCAN instances). */
+  IWDG1->KR = 0x0000AAAAU;
+  __HAL_RCC_FDCAN_FORCE_RESET();
+  __HAL_RCC_FDCAN_RELEASE_RESET();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
