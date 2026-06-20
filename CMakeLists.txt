@@ -1,12 +1,18 @@
 cmake_minimum_required(VERSION 3.15)
-project(ECU08_NSIL_Tests C)
+project(ECU08_NSIL_Tests C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Opciones: compilar tests unitarios y/o SIL
 option(BUILD_UNIT_TESTS "Build unit tests (Unity framework)" ON)
 option(BUILD_SIL_TESTS "Build SIL tests (FreeRTOS simulation)" OFF)
+
+# Top-level so `ctest --test-dir build-sil` discovers the add_test() calls
+# registered in the tests/sil (+ tests/unit) subdirectories.
+enable_testing()
 
 # Detectar compilador para host
 if(NOT CMAKE_C_COMPILER_WORKS)
