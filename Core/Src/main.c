@@ -104,7 +104,16 @@ int main(void)
   MX_USB_OTG_HS_PCD_Init();
   MX_IWDG1_Init();
   /* USER CODE BEGIN 2 */
-
+  /* H7: HAL_PWR_EnableBkUpAccess() unlocks backup-domain WRITES but does not
+   * clock the RTC. The fault latch (error_latch) and the BL boot-magic
+   * (bootloader) live in RTC->BKPxR, and any BKPxR access bus-faults while the
+   * RTC APB clock is off -- which it is after a backup-domain reset. The app
+   * inherited RTCEN from the BL only on warm jumps; enable it explicitly here,
+   * once, before the scheduler, so every BKPxR user works. Mirrors the BL. */
+  HAL_PWR_EnableBkUpAccess();
+  if ((RCC->BDCR & RCC_BDCR_RTCEN) == 0U) {
+    __HAL_RCC_RTC_ENABLE();
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */

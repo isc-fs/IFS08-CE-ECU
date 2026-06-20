@@ -89,7 +89,7 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Instance = FDCAN2;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan2.Init.AutoRetransmission = DISABLE;
+  hfdcan2.Init.AutoRetransmission = ENABLE;   /* BL #94: MUST be ENABLE -- single-shot silently drops lost-arbitration frames on the shared ACU bus (FDCAN1 already ENABLE) */
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
   hfdcan2.Init.NominalPrescaler = 3;
@@ -168,7 +168,16 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
     HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
   /* USER CODE BEGIN FDCAN1_MspInit 1 */
-
+  /* H7 FDCAN message RAM is ECC-protected and powers up uninitialised. The
+   * controller bus-faults on the first access to a never-written word -- which
+   * killed every app TX (the 32-deep TX FIFO sits in RAM the BL never wrote).
+   * Zero the shared SRAMCAN once, here: after the FDCAN clock is enabled (above)
+   * and before HAL_FDCAN_Init lays out the filters/FIFOs. FDCAN1 MspInit runs
+   * first, so this covers FDCAN2's region too (640 words >= the 582-word
+   * footprint of FDCAN1@0 + FDCAN2@387). */
+  for (uint32_t i = 0; i < 640u; ++i) {
+    ((volatile uint32_t *)SRAMCAN_BASE)[i] = 0u;
+  }
   /* USER CODE END FDCAN1_MspInit 1 */
   }
   else if(fdcanHandle->Instance==FDCAN2)
