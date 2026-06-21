@@ -18,6 +18,7 @@
 #include "can/can_codecs.hpp"
 
 #include <cstdio>
+#include <cstring>
 
 int main()
 {
@@ -65,6 +66,24 @@ int main()
         if (m->period_ms > 0u) {
             std::printf("BA_ \"GenMsgCycleTime\" BO_ %u %u;\n", m->id, m->period_ms);
         }
+    }
+
+    // VAL_ tables (enum value names) from the DSL CAN_VAL rows. Contiguous rows
+    // sharing the same (msg_id, signal) collapse into one VAL_ line -- so the pit
+    // tool decodes e.g. fsm_state=5 as "Active", last_fault=243 as "BusFault".
+    std::printf("\n");
+    for (unsigned i = 0u; i < ecu::ALL_VALS_COUNT;) {
+        const can_dsl::ValRow* v = &ecu::ALL_VALS[i];
+        std::printf("VAL_ %u %s", v->msg_id, v->signal);
+        unsigned j = i;
+        while (j < ecu::ALL_VALS_COUNT &&
+               ecu::ALL_VALS[j].msg_id == v->msg_id &&
+               std::strcmp(ecu::ALL_VALS[j].signal, v->signal) == 0) {
+            std::printf(" %u \"%s\"", ecu::ALL_VALS[j].value, ecu::ALL_VALS[j].name);
+            ++j;
+        }
+        std::printf(" ;\n");
+        i = j;
     }
     return 0;
 }

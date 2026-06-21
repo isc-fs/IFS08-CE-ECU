@@ -39,10 +39,11 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     PitDiag_status_t s{};
     s.fsm_state = static_cast<std::uint8_t>(c.state);
     s.inv_state = v.inv_state;
-    s.flags = static_cast<std::uint8_t>(
-        (c.ev_2_3 ? 0x01u : 0u) | (c.t11_8_9 ? 0x02u : 0u) |
-        (c.rtds_on ? 0x04u : 0u) | (v.ok_precharge ? 0x08u : 0u) |
-        (start_button ? 0x10u : 0u));
+    s.ev_2_3       = c.ev_2_3 ? 1u : 0u;
+    s.t11_8_9      = c.t11_8_9 ? 1u : 0u;
+    s.rtds_active  = c.rtds_on ? 1u : 0u;
+    s.ok_precharge = v.ok_precharge ? 1u : 0u;
+    s.start_button = start_button ? 1u : 0u;
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
     s.torque_cmd    = 0;   // inverter unit-map deferred (task #10)
@@ -92,7 +93,11 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     PitDiag_health_t h{};
     h.free_heap     = m.free_heap;
     h.min_free_heap = m.min_free_heap;
-    h.task_ran_mask = m.task_ran_mask;
+    // split the liveness mask into 1-bit DBC signals (EcuTaskId bit order)
+    h.task_control = (m.task_ran_mask >> 0) & 1u;
+    h.task_can_rx  = (m.task_ran_mask >> 1) & 1u;
+    h.task_can_tx  = (m.task_ran_mask >> 2) & 1u;
+    h.task_diag    = (m.task_ran_mask >> 3) & 1u;
     h.reset_cause   = static_cast<std::uint8_t>(m.reset_cause);
     h.uptime_s      = m.uptime_s;
     h.last_fault    = static_cast<std::uint8_t>(m.last_fault);
