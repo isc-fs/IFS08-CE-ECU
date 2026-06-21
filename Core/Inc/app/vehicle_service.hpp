@@ -28,6 +28,7 @@ struct VehicleState {
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
+    std::int32_t  inv_rpm           = 0;  // 0x463 motor speed (20-bit signed)
     std::uint32_t last_inv_tick     = 0;  // any inverter frame
     std::uint32_t last_vconfig_tick = 0;  // 0x466 seen -> gates Precharge
     // --- AMS / ACU (FDCAN2) ---
@@ -60,6 +61,7 @@ public:
     static std::uint16_t decode_ams_min_cell(const std::uint8_t* d) noexcept;  // 0x4A0 BE16 @ b4-5
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
+    static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed LE @ b5-7
 
 private:
     VehicleService() = default;

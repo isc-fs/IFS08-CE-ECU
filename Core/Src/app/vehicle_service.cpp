@@ -43,6 +43,16 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
+std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
+    // EMC_TX_STATE_4 (0x463): motor speed, 20-bit signed, little-endian @ bytes
+    // 5-7 (d[5]=low, d[6]=mid, d[7] low-nibble=high). E2E bytes 0-1 ignored.
+    std::uint32_t raw = static_cast<std::uint32_t>(d[5])
+                      | (static_cast<std::uint32_t>(d[6]) << 8)
+                      | ((static_cast<std::uint32_t>(d[7]) & 0x0Fu) << 16);
+    if (raw & 0x80000u) raw |= 0xFFF00000u;            // sign-extend from bit 19
+    return static_cast<std::int32_t>(raw);
+}
+
 // ---- freshness -------------------------------------------------------------
 
 bool VehicleService::is_fresh(std::uint32_t now, std::uint32_t last,
@@ -69,6 +79,12 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.inv_dc_bus_V      = decode_inv_dc_bus_V(f.data);
             state_.last_vconfig_tick = f.timestamp_ms;
             state_.last_inv_tick     = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxRpmId) {                   // 0x463
+            if (f.dlc < 8) return false;
+            state_.inv_rpm       = decode_inv_rpm(f.data);
+            state_.last_inv_tick = f.timestamp_ms;
             return true;
         }
         return false;

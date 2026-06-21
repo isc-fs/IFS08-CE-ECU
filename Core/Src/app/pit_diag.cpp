@@ -67,7 +67,7 @@ CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
 CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     PitDiag_inverter_t inv{};
     inv.dc_bus_voltage = v.inv_dc_bus_V;
-    inv.inv_rpm        = 0;            // rpm decode deferred (task #10)
+    inv.inv_rpm        = v.inv_rpm;    // 0x463 motor speed (20-bit signed)
     inv.inv_error      = v.inv_error;
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);
