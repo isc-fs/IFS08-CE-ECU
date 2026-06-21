@@ -58,6 +58,20 @@ if(ECU_HIL_CLEAR_ERROR_LATCH)
   add_compile_definitions(ECU_HIL_CLEAR_ERROR_LATCH)
 endif()
 
+# Bring-up image only -- assume the brake is pressed (the brake line may be
+# unpressurized), so R2D/RTDS can run without brake pressure. NEVER a flight default.
+option(ECU_STUB_BRAKE "Assume the brake is pressed (bring-up only)" OFF)
+if(ECU_STUB_BRAKE)
+  add_compile_definitions(ECU_STUB_BRAKE)
+endif()
+
+# Bring-up image only -- assume the start button is pressed (it may not be wired).
+# Independent of the brake stub. NEVER a flight default.
+option(ECU_STUB_START "Assume the start button is pressed (bring-up only)" OFF)
+if(ECU_STUB_START)
+  add_compile_definitions(ECU_STUB_START)
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
