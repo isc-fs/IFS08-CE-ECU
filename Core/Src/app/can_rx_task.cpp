@@ -32,10 +32,16 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
     CanFrame f;
 
     for (;;) {
-        if (osMessageQueueGet(can_rx_queueHandle, &f, NULL, osWaitForever) != osOK) {
-            continue;
-        }
+        const osStatus_t st =
+            osMessageQueueGet(can_rx_queueHandle, &f, NULL, config::CanRxWaitMs);
+        // Liveness: bump on EVERY wake -- a frame OR the periodic timeout -- so a
+        // healthy-but-idle RX task still advances 0x704's task_ran_mask bit on a
+        // quiescent bus. The bit means "scheduled + running", not "saw traffic";
+        // a genuine hang stops the wakes too, which is the stall it must catch.
         ++g_task_step[ECU_TASK_CAN_RX];
+        if (st != osOK) {
+            continue;   // timeout: no frame, just the liveness tick
+        }
 
         // (1) bootloader trigger (0x002 / 0xB007AD12) -> reboot to BL. The
         // recovery path home; never returns.
