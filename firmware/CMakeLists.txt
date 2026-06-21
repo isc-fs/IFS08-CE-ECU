@@ -58,6 +58,14 @@ if(ECU_HIL_CLEAR_ERROR_LATCH)
   add_compile_definitions(ECU_HIL_CLEAR_ERROR_LATCH)
 endif()
 
+# Bring-up image only -- inject the brake level over 0x7E0 byte5 so R2D/RTDS can
+# be exercised with an unpurged brake line. Independent of the start-button
+# stub. NEVER a flight default.
+option(ECU_HIL_STUB_BRAKE "Inject brake level over 0x7E0 byte5 (bring-up only)" OFF)
+if(ECU_HIL_STUB_BRAKE)
+  add_compile_definitions(ECU_HIL_STUB_BRAKE)
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>

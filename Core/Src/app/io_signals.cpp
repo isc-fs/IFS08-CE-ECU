@@ -4,6 +4,9 @@
 
 #include "adc.h"     // hadc3
 #include "main.h"    // HAL + the CubeMX GPIO label defines (START_Pin, ...)
+#if defined(ECU_HIL_STUB_BRAKE)
+#include "app/app_globals.h"  // g_hil_force_brake (bring-up brake inject)
+#endif
 
 namespace ecu {
 namespace {
@@ -33,7 +36,14 @@ std::uint16_t read_adc3(std::uint32_t channel) noexcept {
 
 void IoSignals::read(IoInputs& out) noexcept {
     // ADC3 channels: brake IN3 (PF7), APPS1 IN7 (PF8, shared-analog), APPS2 IN2 (PF9).
+#if defined(ECU_HIL_STUB_BRAKE)
+    // Bring-up: the brake line may be unpurged, so the pressure sensor can't
+    // reach BrakeArmRaw. Take brake_raw from the bench inject (0x7E0 byte5 << 4,
+    // 0..4080) instead of the ADC. HIL-only -- never a flight default.
+    out.brake_raw = static_cast<std::uint16_t>(g_hil_force_brake << 4);
+#else
     out.brake_raw = read_adc3(ADC_CHANNEL_3);
+#endif
     out.apps1_raw = read_adc3(ADC_CHANNEL_7);
     out.apps2_raw = read_adc3(ADC_CHANNEL_2);
 

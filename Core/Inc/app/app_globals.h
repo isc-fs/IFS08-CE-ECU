@@ -34,6 +34,15 @@ extern volatile uint32_t g_task_step[ECU_TASK_COUNT];
  * frame is deliberately ALWAYS-ON (ungated) -- it's the diagnostic lifeline. */
 extern volatile uint8_t g_pit_diag_enabled;
 
+#if defined(ECU_HIL_STUB_BRAKE)
+/* Bring-up brake inject: set by CanRxTask from 0x7E0 payload byte 5,
+ * substituted for the brake ADC in io_signals so the FSM can arm R2D when the
+ * brake line is unpurged (the pressure sensor can't reach BrakeArmRaw).
+ * brake_raw = g_hil_force_brake << 4 (0..4080). Never present in a flight build.
+ * Distinct from the start-button stub -- the two are independent. */
+extern volatile uint8_t g_hil_force_brake;
+#endif
+
 /* Called once from freertos.c USER CODE after osKernelInitialize(), before the
  * scheduler starts. Currently just zeroes the step counters; a hook point for
  * any app-side RTOS object the .ioc can't carry. */

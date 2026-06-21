@@ -5,6 +5,9 @@
 extern "C" {
 volatile uint32_t g_task_step[ECU_TASK_COUNT] = { 0, 0, 0, 0 };
 volatile uint8_t  g_pit_diag_enabled = 0;
+#if defined(ECU_HIL_STUB_BRAKE)
+volatile uint8_t  g_hil_force_brake = 0;
+#endif
 }
 
 extern "C" void ecu_app_globals_init(void) {

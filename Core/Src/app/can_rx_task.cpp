@@ -60,6 +60,13 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
                  static_cast<uint32_t>(f.data[3]);
             const bool en = (magic == config::PitDiagEnableMagic);
             g_pit_diag_enabled = en ? 1u : 0u;
+#if defined(ECU_HIL_STUB_BRAKE)
+            // Bring-up: payload byte 5 injects the brake level (brake_raw =
+            // byte5 << 4, 0..4080) so R2D can arm with an unpurged brake line.
+            if (f.dlc >= 6u) {
+                g_hil_force_brake = f.data[5];
+            }
+#endif
             can_tx_post(PitDiag::build_ack(en));
             continue;
         }
