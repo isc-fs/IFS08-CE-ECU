@@ -22,6 +22,7 @@ namespace ecu::config {
 inline constexpr uint32_t ControlPeriodMs      = 10;    // the realtime ControlTask tick
 inline constexpr uint32_t DiagPeriodMs         = 1000;  // DiagTask (0x704 health)
 inline constexpr uint32_t PitDiagStreamMs      = 100;   // 0x700-0x705 cadence while enabled
+inline constexpr uint32_t CanRxWaitMs          = 100;   // CanRxTask queue wait -> 0x704 liveness wake on a quiescent bus (< DiagPeriodMs)
 
 // ---- Start / ready-to-drive FSM -------------------------------------------
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
