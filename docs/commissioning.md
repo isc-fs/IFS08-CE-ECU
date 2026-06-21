@@ -76,3 +76,45 @@ press the real start button; with only `ECU_STUB_START`, press the real brake.)
 
 `BrakeArmRaw` / `BrakePressedRaw` are `COMMISSION` placeholders — recalibrate the real
 brake once the line is purged (read `0x701 brake_raw` / `0x705` via pit-diag).
+
+---
+
+## 3. R2D + capped torque on stands, no AMS (`ECU_STUB_NO_AMS` / `ECU_BRINGUP_TORQUE_CAP_PCT`)
+
+First powered freewheel: **no AMS on the bus**, inverter on **bench PSUs**, car **on
+stands**. Two more compile-time flags on top of §2:
+
+- **`ECU_STUB_NO_AMS`** — assume precharge-complete + AMS-healthy, so the FSM leaves
+  `Precharge` without `0x020`. It still gates on the inverter's `0x466` DC-bus report
+  first, so it won't arm into a dead bus. **This disables the AMS safety gate.**
+- **`ECU_BRINGUP_TORQUE_CAP_PCT=N`** — clamps the commanded torque to N % right after the
+  control step, so `0x362` to the inverter is capped (empty = no cap).
+
+> **⚠ SAFETY — read before flashing.** This image has **no AMS protection**: no
+> over/under-voltage, over-current, or cell-temperature cutoff. The **PSU current limits**,
+> the **torque cap**, and the **car on stands** are your entire safety envelope. **Never**
+> flash it to a car on the ground or with a real HV pack. BL-recovery-check first
+> (`0x002` / `0xB007AD12`); never power-cut mid-write.
+
+**Build** (20 % cap, freewheeling):
+```bash
+cmake -S firmware -B build-fw-bringup \
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
+  -DECU_STUB_BRAKE=ON -DECU_STUB_NO_AMS=ON -DECU_BRINGUP_TORQUE_CAP_PCT=20 \
+  -DECU_STUB_START=ON          # drop this and press the real start button if it's wired
+cmake --build build-fw-bringup
+arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU08.bin
+```
+
+**Sequence**
+1. **Calibrate APPS first** (§1) — so 20 % is 20 % of a *correct* pedal map.
+2. Power the inverter from the current-limited PSUs, then the ECU.
+3. The FSM walks: `WaitInvVdcConfig` (waits `0x466`) → `Precharge` → *(no-AMS)* →
+   `WaitStartBrake` → *(brake + start)* → `R2dDelay` (RTDS 2 s) → `WaitInvStandby` →
+   *(inverter Ready, `0x461` state 4)* → **`Active`**. Watch `0x700 fsm_state`.
+4. **Ease the throttle in.** `0x362` torque tracks the APPS, clamped to 20 %; the wheels
+   freewheel up. Watch `0x702` rpm and `0x700`.
+
+**Bonus — settles the open E2E question.** If the inverter reaches Ready and the wheels
+spin from the plain `0x362` frames, the NX/EMC inverter **doesn't need E2E** (close E-004).
+If it never leaves `WaitInvStandby`, or ignores torque, E2E (or a config word) is required.

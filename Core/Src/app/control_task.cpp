@@ -53,14 +53,31 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.inv_vconfig_ready = (veh.last_vconfig_tick != 0u);
         ci.inv_state         = veh.inv_state;
         ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
+#if defined(ECU_STUB_NO_AMS)
+        // Bring-up with NO AMS on the bus (inverter on bench PSUs): assume precharge
+        // complete + AMS healthy so the FSM can reach Active. WaitInvVdcConfig still
+        // gates on the inverter's 0x466 DC-bus report, so it won't arm into a dead bus.
+        // DISABLES the AMS safety gate -- NEVER a flight default.
+        ci.ams_fresh         = true;
+        ci.ok_precharge      = true;
+        ci.ams_error         = false;
+        ci.v_cell_min_mV     = config::CellVDefaultMv;   // healthy default -> no low-cell derate
+#else
         const bool ams_fresh = VehicleService::is_fresh(now, veh.last_ams_tick, config::AmsStaleMs);
         ci.ams_fresh         = ams_fresh;
         ci.ok_precharge      = veh.ok_precharge && ams_fresh;   // stale AMS -> not ok (fail-safe)
         ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
         ci.v_cell_min_mV     = veh.v_cell_min_mV;
+#endif
 
         // --- step the pure controller ---
-        const CtrlOutput out = ctrl.step(ci, now);
+        CtrlOutput out = ctrl.step(ci, now);
+#if defined(ECU_BRINGUP_TORQUE_CAP_PCT)
+        // Bring-up: clamp the commanded torque (car on stands / freewheeling). NEVER flight.
+        if (out.torque_pct > (ECU_BRINGUP_TORQUE_CAP_PCT)) {
+            out.torque_pct = static_cast<uint8_t>(ECU_BRINGUP_TORQUE_CAP_PCT);
+        }
+#endif
 
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {

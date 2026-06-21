@@ -72,6 +72,21 @@ if(ECU_STUB_START)
   add_compile_definitions(ECU_STUB_START)
 endif()
 
+# Bring-up image only -- NO AMS on the bus (inverter on bench PSUs): assume precharge
+# complete + AMS healthy so the FSM reaches Active. The FSM still gates on the
+# inverter's 0x466 DC-bus report first. DISABLES the AMS safety gate -- NEVER a flight default.
+option(ECU_STUB_NO_AMS "Assume precharge OK with no AMS on the bus (bring-up only)" OFF)
+if(ECU_STUB_NO_AMS)
+  add_compile_definitions(ECU_STUB_NO_AMS)
+endif()
+
+# Bring-up image only -- clamp commanded torque to N% (car on stands / freewheeling).
+# Empty = no cap. NEVER a flight default.
+set(ECU_BRINGUP_TORQUE_CAP_PCT "" CACHE STRING "Clamp commanded torque to N% (bring-up only; empty = no cap)")
+if(ECU_BRINGUP_TORQUE_CAP_PCT)
+  add_compile_definitions(ECU_BRINGUP_TORQUE_CAP_PCT=${ECU_BRINGUP_TORQUE_CAP_PCT})
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
