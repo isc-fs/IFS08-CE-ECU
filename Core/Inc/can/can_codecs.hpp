@@ -190,6 +190,38 @@ static const unsigned ALL_MSGS_COUNT = sizeof(ALL_MSGS) / sizeof(can_dsl::MsgDes
 #undef FIELD_BE_S
 #undef FIELD_LE_BITS
 #undef FIELD_BE_BITS
+
+// ---- pass 4b: enum value tables (host dbc_dump emits DBC VAL_ lines) --------
+// CAN_VAL(Msg, signal, value, "name") rows live in the .def files, guarded by
+// ECU_DSL_VALUES_PASS so they are seen ONLY here -- never in the struct/encoder
+// passes nor the firmware build (zero flash cost). Each row expands to a
+// can_dsl::ValRow { Msg##_ID, "signal", value, "name" }; dbc_dump groups
+// contiguous rows with the same (id, signal) into one VAL_ line.
+#define ECU_DSL_VALUES_PASS
+#define CAN_MSG(Name, Id, Dlc, Sender, Period)
+#define CAN_MSG_END(Name)
+#define FIELD_LE(name, ctype, byte, len, f, o, u)
+#define FIELD_LE_S(name, ctype, byte, len, f, o, u)
+#define FIELD_BE(name, ctype, byte, len, f, o, u)
+#define FIELD_BE_S(name, ctype, byte, len, f, o, u)
+#define FIELD_LE_BITS(name, ctype, start, len, f, o, u)
+#define FIELD_BE_BITS(name, ctype, start, len, f, o, u)
+#define CAN_VAL(Msg, sig, val, str) \
+    { static_cast<uint32_t>(Msg##_ID), #sig, static_cast<uint32_t>(val), str },
+static const can_dsl::ValRow ALL_VALS[] = {
+#include "messages/all_messages.inc"
+};
+static const unsigned ALL_VALS_COUNT = sizeof(ALL_VALS) / sizeof(can_dsl::ValRow);
+#undef CAN_VAL
+#undef CAN_MSG
+#undef CAN_MSG_END
+#undef FIELD_LE
+#undef FIELD_LE_S
+#undef FIELD_BE
+#undef FIELD_BE_S
+#undef FIELD_LE_BITS
+#undef FIELD_BE_BITS
+#undef ECU_DSL_VALUES_PASS
 #endif  // ECU_CAN_DESCRIPTORS
 
 // ---- pass 5: per-message bit-overlap guard (compile-time) ------------------

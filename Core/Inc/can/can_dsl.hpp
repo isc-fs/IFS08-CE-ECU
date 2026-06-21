@@ -120,6 +120,16 @@ struct MsgDesc {
     unsigned         n_fields;
 };
 
+// One enum value-table row. The host-side dbc_dump tool groups contiguous rows
+// sharing the same (msg_id, signal) into a single DBC VAL_ line, so e.g.
+// fsm_state=5 shows as "Active" in the pit tool instead of a bare number.
+struct ValRow {
+    uint32_t    msg_id;
+    const char* signal;
+    uint32_t    value;
+    const char* name;
+};
+
 }  // namespace can_dsl
 
 #endif  // ECU_CAN_DSL_HPP_
