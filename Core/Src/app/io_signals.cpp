@@ -4,6 +4,9 @@
 
 #include "adc.h"     // hadc3
 #include "main.h"    // HAL + the CubeMX GPIO label defines (START_Pin, ...)
+#if defined(ECU_HIL_STUB_START_BTN)
+#include "app/app_globals.h"  // g_hil_force_start (bench start-button inject)
+#endif
 
 namespace ecu {
 namespace {
@@ -37,8 +40,15 @@ void IoSignals::read(IoInputs& out) noexcept {
     out.apps1_raw = read_adc3(ADC_CHANNEL_7);
     out.apps2_raw = read_adc3(ADC_CHANNEL_2);
 
+#if defined(ECU_HIL_STUB_START_BTN)
+    // HIL bench: the physical PB5 start jumper is unavailable and the pin floats,
+    // so take the start button PURELY from the bench inject (0x7E0 byte4) and
+    // ignore PB5. HIL-only build flag -- never a flight default.
+    const bool pressed = (g_hil_force_start != 0u);
+#else
     const bool pressed =
         (HAL_GPIO_ReadPin(START_GPIO_Port, START_Pin) == GPIO_PIN_SET);
+#endif
     out.start_button = debounce_start(pressed);
 }
 

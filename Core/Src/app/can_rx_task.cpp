@@ -60,6 +60,13 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
                  static_cast<uint32_t>(f.data[3]);
             const bool en = (magic == config::PitDiagEnableMagic);
             g_pit_diag_enabled = en ? 1u : 0u;
+#if defined(ECU_HIL_STUB_START_BTN)
+            // HIL-only: payload byte 4 injects the start button (the physical
+            // PB5 jumper is unavailable on the bench). 1 = pressed, 0 = released.
+            if (f.dlc >= 5u) {
+                g_hil_force_start = f.data[4] ? 1u : 0u;
+            }
+#endif
             can_tx_post(PitDiag::build_ack(en));
             continue;
         }

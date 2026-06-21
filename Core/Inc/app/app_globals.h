@@ -34,6 +34,13 @@ extern volatile uint32_t g_task_step[ECU_TASK_COUNT];
  * frame is deliberately ALWAYS-ON (ungated) -- it's the diagnostic lifeline. */
 extern volatile uint8_t g_pit_diag_enabled;
 
+#if defined(ECU_HIL_STUB_START_BTN)
+/* HIL-only start-button inject: set by CanRxTask from 0x7E0 payload byte 4,
+ * OR'd into the PB5 read in io_signals so the FSM can reach R2D without the
+ * physical start jumper. Never present in a flight build. */
+extern volatile uint8_t g_hil_force_start;
+#endif
+
 /* Called once from freertos.c USER CODE after osKernelInitialize(), before the
  * scheduler starts. Currently just zeroes the step counters; a hook point for
  * any app-side RTOS object the .ioc can't carry. */

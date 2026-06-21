@@ -58,6 +58,13 @@ if(ECU_HIL_CLEAR_ERROR_LATCH)
   add_compile_definitions(ECU_HIL_CLEAR_ERROR_LATCH)
 endif()
 
+# Bench image only -- inject the start button over 0x7E0 payload byte 4 when the
+# physical PB5 jumper is unavailable. NEVER a flight default.
+option(ECU_HIL_STUB_START_BTN "Inject start button over 0x7E0 byte4 (HIL only)" OFF)
+if(ECU_HIL_STUB_START_BTN)
+  add_compile_definitions(ECU_HIL_STUB_START_BTN)
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
