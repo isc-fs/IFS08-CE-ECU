@@ -74,7 +74,16 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  /* The stm32-can-bootloader hands the app off with IRQs masked (__disable_irq)
+   * and SysTick stopped -- by design (its Bootloader_JumpToApplication, issue #59),
+   * relying on the app to re-enable IRQs once it owns the CPU. Until we do, the
+   * HAL timebase interrupt (TIM23) can't fire, HAL_GetTick() stays frozen, and
+   * HAL's tick-based waits in HAL_Init / SystemClock_Config spin forever -> the
+   * BL-inherited IWDG resets us before our own init runs (the intermittent boot
+   * crash; SWD-confirmed: PRIMASK set hangs in HAL_Init, cleared it boots; bench
+   * 6/6 cold-boots). Clear any stale pending SysTick, then unmask -- first thing. */
+  SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk;
+  __enable_irq();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
