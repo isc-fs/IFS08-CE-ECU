@@ -49,10 +49,21 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.apps2_raw         = in.apps2_raw;
         ci.brake_raw         = in.brake_raw;
         ci.start_button      = in.start_button;
+#if defined(ECU_STUB_NO_INVERTER)
+        // Calibration / bring-up: no inverter on FDCAN1 -- bypass BOTH inverter gates
+        // (0x466 vconfig + Ready state) so the FSM walks to Active on its own for the
+        // R2D/RTDS sequence + APPS pedal sweep. Ready(4) < fault(10) -> stays in
+        // TorqueEnable. DISABLES the inverter handshake -- NEVER a flight default.
+        ci.inv_present       = true;
+        ci.inv_vconfig_ready = true;
+        ci.inv_state         = config::InvReadyState;
+        ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
+#else
         ci.inv_present       = VehicleService::is_fresh(now, veh.last_inv_tick, config::InvStaleMs);
         ci.inv_vconfig_ready = (veh.last_vconfig_tick != 0u);
         ci.inv_state         = veh.inv_state;
         ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
+#endif
 #if defined(ECU_STUB_NO_AMS)
         // Bring-up with NO AMS on the bus (inverter on bench PSUs): assume precharge
         // complete + AMS healthy so the FSM can reach Active. WaitInvVdcConfig still

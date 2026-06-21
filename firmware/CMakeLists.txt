@@ -80,6 +80,14 @@ if(ECU_STUB_NO_AMS)
   add_compile_definitions(ECU_STUB_NO_AMS)
 endif()
 
+# Calibration image only -- NO inverter on FDCAN1: bypass both inverter gates so the
+# FSM reaches RTDS/Active on its own (read APPS raw + sweep the pedal, watch torque,
+# without a live inverter). DISABLES the inverter handshake -- NEVER a flight default.
+option(ECU_STUB_NO_INVERTER "Bypass the inverter gates to reach Active (calibration only)" OFF)
+if(ECU_STUB_NO_INVERTER)
+  add_compile_definitions(ECU_STUB_NO_INVERTER)
+endif()
+
 # Bring-up image only -- clamp commanded torque to N% (car on stands / freewheeling).
 # Empty = no cap. NEVER a flight default.
 set(ECU_BRINGUP_TORQUE_CAP_PCT "" CACHE STRING "Clamp commanded torque to N% (bring-up only; empty = no cap)")
