@@ -38,10 +38,10 @@ inline constexpr uint8_t  AmsFsmError          = 5;
 
 // ---- Pedals / brake (raw 12-bit ADC) --------------------------------------
 // APPS travel calibration: pct = clamp((raw - min) * 100 / (max - min), 0, 100).
-inline constexpr uint16_t Apps1AdcMin          = 2050;  // COMMISSION
-inline constexpr uint16_t Apps1AdcMax          = 2950;  // COMMISSION
-inline constexpr uint16_t Apps2AdcMin          = 1915;  // COMMISSION
-inline constexpr uint16_t Apps2AdcMax          = 2570;  // COMMISSION
+inline constexpr uint16_t Apps1AdcMin          = 2490;  // bench-cal 2026-06-22 (rest 2476 + margin)
+inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 - headroom)
+inline constexpr uint16_t Apps2AdcMin          = 2345;  // bench-cal (rest 2332 + margin)
+inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 - headroom)
 
 inline constexpr uint16_t BrakeArmRaw          = 900;   // COMMISSION: brake-to-arm (R2D)
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
