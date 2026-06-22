@@ -35,9 +35,10 @@ void IoSignals::read(IoInputs& out) noexcept {
     // ADC3 channels: brake IN3 (PF7), APPS1 IN7 (PF8, shared-analog), APPS2 IN2 (PF9).
 #if defined(ECU_STUB_BRAKE)
     // Bring-up: the brake line may be unpressurized, so the sensor can't reach
-    // BrakeArmRaw. Assume the brake is fully pressed (skip the ADC) to exercise the
-    // real R2D/RTDS sequence. Compile-time only -- never a flight build.
-    out.brake_raw = 4095u;
+    // BrakeArmRaw. Assume a LIGHT brake press -- above BrakeArmRaw (900) so R2D
+    // arms, but BELOW BrakePressedRaw (3000) so a throttle sweep does NOT latch the
+    // EV.2.3 brake+throttle plausibility cut. Compile-time only -- never a flight build.
+    out.brake_raw = 1500u;
 #else
     out.brake_raw = read_adc3(ADC_CHANNEL_3);
 #endif
