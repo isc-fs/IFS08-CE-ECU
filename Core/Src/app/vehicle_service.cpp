@@ -44,11 +44,12 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
 }
 
 std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
-    // EMC_TX_STATE_4 (0x463): motor speed, 20-bit signed, little-endian @ bytes
-    // 5-7 (d[5]=low, d[6]=mid, d[7] low-nibble=high). E2E bytes 0-1 ignored.
-    std::uint32_t raw = static_cast<std::uint32_t>(d[5])
-                      | (static_cast<std::uint32_t>(d[6]) << 8)
-                      | ((static_cast<std::uint32_t>(d[7]) & 0x0Fu) << 16);
+    // EMC_TX_STATE_4 (0x463) EMachine_Speed_erpm: 20-bit signed, Intel, DBC start
+    // bit 44 -> the signal's low 4 bits are d[5] bits 4-7, then d[6], then d[7]
+    // (NX0001-STS04_A16.dbc). 0x463 carries no E2E.
+    std::uint32_t raw = (static_cast<std::uint32_t>(d[5]) >> 4)
+                      | (static_cast<std::uint32_t>(d[6]) << 4)
+                      | (static_cast<std::uint32_t>(d[7]) << 12);
     if (raw & 0x80000u) raw |= 0xFFF00000u;            // sign-extend from bit 19
     return static_cast<std::int32_t>(raw);
 }
