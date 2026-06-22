@@ -72,6 +72,36 @@ if(ECU_STUB_START)
   add_compile_definitions(ECU_STUB_START)
 endif()
 
+# Bring-up image only -- NO AMS on the bus (inverter on bench PSUs): assume precharge
+# complete + AMS healthy so the FSM reaches Active. The FSM still gates on the
+# inverter's 0x466 DC-bus report first. DISABLES the AMS safety gate -- NEVER a flight default.
+option(ECU_STUB_NO_AMS "Assume precharge OK with no AMS on the bus (bring-up only)" OFF)
+if(ECU_STUB_NO_AMS)
+  add_compile_definitions(ECU_STUB_NO_AMS)
+endif()
+
+# Calibration image only -- NO inverter on FDCAN1: bypass both inverter gates so the
+# FSM reaches RTDS/Active on its own (read APPS raw + sweep the pedal, watch torque,
+# without a live inverter). DISABLES the inverter handshake -- NEVER a flight default.
+option(ECU_STUB_NO_INVERTER "Bypass the inverter gates to reach Active (calibration only)" OFF)
+if(ECU_STUB_NO_INVERTER)
+  add_compile_definitions(ECU_STUB_NO_INVERTER)
+endif()
+
+# Bring-up image only -- clamp commanded torque to N% (car on stands / freewheeling).
+# Empty = no cap. NEVER a flight default.
+set(ECU_BRINGUP_TORQUE_CAP_PCT "" CACHE STRING "Clamp commanded torque to N% (bring-up only; empty = no cap)")
+if(ECU_BRINGUP_TORQUE_CAP_PCT)
+  add_compile_definitions(ECU_BRINGUP_TORQUE_CAP_PCT=${ECU_BRINGUP_TORQUE_CAP_PCT})
+endif()
+
+# Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
+# the ACU bus can sniff the raw inverter traffic (E2E CRC/counter intact). NEVER a flight default.
+option(ECU_DEBUG_INV_BRIDGE "Mirror FDCAN1 inverter frames onto FDCAN2 (debug only)" OFF)
+if(ECU_DEBUG_INV_BRIDGE)
+  add_compile_definitions(ECU_DEBUG_INV_BRIDGE)
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>

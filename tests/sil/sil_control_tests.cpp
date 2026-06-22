@@ -316,6 +316,72 @@ static void test_inverter() {
     CHECK(sent == -240, "Torque_Nm_Req @ bytes 2-3 LE == -240");
 }
 
+// Inverter fault recovery: a faulted inverter must be commanded its recovery
+// mode word (hard fault 11 -> 0x0D, soft fault 10 -> 0x13) in ANY drive state,
+// including before the FSM reaches Active -- the real inverter boots LATCHED in
+// hard fault, and without this the FSM stalls at WaitInvStandby forever.
+static void test_inverter_fault_recovery() {
+    std::printf("[inverter_fault_recovery]\n");
+
+    // Boot-latched hard fault: a fresh controller (still WaitInvVdcConfig) seeing
+    // inv_state 11 must command HardFaultReset (0x0D), not Off -- the whole point.
+    {
+        Controller c;
+        CtrlInputs in{};
+        in.inv_state = InvHardFaultState;            // 11
+        CtrlOutput o = c.step(in, 0);
+        CHECK(o.state == CtrlState::WaitInvVdcConfig, "still pre-config (no vconfig yet)");
+        CHECK(o.inv_mode == InvMode::HardFaultReset, "hard fault (11) -> HardFaultReset (0x0D), pre-Active");
+        CHECK(o.torque_pct == 0, "no torque while recovering a fault");
+    }
+
+    // Soft fault -> Fault (0x13).
+    {
+        Controller c;
+        CtrlInputs in{};
+        in.inv_state = InvSoftFaultState;            // 10
+        CtrlOutput o = c.step(in, 0);
+        CHECK(o.inv_mode == InvMode::Fault, "soft fault (10) -> Fault (0x13)");
+    }
+
+    // A healthy (non-fault) inverter state must NOT trigger recovery.
+    {
+        Controller c;
+        CtrlInputs in{};
+        in.inv_state = InvStandbyState;              // 3
+        CtrlOutput o = c.step(in, 0);
+        CHECK(o.inv_mode == InvMode::Off, "standby (3) -> normal Off, no recovery");
+    }
+
+    // In Active, a fault both commands recovery AND cuts torque (pedal at 100%).
+    {
+        Controller c;
+        uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        in.inv_state = InvHardFaultState;            // 11 while driving
+        CtrlOutput o = c.step(in, t);
+        CHECK(o.inv_mode == InvMode::HardFaultReset, "Active + hard fault -> HardFaultReset");
+        CHECK(o.torque_pct == 0, "Active + fault -> torque cut");
+        CHECK(!o.ok_to_drive, "Active + fault -> not ok_to_drive");
+    }
+
+    // AmsError inhibits: recovery is suppressed (Off is the safe command).
+    {
+        Controller c;
+        CtrlInputs in{};
+        in.ams_error = true;
+        in.inv_state = InvHardFaultState;            // 11
+        CtrlOutput o = c.step(in, 0);
+        CHECK(o.state == CtrlState::AmsError, "ams_error -> AmsError state");
+        CHECK(o.inv_mode == InvMode::Off, "AmsError + fault -> Off (recovery suppressed)");
+    }
+
+    // Wire encoding: HardFaultReset is App_State_Req 0x0D on 0x360.
+    const CanFrame md = Inverter::build_setpoint_mode(InvMode::HardFaultReset);
+    CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -332,6 +398,7 @@ static void run_all() {
     test_bootloader_trigger();
     test_dsl_parity();
     test_inverter();
+    test_inverter_fault_recovery();
 }
 
 int main(int argc, char** argv) {
@@ -352,6 +419,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
+    else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);
