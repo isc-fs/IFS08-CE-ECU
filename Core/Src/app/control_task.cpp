@@ -23,6 +23,7 @@
 
 #include "cmsis_os2.h"
 #include "main.h"
+#include "fdcan.h"      // hfdcan1 -- FDCAN1 TX-health debug probe (ECU_DEBUG_INV_BRIDGE)
 
 using namespace ecu;
 
@@ -104,11 +105,21 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(f);
         }
 
-        // --- inverter setpoints (FDCAN1), every cycle -- matches the original
-        //     VCU byte-for-byte: 0x360 mode (App_State_Req <- out.inv_mode) +
-        //     0x362 torque (Torque_Nm_Req <- out.torque_pct), E2E bytes = 0 ---
-        can_tx_post(Inverter::build_setpoint_mode(out.inv_mode));
-        can_tx_post(Inverter::build_setpoint_torque(out.torque_pct));
+        // --- inverter setpoints (FDCAN1), EVERY cycle: PLAIN 0x360 mode + 0x362
+        //     torque (bytes 0-1 = 0, no E2E -- byte-for-byte as the IFS07 VCU, which
+        //     blasted these continuously regardless of HV). Off pre-R2D, Ready at
+        //     WaitInvStandby, TorqueEnable in Active. ---
+        const CanFrame sp_mode = Inverter::build_setpoint_mode(out.inv_mode);
+        const CanFrame sp_tq   = Inverter::build_setpoint_torque(out.torque_pct);
+        can_tx_post(sp_mode);
+        can_tx_post(sp_tq);
+#if defined(ECU_DEBUG_INV_BRIDGE)
+        // DEBUG: mirror our OWN setpoints onto FDCAN2 (0x560/0x562). NEVER flight.
+        {
+            CanFrame d = sp_mode; d.bus = static_cast<uint8_t>(CanBus::Acu); d.id = 0x560u; can_tx_post(d);
+            CanFrame e = sp_tq;   e.bus = static_cast<uint8_t>(CanBus::Acu); e.id = 0x562u; can_tx_post(e);
+        }
+#endif
 
         // --- outputs: RTDS + status LEDs ---
         HAL_GPIO_WritePin(RTDS_GPIO_Port, RTDS_Pin,
@@ -127,6 +138,30 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_inverter(veh));
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in));
+#if defined(ECU_DEBUG_INV_BRIDGE)
+            // DEBUG: FDCAN1 (inverter bus) TX health. 0x57F =
+            // [TxErrCnt, RxErrCnt, LastErrorCode, flags(b0=busoff,b1=errpassive,b2=warn), activity].
+            // LEC 3 = ACK error (no node ACKed our TX -> inverter not receiving / bus issue);
+            // LEC 0 or 7 = no error (TX is ACKed -> inverter IS receiving -> rejecting on its E2E).
+            {
+                FDCAN_ErrorCountersTypeDef ec{};
+                FDCAN_ProtocolStatusTypeDef ps{};
+                HAL_FDCAN_GetErrorCounters(&hfdcan1, &ec);
+                HAL_FDCAN_GetProtocolStatus(&hfdcan1, &ps);
+                CanFrame g{};
+                g.bus = static_cast<uint8_t>(CanBus::Acu);
+                g.id  = 0x57Fu;
+                g.dlc = 5;
+                g.data[0] = static_cast<uint8_t>(ec.TxErrorCnt);
+                g.data[1] = static_cast<uint8_t>(ec.RxErrorCnt);
+                g.data[2] = static_cast<uint8_t>(ps.LastErrorCode);
+                g.data[3] = static_cast<uint8_t>((ps.BusOff ? 1u : 0u) |
+                                                 (ps.ErrorPassive ? 2u : 0u) |
+                                                 (ps.Warning ? 4u : 0u));
+                g.data[4] = static_cast<uint8_t>(ps.Activity);
+                can_tx_post(g);
+            }
+#endif
         }
 
         // --- IWDG (sole kicker) ---

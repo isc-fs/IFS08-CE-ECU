@@ -32,10 +32,11 @@ namespace ecu {
 // mode words (EMC_RX_SETPOINT_1 / 0x360); the inverter adapter writes them
 // (with E2E) -- the core only decides which one.
 enum class InvMode : uint8_t {
-    Off          = 0x01,
-    Ready        = 0x04,  // drive standby -> ready
-    TorqueEnable = 0x06,
-    Fault        = 0x13,  // fault / reset
+    Off            = 0x01,
+    Ready          = 0x04,  // drive standby -> ready
+    TorqueEnable   = 0x06,
+    Fault          = 0x13,  // soft fault (App_State 10) reset
+    HardFaultReset = 0x0D,  // hard fault (App_State 11) recovery -> clears the latch
 };
 
 // The start / ready-to-drive FSM.

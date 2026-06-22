@@ -140,14 +140,31 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         mode = InvMode::Ready;              // command standby -> ready
         break;
     case CtrlState::Active:
-        if (in.inv_state >= 10u) {
-            mode = InvMode::Fault;          // inverter fault -> command reset, no torque
-        } else {
+        // Healthy inverter -> drive. A faulted inverter (>= soft fault) gets its
+        // recovery mode + no torque from the reactive block after this switch.
+        if (in.inv_state < InvSoftFaultState) {
             mode = InvMode::TorqueEnable;
             drive = true;
             cmd_torque = torque;
         }
         break;
+    }
+
+    // Inverter fault recovery -- reactive, in ANY drive state (not just Active).
+    // A faulted inverter ignores Off/Ready; it clears only when commanded its
+    // recovery mode word. Mirrors the legacy VCU's per-state inverter switch
+    // (pre-jarama main.c:1912/1956): soft fault (10) -> Fault (0x13), hard fault
+    // (11) -> HardFaultReset (0x0D). The inverter can boot LATCHED in hard fault
+    // before we ever reach Active, so this must run pre-Active or the FSM stalls
+    // at WaitInvStandby forever waiting for a ready state that never comes. Torque
+    // is already 0 outside the Active healthy path, so this never drives a fault.
+    // Not applied in AmsError (that state inhibits -- Off is the safe command).
+    if (state_ != CtrlState::AmsError) {
+        if (in.inv_state == InvHardFaultState) {
+            mode = InvMode::HardFaultReset;
+        } else if (in.inv_state == InvSoftFaultState) {
+            mode = InvMode::Fault;
+        }
     }
 
     CtrlOutput out{};
