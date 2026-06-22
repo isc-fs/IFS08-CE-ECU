@@ -95,6 +95,13 @@ if(ECU_BRINGUP_TORQUE_CAP_PCT)
   add_compile_definitions(ECU_BRINGUP_TORQUE_CAP_PCT=${ECU_BRINGUP_TORQUE_CAP_PCT})
 endif()
 
+# Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
+# the ACU bus can sniff the raw inverter traffic (E2E CRC/counter intact). NEVER a flight default.
+option(ECU_DEBUG_INV_BRIDGE "Mirror FDCAN1 inverter frames onto FDCAN2 (debug only)" OFF)
+if(ECU_DEBUG_INV_BRIDGE)
+  add_compile_definitions(ECU_DEBUG_INV_BRIDGE)
+endif()
+
 # C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
 add_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>

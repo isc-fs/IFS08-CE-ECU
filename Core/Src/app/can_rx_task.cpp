@@ -43,6 +43,18 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
             continue;   // timeout: no frame, just the liveness tick
         }
 
+#if defined(ECU_DEBUG_INV_BRIDGE)
+        // DEBUG: mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
+        // the ACU bus can sniff the raw inverter traffic -- E2E CRC (byte0) + counter
+        // (byte1) intact. Same ID: the 0x46x inverter IDs don't collide with the ACU
+        // map. NEVER a flight default (doubles inverter traffic onto the shared bus).
+        if (f.bus == static_cast<uint8_t>(CanBus::Inv)) {
+            CanFrame fwd = f;
+            fwd.bus = static_cast<uint8_t>(CanBus::Acu);
+            can_tx_post(fwd);
+        }
+#endif
+
         // (1) bootloader trigger (0x002 / 0xB007AD12) -> reboot to BL. The
         // recovery path home; never returns.
         if (Bootloader::matches_trigger(f)) {
