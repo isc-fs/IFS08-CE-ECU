@@ -136,6 +136,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_pedals(in));
             can_tx_post(PitDiag::build_inverter(veh));
+            can_tx_post(PitDiag::build_inverter_temps(veh));
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in));
 #if defined(ECU_DEBUG_INV_BRIDGE)

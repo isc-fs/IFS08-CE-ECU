@@ -35,6 +35,7 @@ public:
                                  bool start_button) noexcept;   // 0x700
     static CanFrame build_pedals(const IoInputs& io) noexcept;  // 0x701
     static CanFrame build_inverter(const VehicleState& v) noexcept; // 0x702
+    static CanFrame build_inverter_temps(const VehicleState& v) noexcept; // 0x706
     static CanFrame build_fwinfo() noexcept;                    // 0x703
     static CanFrame build_health(const HealthMetrics& m) noexcept;  // 0x704
     static CanFrame build_brake(const IoInputs& io) noexcept;   // 0x705

@@ -96,6 +96,8 @@ inline constexpr uint32_t AcuOkPrechargeId     = 0x020u;     // AMS precharge-OK
 inline constexpr uint32_t AcuVCellMinId        = 0x12Cu;     // AMS min cell voltage
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
+inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)
+inline constexpr uint32_t InvRxTempId          = 0x464u;     // EMC_TX_STATE_5 (board/stage/motor temps, raw -50 = degC)
 inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (DCBus_Voltage_V)
 
 // ---- Inverter (NX/EMC) TX setpoints (FDCAN1, standard IDs) -----------------

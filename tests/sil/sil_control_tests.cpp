@@ -21,6 +21,7 @@
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
+#include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
 
 using namespace ecu;
 using namespace ecu::config;
@@ -382,6 +383,45 @@ static void test_inverter_fault_recovery() {
     CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
 }
 
+// Inverter RX decode: 0x463 rpm (20-bit signed @ bit 44 -- the bit-44 fix, byte
+// patterns verified vs the NX DBC with cantools) and 0x464 temps (raw bytes pass
+// through; the DBC -50 offset turns them into degC on decode).
+static void test_inverter_rx() {
+    std::printf("[inverter_rx]\n");
+
+    // rpm decoder (pure static) -- the signed bit-44 layout.
+    const std::uint8_t z[8]   = {0,0,0,0,0, 0x00,0x00,0x00};
+    const std::uint8_t one[8] = {0,0,0,0,0, 0x10,0x00,0x00};
+    const std::uint8_t hi[8]  = {0,0,0,0,0, 0xF0,0xFF,0x07};
+    const std::uint8_t neg[8] = {0,0,0,0,0, 0xF0,0xFF,0xFF};
+    CHECK(VehicleService::decode_inv_rpm(z)   == 0,     "rpm 0");
+    CHECK(VehicleService::decode_inv_rpm(one) == 1,     "rpm 1 (LSB at bit 44)");
+    CHECK(VehicleService::decode_inv_rpm(hi)  == 32767, "rpm +32767");
+    CHECK(VehicleService::decode_inv_rpm(neg) == -1,    "rpm -1 (signed, sign-extend bit 19)");
+
+    VehicleService& vs = VehicleService::instance();
+
+    // rpm flows through the RX path (0x463) into the snapshot.
+    CanFrame r{};
+    r.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    r.id  = InvRxRpmId;          // 0x463
+    r.dlc = 8;
+    r.data[5] = 0xF0; r.data[6] = 0xFF; r.data[7] = 0x07;   // 32767
+    CHECK(vs.update_from_frame(r), "0x463 accepted");
+    CHECK(vs.snapshot().inv_rpm == 32767, "rpm reaches the snapshot");
+
+    // temps (0x464): raw bytes stored verbatim (the DBC -50 offset -> degC).
+    CanFrame t{};
+    t.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    t.id  = InvRxTempId;         // 0x464
+    t.dlc = 4;
+    t.data[0]=92; t.data[1]=93; t.data[2]=84; t.data[3]=0xFF; // 42/43/34/205 degC
+    CHECK(vs.update_from_frame(t), "0x464 accepted");
+    const VehicleState s = vs.snapshot();
+    CHECK(s.inv_temp_board==92 && s.inv_temp_pwrstg==93, "board/stage temps stored raw");
+    CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -399,6 +439,7 @@ static void run_all() {
     test_dsl_parity();
     test_inverter();
     test_inverter_fault_recovery();
+    test_inverter_rx();
 }
 
 int main(int argc, char** argv) {
@@ -420,6 +461,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
+    else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);
