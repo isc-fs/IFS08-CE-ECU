@@ -71,6 +71,12 @@ BO_ 1794 PitDiag_inverter: 7 VCU
  SG_ inv_rpm : 23|32@0- (1,0) [0|0] "rpm" Vector__XXX
  SG_ inv_error : 48|8@1+ (1,0) [0|0] "code" Vector__XXX
 
+BO_ 1798 PitDiag_inverter_temps: 4 VCU
+ SG_ temp_board_degC : 0|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_pwrstg_degC : 8|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_motor1_degC : 16|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_motor2_degC : 24|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+
 BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_major : 0|8@1+ (1,0) [0|0] "" Vector__XXX
  SG_ fw_minor : 8|8@1+ (1,0) [0|0] "" Vector__XXX
@@ -113,6 +119,7 @@ BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
 BA_ "GenMsgCycleTime" BO_ 1797 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
+BA_ "GenMsgCycleTime" BO_ 1798 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
 BA_ "GenMsgCycleTime" BO_ 32 100;

@@ -2,7 +2,8 @@
 //
 // The vehicle RX state the ECU receives off the two CAN buses, held in one
 // lock-free single-writer service (the AMS VehicleService pattern):
-//   - inverter (FDCAN1 / EMC): App_State (0x461), DC-bus volts (0x466)
+//   - inverter (FDCAN1 / EMC): App_State (0x461), rpm (0x463), temps (0x464),
+//     DC-bus volts (0x466)
 //   - AMS / ACU (FDCAN2): ok_precharge (0x020), min cell mV (0x12C), FSM (0x4A0)
 //
 // Single writer: CanRxTask (the only task that calls update_from_frame).
@@ -27,7 +28,12 @@ struct VehicleState {
     // --- inverter (FDCAN1 / EMC) ---
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
+    std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
+    std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
+    std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
+    std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
+    std::uint8_t  inv_temp_motor2   = 0;  // 0x464 motor temp 2      (raw)
     std::uint32_t last_inv_tick     = 0;  // any inverter frame
     std::uint32_t last_vconfig_tick = 0;  // 0x466 seen -> gates Precharge
     // --- AMS / ACU (FDCAN2) ---
@@ -59,6 +65,7 @@ public:
     static std::uint8_t  decode_ams_fsm_state(const std::uint8_t* d) noexcept; // 0x4A0 byte0
     static std::uint16_t decode_ams_min_cell(const std::uint8_t* d) noexcept;  // 0x4A0 BE16 @ b4-5
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
+    static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
 
 private:

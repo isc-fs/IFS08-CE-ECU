@@ -43,6 +43,17 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
+std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
+    // EMachine_Speed_erpm: 20-bit SIGNED, little-endian, frame bit 44 -- the LSB
+    // sits at byte5 bit4, so the 20 bits span d5[4:7] | d6 | d7. Sign-extend from
+    // bit 19. (DBC-correct; the bit-40 layout the HIL sim used reads wrong.)
+    std::uint32_t raw = (static_cast<std::uint32_t>(d[5]) >> 4) |
+                        (static_cast<std::uint32_t>(d[6]) << 4) |
+                        (static_cast<std::uint32_t>(d[7]) << 12);
+    if (raw & 0x80000u) raw |= 0xFFF00000u;             // sign-extend bit 19
+    return static_cast<std::int32_t>(raw);
+}
+
 // ---- freshness -------------------------------------------------------------
 
 bool VehicleService::is_fresh(std::uint32_t now, std::uint32_t last,
@@ -62,6 +73,21 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.inv_state     = decode_inv_state(f.data);
             state_.inv_error     = f.data[2];               // DEM_Code low byte
             state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxRpmId) {                   // 0x463
+            if (f.dlc < 8) return false;
+            state_.inv_rpm       = decode_inv_rpm(f.data);
+            state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxTempId) {                  // 0x464
+            if (f.dlc < 4) return false;
+            state_.inv_temp_board  = f.data[0];
+            state_.inv_temp_pwrstg = f.data[1];
+            state_.inv_temp_motor1 = f.data[2];
+            state_.inv_temp_motor2 = f.data[3];
+            state_.last_inv_tick   = f.timestamp_ms;
             return true;
         }
         if (f.id == config::InvRxDcBusId) {                 // 0x466

@@ -19,6 +19,7 @@
 #include "pit_diag_pedals.def"      /* 0x701                                  */
 #include "pit_diag_brake.def"       /* 0x705                                  */
 #include "pit_diag_inverter.def"    /* 0x702                                  */
+#include "pit_diag_inverter_temps.def" /* 0x706  inverter temperatures        */
 #include "pit_diag_fwinfo.def"      /* 0x703                                  */
 #include "pit_diag_health.def"      /* 0x704                                  */
 

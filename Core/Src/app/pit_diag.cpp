@@ -67,11 +67,22 @@ CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
 CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     PitDiag_inverter_t inv{};
     inv.dc_bus_voltage = v.inv_dc_bus_V;
-    inv.inv_rpm        = 0;            // rpm decode deferred (task #10)
+    inv.inv_rpm        = v.inv_rpm;    // 0x463 EMachine_Speed_erpm (20-bit signed)
     inv.inv_error      = v.inv_error;
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);
     return make_acu(PitDiag_inverter_ID, b);
+}
+
+CanFrame PitDiag::build_inverter_temps(const VehicleState& v) noexcept {
+    PitDiag_inverter_temps_t t{};
+    t.temp_board_degC  = v.inv_temp_board;   // raw bytes; the DBC -50 offset -> degC
+    t.temp_pwrstg_degC = v.inv_temp_pwrstg;
+    t.temp_motor1_degC = v.inv_temp_motor1;
+    t.temp_motor2_degC = v.inv_temp_motor2;
+    std::uint8_t b[PitDiag_inverter_temps_DLC];
+    encode_PitDiag_inverter_temps(t, b);
+    return make_acu(PitDiag_inverter_temps_ID, b);
 }
 
 CanFrame PitDiag::build_fwinfo() noexcept {
