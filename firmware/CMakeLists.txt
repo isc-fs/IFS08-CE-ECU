@@ -88,12 +88,8 @@ if(ECU_STUB_NO_INVERTER)
   add_compile_definitions(ECU_STUB_NO_INVERTER)
 endif()
 
-# Bring-up image only -- clamp commanded torque to N% (car on stands / freewheeling).
-# Empty = no cap. NEVER a flight default.
-set(ECU_BRINGUP_TORQUE_CAP_PCT "" CACHE STRING "Clamp commanded torque to N% (bring-up only; empty = no cap)")
-if(ECU_BRINGUP_TORQUE_CAP_PCT)
-  add_compile_definitions(ECU_BRINGUP_TORQUE_CAP_PCT=${ECU_BRINGUP_TORQUE_CAP_PCT})
-endif()
+# (Torque cap is now a source constant -- ecu_config.hpp BringupTorqueCapPct, applied
+# in control_task.cpp -- not a build flag.)
 
 # Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
 # the ACU bus can sniff the raw inverter traffic (E2E CRC/counter intact). NEVER a flight default.

@@ -84,12 +84,11 @@ extern "C" void ecu_control_task_run(void *argument) {
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);
-#if defined(ECU_BRINGUP_TORQUE_CAP_PCT)
-        // Bring-up: clamp the commanded torque (car on stands / freewheeling). NEVER flight.
-        if (out.torque_pct > (ECU_BRINGUP_TORQUE_CAP_PCT)) {
-            out.torque_pct = static_cast<uint8_t>(ECU_BRINGUP_TORQUE_CAP_PCT);
+        // Bring-up torque cap (config::BringupTorqueCapPct; 100 = no cap). Clamps the
+        // commanded torque for on-stands / freewheel testing -- MUST be 100 for flight.
+        if (out.torque_pct > config::BringupTorqueCapPct) {
+            out.torque_pct = config::BringupTorqueCapPct;
         }
-#endif
 
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
