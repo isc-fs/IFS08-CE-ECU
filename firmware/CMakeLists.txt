@@ -88,7 +88,7 @@ if(ECU_STUB_NO_INVERTER)
   add_compile_definitions(ECU_STUB_NO_INVERTER)
 endif()
 
-# (Torque cap is now a source constant -- ecu_config.hpp BringupTorqueCapPct, applied
+# (Torque cap is now a source constant -- ecu_config.hpp TorqueCap, applied
 # in control_task.cpp -- not a build flag.)
 
 # Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
