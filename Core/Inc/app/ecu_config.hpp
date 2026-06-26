@@ -47,6 +47,10 @@ inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 
 
 inline constexpr uint16_t BrakeArmRaw          = 900;   // COMMISSION: brake-to-arm (R2D)
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
+// BRING-UP: brake reading injected when ECU_STUB_BRAKE is compiled in (used only then,
+// in io_signals). 0 = released; set ABOVE BrakeArmRaw to arm R2D, BELOW BrakePressedRaw
+// to dodge the EV.2.3 cut (e.g. 1500). Irrelevant to a flight build (stub not compiled).
+inline constexpr uint16_t StubBrakeRaw         = 0;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
 inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
