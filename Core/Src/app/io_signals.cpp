@@ -2,6 +2,8 @@
 
 #include "app/io_signals.hpp"
 
+#include "app/ecu_config.hpp"  // config::StubBrakeRaw (the ECU_STUB_BRAKE reading)
+
 #include "adc.h"     // hadc3
 #include "main.h"    // HAL + the CubeMX GPIO label defines (START_Pin, ...)
 
@@ -34,11 +36,10 @@ std::uint16_t read_adc3(std::uint32_t channel) noexcept {
 void IoSignals::read(IoInputs& out) noexcept {
     // ADC3 channels: brake IN3 (PF7), APPS1 IN7 (PF8, shared-analog), APPS2 IN2 (PF9).
 #if defined(ECU_STUB_BRAKE)
-    // Bring-up: inject a fixed brake reading when the sensor isn't wired. Defaults
-    // to 0 (released). Set it ABOVE BrakeArmRaw (900) to arm R2D, and BELOW
-    // BrakePressedRaw (3000) to dodge the EV.2.3 brake+throttle cut, when a session
-    // needs it (e.g. 1500). Compile-time only -- never a flight build.
-    out.brake_raw = 0u;
+    // Bring-up: inject config::StubBrakeRaw (tuned in ecu_config.hpp) when the brake
+    // sensor isn't wired. 0 = released; set it ABOVE BrakeArmRaw (900) to arm R2D and
+    // BELOW BrakePressedRaw (3000) to dodge the EV.2.3 cut (e.g. 1500). Never flight.
+    out.brake_raw = config::StubBrakeRaw;
 #else
     out.brake_raw = read_adc3(ADC_CHANNEL_3);
 #endif
