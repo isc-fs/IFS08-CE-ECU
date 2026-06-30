@@ -1,141 +1,53 @@
 cmake_minimum_required(VERSION 3.15)
 
 # =============================================================================
-# ECU08 NSIL  –  SIL (Software-In-The-Loop) build
+# ECU SIL (Software-In-The-Loop) host build -- post-C++-rewrite.
 #
-# Compila toda la lógica de aplicación + tests de integración en el host PC
-# sin necesitar FreeRTOS real ni hardware STM32.
+# Compiles the pure control core (Core/Src/app/control.cpp -- HAL-free,
+# RTOS-free) on the host with NO mocks and drives it through the start /
+# ready-to-drive FSM + every FSAE plausibility cut (sil_control_tests.cpp).
 #
-# MOCKS (directorio mocks/):
-#   cmsis_os2.h      → tipos CMSIS-RTOS v2 (sobreescribe el del middleware)
-#   main.h           → stubs HAL/FDCAN     (sobreescribe Core/Inc/main.h)
-#   cmsis_os2_impl.c → implementaciones: queues ring-buffer, mutex no-op, tick
-#   hal_impl.c       → hfdcan1/2/3 + stubs HAL_FDCAN_*
-#   diag_sil.c       → Diag_Log real → stdout + fichero .log
+# The C++ rewrite replaced the old C app (app_state.c / can.c / control.c / ...)
+# that the previous SIL compiled, so this harness was rebuilt around the new
+# ecu::Controller. The full RTOS-integration SIL (mocked tasks + CAN simulator)
+# and the unit suite are tracked separately under #9.
+#
+# Run:  ctest --test-dir build-sil --output-on-failure
+#   or: build-sil/tests/sil/ecu08_sil --test-all
 # =============================================================================
 
-# ---- Fuentes de la aplicación (lógica pura, sin RTOS ni HAL real) ----------
-set(APP_SOURCES
-    ../../Core/Src/app_state.c
-    ../../Core/Src/can.c
-    ../../Core/Src/control.c
-    ../../Core/Src/pit_diag.c
-    ../../Core/Src/freertos.c
-    ../../Core/Src/io_signals.c
-    ../../Core/Src/telemetry.c
-    ../../Core/Src/telemetry_dashboard.c
-    ../../Core/Src/test_integration.c   # suites de integración S1-S10
-)
+set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-# ---- Fuentes del entorno SIL -----------------------------------------------
-set(SIL_SOURCES
-    sil_main.c
-    sil_hal_mocks.c
-    sil_can_simulator.c
-    sil_boot_sequence.c
-    sil_results.c
-    integration/test_boot_sequence.c
-    integration/test_full_cycle.c
-)
-
-# ---- Mocks RTOS / HAL (necesarios para compilar APP_SOURCES en host) --------
-set(MOCK_SOURCES
-    mocks/cmsis_os2_impl.c   # tick simulado, ring-buffer queues, mutex no-op
-    mocks/hal_impl.c         # hfdcan1/2/3, HAL_FDCAN stubs
-    mocks/diag_sil.c         # Diag_Log → stdout + fichero .log
-)
-
-# ---- Ejecutable -------------------------------------------------------------
 add_executable(ecu08_sil
-    ${APP_SOURCES}
-    ${SIL_SOURCES}
-    ${MOCK_SOURCES}
+    sil_control_tests.cpp
+    ${REPO}/Core/Src/app/control.cpp
+    ${REPO}/Core/Src/app/inverter.cpp
+    ${REPO}/Core/Src/app/vehicle_service.cpp
 )
 
-# ---- Directorios de include -------------------------------------------------
-# IMPORTANTE: mocks/ va PRIMERO para que cmsis_os2.h y main.h del mock
-# tengan precedencia sobre Core/Inc/main.h y el middleware real.
-target_include_directories(ecu08_sil PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/mocks   # 1º: overrides de cabeceras
-    ${CMAKE_CURRENT_SOURCE_DIR}         # 2º: sil_*.h
-    ../../Core/Inc                      # 3º: app_state.h, control.h, etc.
-)
+target_include_directories(ecu08_sil PRIVATE ${REPO}/Core/Inc)
 
-# ---- Opciones de compilación ------------------------------------------------
 target_compile_options(ecu08_sil PRIVATE
-    -Wall
-    -Wextra
-    -Wno-unused-parameter
+    -Wall -Wextra -Wno-unused-parameter
+    -fno-exceptions -fno-rtti          # mirror the firmware C++ flags
 )
-
-target_compile_definitions(ecu08_sil PRIVATE
-    SIL_BUILD=1
-    SIL_USE_FREERTOS_RUNTIME=1
-    SIL_USE_THREAD_SCHEDULER=1
-    TEST_MODE_SIL=1        # activa guardas de compilación en test_integration.h
-    SIL_ANSI_COLORS=1      # colores ANSI en stdout (quitar si el terminal no los soporta)
-)
-
-# ---- Host tool: dbc_dump ----------------------------------------------------
-# Emits docs/dbc/ecu.dbc straight from the code-first CAN DSL descriptors
-# (Core/Inc/can/messages/*.def). Built host-side; CI regenerates and diffs the
-# committed DBC so it can never drift from the firmware encoders. Defines
-# ECU_CAN_DESCRIPTORS to pull in the pass-4 descriptor tables.
-add_executable(ecu_dbc_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/dbc_dump.c)
-target_include_directories(ecu_dbc_dump PRIVATE ../../Core/Inc)
-target_compile_options(ecu_dbc_dump PRIVATE -Wall -Wextra)
-
-# ---- Enlazar con la librería matemática (por si control.c usa floats) -------
+target_compile_definitions(ecu08_sil PRIVATE SIL_BUILD=1)
 target_link_libraries(ecu08_sil m)
 
-# ---- Tests CTest ------------------------------------------------------------
+# Host tool: regenerate docs/dbc/ecu.dbc from the code-first CAN DSL. The
+# dbcinator bot (.github/workflows/dbc-bot.yml, on every PR to dev/main) builds
+# this target and force-pushes the regenerated DBC, so it must always build --
+# and it's compiled by the SIL job too, so it must compile cleanly. C++ TU
+# against the rewrite's C++ DSL (can_codecs.hpp / ECU_CAN_DESCRIPTORS ->
+# ecu::ALL_MSGS of can_dsl::MsgDesc).
+add_executable(ecu_dbc_dump ${REPO}/tools/dbc_dump.cpp)
+target_include_directories(ecu_dbc_dump PRIVATE ${REPO}/Core/Inc)
+target_compile_options(ecu_dbc_dump PRIVATE -Wall -Wextra)
+
 enable_testing()
-
-add_test(
-    NAME SIL_Boot
-    COMMAND ecu08_sil --test-boot
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SIL_Integration
-    COMMAND ecu08_sil --test-integration
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SIL_All
-    COMMAND ecu08_sil --test-all
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SILFullCycle
-    COMMAND ecu08_sil --test-full-cycle
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SILPrechargeE2E
-    COMMAND ecu08_sil --test-precharge-e2e
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SILPrechargeNoAck
-    COMMAND ecu08_sil --test-precharge-no-ack
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SILRtosStartup
-    COMMAND ecu08_sil --test-rtos-startup
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-add_test(
-    NAME SILLegacyCompat
-    COMMAND ecu08_sil --test-legacy-compat
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
+add_test(NAME SIL_Apps            COMMAND ecu08_sil --test-apps)
+add_test(NAME SIL_Boot            COMMAND ecu08_sil --test-boot)
+add_test(NAME SIL_FullCycle       COMMAND ecu08_sil --test-full-cycle)
+add_test(NAME SIL_PrechargeNoAck  COMMAND ecu08_sil --test-precharge-no-ack)
+add_test(NAME SIL_Plausibility    COMMAND ecu08_sil --test-plausibility)
+add_test(NAME SIL_All             COMMAND ecu08_sil --test-all)

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x7E1  PitDiag_ack -- one-shot reply to a 0x7E0 enable/disable command.
- * Mirrors PitDiag_BuildAck(). Acyclic (period 0).
+ * Acyclic (period 0).
  */
 
 CAN_MSG(PitDiag_ack, 0x7E1, 1, "VCU", 0)

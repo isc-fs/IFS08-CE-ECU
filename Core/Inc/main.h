@@ -57,20 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define MICROSD_DET_Pin GPIO_PIN_3
-#define MICROSD_DET_GPIO_Port GPIOE
-#define A1_Pin GPIO_PIN_7
-#define A1_GPIO_Port GPIOF
-#define A2_Pin GPIO_PIN_8
-#define A2_GPIO_Port GPIOF
-#define A3_Pin GPIO_PIN_9
-#define A3_GPIO_Port GPIOF
+#define S_BRAKE_Pin GPIO_PIN_7
+#define S_BRAKE_GPIO_Port GPIOF
+#define APPS_1_Pin GPIO_PIN_8
+#define APPS_1_GPIO_Port GPIOF
+#define APPS_2_Pin GPIO_PIN_9
+#define APPS_2_GPIO_Port GPIOF
 #define A4_Pin GPIO_PIN_10
 #define A4_GPIO_Port GPIOF
-#define IMU_SDA_Pin GPIO_PIN_0
-#define IMU_SDA_GPIO_Port GPIOF
-#define IMU_SCL_Pin GPIO_PIN_1
-#define IMU_SCL_GPIO_Port GPIOF
 #define A5_Pin GPIO_PIN_0
 #define A5_GPIO_Port GPIOC
 #define A6_Pin GPIO_PIN_1
@@ -85,12 +79,10 @@ void Error_Handler(void);
 #define OK_STATUS_GPIO_Port GPIOD
 #define ERR_STATUS_Pin GPIO_PIN_15
 #define ERR_STATUS_GPIO_Port GPIOD
-#define DS18B20_REFRI_Pin GPIO_PIN_5
-#define DS18B20_REFRI_GPIO_Port GPIOD
-#define D1_Pin GPIO_PIN_4
-#define D1_GPIO_Port GPIOB
-#define D2_Pin GPIO_PIN_5
-#define D2_GPIO_Port GPIOB
+#define RTDS_Pin GPIO_PIN_4
+#define RTDS_GPIO_Port GPIOB
+#define START_Pin GPIO_PIN_5
+#define START_GPIO_Port GPIOB
 #define D3_Pin GPIO_PIN_6
 #define D3_GPIO_Port GPIOB
 #define D4_Pin GPIO_PIN_7
@@ -101,13 +93,6 @@ void Error_Handler(void);
 #define D6_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
-/* Export HAL handles for other modules */
-extern FDCAN_HandleTypeDef hfdcan1;
-extern FDCAN_HandleTypeDef hfdcan2;
-extern FDCAN_HandleTypeDef hfdcan3;
-
-extern TIM_HandleTypeDef htim16;
 
 /* USER CODE END Private defines */
 

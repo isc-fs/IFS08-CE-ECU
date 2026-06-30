@@ -4,14 +4,21 @@
 #   cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 #   cmake --build build-fw
 #
-# Produces build-fw/ECU08.elf. The host SIL/unit tests live at the repo root
-# CMakeLists (configured with -S .) and are unaffected by this build.
+# Produces build-fw/ECU08.elf. CubeMX-generated C (main/freertos/peripherals)
+# plus the hand-written C++17 application in Core/Src/app/. The host SIL/unit
+# tests live at the repo-root CMakeLists and are unaffected.
+#
+# NOTE: depends on a lean CubeMX regen of ECU.ioc plus telemetry SPI/FDCAN3
+# glue. Globs Core/Src so it tracks the
+# regen output automatically -- re-run cmake configure after a regen adds files.
 # ============================================================================
 cmake_minimum_required(VERSION 3.15)
 
-project(ECU08 C ASM)
+project(ECU08 C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
@@ -22,7 +29,7 @@ set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(LINKER_SCRIPT ${REPO}/STM32H733ZGTX_FLASH.ld)
 
 # --- Firmware identity baked into the bootloader fwinfo record -------------
-# (Core/Src/firmware_info.c). Git short hash split into 4 bytes; build epoch.
+# (Core/Src/app/firmware_info.cpp). Git short hash split into 4 bytes; build epoch.
 find_package(Git QUIET)
 set(ECU_GIT_SHORT "00000000")
 if(Git_FOUND)
@@ -45,6 +52,59 @@ add_compile_definitions(
   ECU_BUILD_TIMESTAMP=${ECU_BUILD_TS}ULL
 )
 
+# Bench image only -- wipes a stale fault latch on boot. NEVER a flight default.
+option(ECU_HIL_CLEAR_ERROR_LATCH "Clear the RTC fault latch at boot (HIL only)" OFF)
+if(ECU_HIL_CLEAR_ERROR_LATCH)
+  add_compile_definitions(ECU_HIL_CLEAR_ERROR_LATCH)
+endif()
+
+# Bring-up image only -- assume the brake is pressed (the brake line may be
+# unpressurized), so R2D/RTDS can run without brake pressure. NEVER a flight default.
+option(ECU_STUB_BRAKE "Assume the brake is pressed (bring-up only)" OFF)
+if(ECU_STUB_BRAKE)
+  add_compile_definitions(ECU_STUB_BRAKE)
+endif()
+
+# Bring-up image only -- assume the start button is pressed (it may not be wired).
+# Independent of the brake stub. NEVER a flight default.
+option(ECU_STUB_START "Assume the start button is pressed (bring-up only)" OFF)
+if(ECU_STUB_START)
+  add_compile_definitions(ECU_STUB_START)
+endif()
+
+# Bring-up image only -- NO AMS on the bus (inverter on bench PSUs): assume precharge
+# complete + AMS healthy so the FSM reaches Active. The FSM still gates on the
+# inverter's 0x466 DC-bus report first. DISABLES the AMS safety gate -- NEVER a flight default.
+option(ECU_STUB_NO_AMS "Assume precharge OK with no AMS on the bus (bring-up only)" OFF)
+if(ECU_STUB_NO_AMS)
+  add_compile_definitions(ECU_STUB_NO_AMS)
+endif()
+
+# Calibration image only -- NO inverter on FDCAN1: bypass both inverter gates so the
+# FSM reaches RTDS/Active on its own (read APPS raw + sweep the pedal, watch torque,
+# without a live inverter). DISABLES the inverter handshake -- NEVER a flight default.
+option(ECU_STUB_NO_INVERTER "Bypass the inverter gates to reach Active (calibration only)" OFF)
+if(ECU_STUB_NO_INVERTER)
+  add_compile_definitions(ECU_STUB_NO_INVERTER)
+endif()
+
+# (Torque cap is now a source constant -- ecu_config.hpp TorqueCap, applied
+# in control_task.cpp -- not a build flag.)
+
+# Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
+# the ACU bus can sniff the raw inverter traffic (E2E CRC/counter intact). NEVER a flight default.
+option(ECU_DEBUG_INV_BRIDGE "Mirror FDCAN1 inverter frames onto FDCAN2 (debug only)" OFF)
+if(ECU_DEBUG_INV_BRIDGE)
+  add_compile_definitions(ECU_DEBUG_INV_BRIDGE)
+endif()
+
+# C++ app flags: no exceptions / RTTI / threadsafe-static guards (mirrors AMS).
+add_compile_options(
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>
+)
+
 include_directories(
   ${REPO}/Core/Inc
   ${REPO}/Drivers/STM32H7xx_HAL_Driver/Inc
@@ -53,46 +113,14 @@ include_directories(
   ${REPO}/Drivers/CMSIS/Include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+  ${REPO}/Drivers/CMSIS/RTOS2/Include
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
-  ${REPO}/Middlewares/Third_Party/FatFs/src
-  ${REPO}/FATFS/App
-  ${REPO}/FATFS/Target
 )
 
-# --- Application sources (CubeMX-managed + hand-written) -------------------
-# Excluded on purpose:
-#   test_integration.c          -> SIL-only test harness
-#   main_rx_callback_snippet.c  -> doc snippet; redefines HAL_FDCAN_RxFifo0Callback
-set(APP_SRC
-  ${REPO}/Core/Src/main.c
-  ${REPO}/Core/Src/firmware_info.c
-  ${REPO}/Core/Src/bootloader.c
-  ${REPO}/Core/Src/pit_diag.c
-  ${REPO}/Core/Src/freertos.c
-  ${REPO}/Core/Src/control.c
-  ${REPO}/Core/Src/can.c
-  ${REPO}/Core/Src/fdcan.c
-  ${REPO}/Core/Src/adc.c
-  ${REPO}/Core/Src/gpio.c
-  ${REPO}/Core/Src/i2c.c
-  ${REPO}/Core/Src/io_signals.c
-  ${REPO}/Core/Src/memorymap.c
-  ${REPO}/Core/Src/nrf24.c
-  ${REPO}/Core/Src/sdmmc.c
-  ${REPO}/Core/Src/spi.c
-  ${REPO}/Core/Src/telemetry.c
-  ${REPO}/Core/Src/telemetry_dashboard.c
-  ${REPO}/Core/Src/diag.c
-  ${REPO}/Core/Src/app_state.c
-  ${REPO}/Core/Src/tim.c
-  ${REPO}/Core/Src/usart.c
-  ${REPO}/Core/Src/usb_otg.c
-  ${REPO}/Core/Src/stm32h7xx_it.c
-  ${REPO}/Core/Src/stm32h7xx_hal_msp.c
-  ${REPO}/Core/Src/system_stm32h7xx.c
-  ${REPO}/Core/Src/syscalls.c
-  ${REPO}/Core/Src/sysmem.c
-)
+# CubeMX-generated C (main, freertos, peripherals) + the hand-written C++ app.
+file(GLOB CUBEMX_C   ${REPO}/Core/Src/*.c)
+file(GLOB APP_CPP    ${REPO}/Core/Src/app/*.cpp)
+file(GLOB STARTUP_S  ${REPO}/Core/Startup/*.s)
 
 # --- STM32 HAL (compile all; unused modules are #ifdef'd out by hal_conf) ---
 file(GLOB HAL_SRC ${REPO}/Drivers/STM32H7xx_HAL_Driver/Src/*.c)
@@ -112,20 +140,8 @@ set(RTOS_SRC
   ${REPO}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
 )
 
-# --- FatFs -----------------------------------------------------------------
-set(FATFS_SRC
-  ${REPO}/FATFS/App/fatfs.c
-  ${REPO}/FATFS/Target/sd_diskio.c
-  ${REPO}/FATFS/Target/bsp_driver_sd.c
-  ${REPO}/Middlewares/Third_Party/FatFs/src/ff.c
-  ${REPO}/Middlewares/Third_Party/FatFs/src/ff_gen_drv.c
-  ${REPO}/Middlewares/Third_Party/FatFs/src/diskio.c
-  ${REPO}/Middlewares/Third_Party/FatFs/src/option/syscall.c
-)
-
 add_executable(ECU08
-  ${APP_SRC} ${HAL_SRC} ${RTOS_SRC} ${FATFS_SRC}
-  ${REPO}/Core/Startup/startup_stm32h733zgtx.s
+  ${CUBEMX_C} ${APP_CPP} ${HAL_SRC} ${RTOS_SRC} ${STARTUP_S}
 )
 
 target_link_options(ECU08 PRIVATE

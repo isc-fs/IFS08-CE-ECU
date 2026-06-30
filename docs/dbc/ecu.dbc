@@ -46,7 +46,11 @@ BO_ 2017 PitDiag_ack: 1 VCU
 BO_ 1792 PitDiag_status: 8 VCU
  SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ inv_state : 8|8@1+ (1,0) [0|0] "enum" Vector__XXX
- SG_ flags : 16|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ ev_2_3 : 16|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ t11_8_9 : 17|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ rtds_active : 18|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ ok_precharge : 19|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ start_button : 20|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ torque_pct : 24|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ v_cell_min_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
  SG_ torque_cmd : 55|16@0- (1,0) [0|0] "cmd" Vector__XXX
@@ -67,6 +71,12 @@ BO_ 1794 PitDiag_inverter: 7 VCU
  SG_ inv_rpm : 23|32@0- (1,0) [0|0] "rpm" Vector__XXX
  SG_ inv_error : 48|8@1+ (1,0) [0|0] "code" Vector__XXX
 
+BO_ 1798 PitDiag_inverter_temps: 4 VCU
+ SG_ temp_board_degC : 0|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_pwrstg_degC : 8|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_motor1_degC : 16|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+ SG_ temp_motor2_degC : 24|8@1+ (1,-50) [0|0] "degC" Vector__XXX
+
 BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_major : 0|8@1+ (1,0) [0|0] "" Vector__XXX
  SG_ fw_minor : 8|8@1+ (1,0) [0|0] "" Vector__XXX
@@ -76,15 +86,47 @@ BO_ 1795 PitDiag_fwinfo: 7 VCU
 BO_ 1796 PitDiag_health: 8 VCU
  SG_ free_heap : 7|16@0+ (1,0) [0|0] "B" Vector__XXX
  SG_ min_free_heap : 23|16@0+ (1,0) [0|0] "B" Vector__XXX
- SG_ task_ran_mask : 32|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ task_control : 32|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ task_can_rx : 33|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ task_can_tx : 34|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ task_diag : 35|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ reset_cause : 40|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
+
+BO_ 32 ACU_ok_precharge: 1 AMS
+ SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
+
+BO_ 300 ACU_v_cell_min: 2 AMS
+ SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 1184 AMS_status: 8 AMS
+ SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ ams_ok : 8|8@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ module_online_mask : 16|8@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ reserved_b3 : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ min_cell_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ max_cell_mV : 55|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 2 BL_boot_trigger: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
+
+BO_ 2016 PitDiag_cmd: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
 
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
 BA_ "GenMsgCycleTime" BO_ 1797 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
+BA_ "GenMsgCycleTime" BO_ 1798 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
+BA_ "GenMsgCycleTime" BO_ 32 100;
+BA_ "GenMsgCycleTime" BO_ 300 100;
+BA_ "GenMsgCycleTime" BO_ 1184 500;
+
+VAL_ 1792 fsm_state 0 "WaitInvVdcConfig" 1 "Precharge" 2 "WaitStartBrake" 3 "R2dDelay" 4 "WaitInvStandby" 5 "Active" 6 "AmsError" ;
+VAL_ 1792 inv_state 3 "Standby" 4 "Ready" ;
+VAL_ 1796 reset_cause 0 "Unknown" 1 "PowerOn" 2 "Pin" 3 "Software" 4 "IWDG" 5 "WWDG" 6 "LowPower" ;
+VAL_ 1796 last_fault 0 "None" 241 "HardFault" 242 "MemManage" 243 "BusFault" 244 "UsageFault" 245 "StackOverflow" 246 "MallocFailed" 247 "AssertFailed" ;

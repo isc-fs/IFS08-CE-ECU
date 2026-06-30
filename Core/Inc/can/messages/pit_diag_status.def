@@ -1,18 +1,39 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x700  PitDiag_status -- FSM / inverter state / control flags / torque +
- * min cell voltage. Mirrors PitDiag_BuildStatus(). 100 ms while enabled.
+ * min cell voltage. 100 ms while the stream is enabled.
  *
- * `flags` is a composite bitmask the adapter packs:
+ * Byte 2's control flags are exposed as individual 1-bit DBC signals:
  *   bit0 ev_2_3   bit1 t11_8_9   bit2 rtds_active
- *   bit3 ok_precarga   bit4 boton_arranque
+ *   bit3 ok_precharge   bit4 start_button
  */
 
 CAN_MSG(PitDiag_status, 0x700, 8, "VCU", 100)
     FIELD_LE   (fsm_state,     uint8_t,  0, 8,  1, 0, "enum")
     FIELD_LE   (inv_state,     uint8_t,  1, 8,  1, 0, "enum")
-    FIELD_LE   (flags,         uint8_t,  2, 8,  1, 0, "bitmask")
+    /* byte 2's control flags, one 1-bit DBC signal each (cantools rejects an
+     * overlapping byte+bit view, so there is no composite `flags` signal) */
+    FIELD_LE_BITS (ev_2_3,       uint8_t, 16, 1, 1, 0, "bit")
+    FIELD_LE_BITS (t11_8_9,      uint8_t, 17, 1, 1, 0, "bit")
+    FIELD_LE_BITS (rtds_active,  uint8_t, 18, 1, 1, 0, "bit")
+    FIELD_LE_BITS (ok_precharge, uint8_t, 19, 1, 1, 0, "bit")
+    FIELD_LE_BITS (start_button, uint8_t, 20, 1, 1, 0, "bit")
     FIELD_LE   (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
     FIELD_BE   (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
     FIELD_BE_S (torque_cmd,    int16_t,  6, 16, 1, 0, "cmd")
 CAN_MSG_END(PitDiag_status)
+
+/* Enum value tables (DBC VAL_ -- so the pit tool shows names, not numbers).
+ * Seen only by the host dbc_dump build (ECU_DSL_VALUES_PASS). fsm_state mirrors
+ * ecu::CtrlState; inv_state the inverter App_State (config InvStandby/Ready). */
+#ifdef ECU_DSL_VALUES_PASS
+CAN_VAL(PitDiag_status, fsm_state, 0, "WaitInvVdcConfig")
+CAN_VAL(PitDiag_status, fsm_state, 1, "Precharge")
+CAN_VAL(PitDiag_status, fsm_state, 2, "WaitStartBrake")
+CAN_VAL(PitDiag_status, fsm_state, 3, "R2dDelay")
+CAN_VAL(PitDiag_status, fsm_state, 4, "WaitInvStandby")
+CAN_VAL(PitDiag_status, fsm_state, 5, "Active")
+CAN_VAL(PitDiag_status, fsm_state, 6, "AmsError")
+CAN_VAL(PitDiag_status, inv_state, 3, "Standby")
+CAN_VAL(PitDiag_status, inv_state, 4, "Ready")
+#endif

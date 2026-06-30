@@ -1,13 +1,10 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x100  VCU_heartbeat -- the DC-bus voltage the ECU streams to the ACU bus
- * every control cycle. The AMS arms a VcuStale watchdog on this frame in Car
- * mode and opens the AIRs if it stops (see IFS08-CE-ECU#<heartbeat issue>),
- * so its presence and layout are a load-bearing ECU<->AMS contract -- which
- * is exactly why it is declared here ONCE and the encoder + DBC derive from
- * it. Mirrors the hand-rolled build_acu_dc_bus_frame() it replaced.
- *
- * Standard 11-bit ID, dlc 2, dc_bus_voltage as little-endian uint16 (V).
+ * (FDCAN2) every control cycle. The AMS arms a VcuStale watchdog on this frame
+ * in Car mode and opens the AIRs if it stops, so its presence and layout are a
+ * load-bearing ECU<->AMS contract. Matches the AMS-side rx_vcu_dc_bus.def
+ * (LE uint16 V). Must be emitted in EVERY state, not just precharge.
  *
  * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
  */

@@ -4,7 +4,6 @@
 
 #include "diag.h"
 #include "main.h"
-#include "sdmmc.h"
 #include "spi.h"
 
 #include <string.h>
@@ -12,7 +11,6 @@
 /* nRF24 transport backend for telemetry payloads and optional SD mirroring. */
 
 extern SPI_HandleTypeDef hspi1;
-extern SD_HandleTypeDef hsd1;
 
 #ifndef APP_SD_USE_FATFS
 #define APP_SD_USE_FATFS 0
@@ -571,7 +569,6 @@ void Telemetry_SdStore32(const uint8_t payload[32])
     }
   }
 #else
-  (void)hsd1;
   if (!s_sd_diag_reported)
   {
     Diag_Log("SD backend pending FatFs integration\n");

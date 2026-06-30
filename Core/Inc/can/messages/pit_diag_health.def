@@ -3,15 +3,12 @@
  * 0x704  PitDiag_health -- firmware-health telemetry, parity with the AMS
  * 0x4A2/0x4A3 diag. Emitted from DiagTask (NOT ControlTask) so it survives a
  * ControlTask stall -- the exact failure mode it exists to diagnose (an IWDG
- * reset when ControlTask stops kicking the watchdog). Gated by the 0x7E0
- * pit-diag enable like the rest of the stream. See IFS08-CE-ECU#36.
+ * reset when ControlTask stops kicking the watchdog). Gated by 0x7E0 like the
+ * rest of the stream.
  *
- * task_ran_mask: bit set = that task's step_count advanced since the previous
- * health frame (i.e. it ran). A cleared bit on a task that should be cyclic
- * means it stalled. Bit map (mirrors app_task_id_t):
- *   b0 CONTROL  b1 CAN_RX  b2 CAN_TX  b3 TELEMETRY
- *   b4 RADIO_TX b5 SD_LOG  b6 DASH    b7 DIAG
- *
+ * Per-task liveness -- set = that task's step counter advanced since the
+ * previous health frame. One 1-bit signal each, in EcuTaskId order:
+ *   task_control (b0)  task_can_rx (b1)  task_can_tx (b2)  task_diag (b3)
  * reset_cause: 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG, 5 WWDG, 6 LPWR/BOR.
  * last_fault: sticky sentinel latched in RTC backup across the reset (0 none).
  */
@@ -19,8 +16,33 @@
 CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
     FIELD_BE (free_heap,     uint16_t, 0, 16, 1, 0, "B")
     FIELD_BE (min_free_heap, uint16_t, 2, 16, 1, 0, "B")
-    FIELD_LE (task_ran_mask, uint8_t,  4, 8,  1, 0, "bitmask")
+    /* byte 4's per-task liveness, one 1-bit DBC signal each (no composite byte
+     * signal -- cantools rejects an overlapping byte+bit view) */
+    FIELD_LE_BITS (task_control, uint8_t, 32, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_can_rx,  uint8_t, 33, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_can_tx,  uint8_t, 34, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_diag,    uint8_t, 35, 1, 1, 0, "bit")
     FIELD_LE (reset_cause,   uint8_t,  5, 8,  1, 0, "enum")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)
+
+/* Enum value tables (DBC VAL_). reset_cause mirrors ecu::ResetCause, last_fault
+ * ecu::FaultCode. Host dbc_dump build only (ECU_DSL_VALUES_PASS). */
+#ifdef ECU_DSL_VALUES_PASS
+CAN_VAL(PitDiag_health, reset_cause, 0, "Unknown")
+CAN_VAL(PitDiag_health, reset_cause, 1, "PowerOn")
+CAN_VAL(PitDiag_health, reset_cause, 2, "Pin")
+CAN_VAL(PitDiag_health, reset_cause, 3, "Software")
+CAN_VAL(PitDiag_health, reset_cause, 4, "IWDG")
+CAN_VAL(PitDiag_health, reset_cause, 5, "WWDG")
+CAN_VAL(PitDiag_health, reset_cause, 6, "LowPower")
+CAN_VAL(PitDiag_health, last_fault, 0x00, "None")
+CAN_VAL(PitDiag_health, last_fault, 0xF1, "HardFault")
+CAN_VAL(PitDiag_health, last_fault, 0xF2, "MemManage")
+CAN_VAL(PitDiag_health, last_fault, 0xF3, "BusFault")
+CAN_VAL(PitDiag_health, last_fault, 0xF4, "UsageFault")
+CAN_VAL(PitDiag_health, last_fault, 0xF5, "StackOverflow")
+CAN_VAL(PitDiag_health, last_fault, 0xF6, "MallocFailed")
+CAN_VAL(PitDiag_health, last_fault, 0xF7, "AssertFailed")
+#endif

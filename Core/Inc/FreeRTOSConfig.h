@@ -1,6 +1,6 @@
 /* USER CODE BEGIN Header */
 /*
- * FreeRTOS Kernel V10.3.1
+ * FreeRTOS Kernel V10.6.2
  * Portion Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  * Portion Copyright (C) 2019 StMicroelectronics, Inc.  All Rights Reserved.
  *
@@ -19,7 +19,7 @@
  * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
  * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
  * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE .
  *
  * http://www.FreeRTOS.org
  * http://aws.amazon.com/freertos
@@ -27,7 +27,6 @@
  * 1 tab == 4 spaces!
  */
 /* USER CODE END Header */
-
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
@@ -49,15 +48,14 @@
 
 /* Ensure definitions are only used by the compiler, and not by the assembler. */
 #if defined(__ICCARM__) || defined(__CC_ARM) || defined(__GNUC__)
-  #include <stdint.h>
-  extern uint32_t SystemCoreClock;
-  void xPortSysTickHandler(void);
+#include <stdint.h>
+extern uint32_t SystemCoreClock;
 #endif
 #ifndef CMSIS_device_header
 #define CMSIS_device_header "stm32h7xx.h"
 #endif /* CMSIS_device_header */
 
-#define configENABLE_FPU                         0
+#define configENABLE_FPU                         1
 #define configENABLE_MPU                         0
 
 #define configUSE_PREEMPTION                     1
@@ -68,14 +66,19 @@
 #define configCPU_CLOCK_HZ                       ( SystemCoreClock )
 #define configTICK_RATE_HZ                       ((TickType_t)1000)
 #define configMAX_PRIORITIES                     ( 56 )
+#define configUSE_SB_COMPLETED_CALLBACK          ( 0 )
+#define configUSE_MINI_LIST_ITEM                ( 1 )
 #define configMINIMAL_STACK_SIZE                 ((uint16_t)128)
-#define configTOTAL_HEAP_SIZE                    ((size_t)(64 * 1024))
+#define configTOTAL_HEAP_SIZE                    ((size_t)65536)
 #define configMAX_TASK_NAME_LEN                  ( 16 )
+#define configHEAP_CLEAR_MEMORY_ON_FREE          0
 #define configUSE_TRACE_FACILITY                 1
 #define configUSE_16_BIT_TICKS                   0
 #define configUSE_MUTEXES                        1
 #define configQUEUE_REGISTRY_SIZE                8
+#define configCHECK_FOR_STACK_OVERFLOW           2
 #define configUSE_RECURSIVE_MUTEXES              1
+#define configUSE_MALLOC_FAILED_HOOK             1
 #define configUSE_COUNTING_SEMAPHORES            1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION  0
 /* USER CODE BEGIN MESSAGE_BUFFER_LENGTH_TYPE */
@@ -104,7 +107,6 @@
 #define configUSE_OS2_THREAD_FLAGS           1
 #define configUSE_OS2_TIMER                  1
 #define configUSE_OS2_MUTEX                  1
-
 /* Set the following definitions to 1 to include the API function, or zero
 to exclude the API function. */
 #define INCLUDE_vTaskPrioritySet             1
@@ -112,7 +114,7 @@ to exclude the API function. */
 #define INCLUDE_vTaskDelete                  1
 #define INCLUDE_vTaskCleanUpResources        0
 #define INCLUDE_vTaskSuspend                 1
-#define INCLUDE_vTaskDelayUntil              1
+#define INCLUDE_xTaskDelayUntil              1
 #define INCLUDE_vTaskDelay                   1
 #define INCLUDE_xTaskGetSchedulerState       1
 #define INCLUDE_xTimerPendFunctionCall       1
@@ -137,6 +139,7 @@ to exclude the API function. */
 
 /* The lowest interrupt priority that can be used in a call to a "set priority"
 function. */
+
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY   15
 
 /* The highest interrupt priority that can be used by any interrupt service
@@ -155,29 +158,16 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
 /* USER CODE BEGIN 1 */
-/* Fault detection for the firmware-health frame (0x704, IFS08-CE-ECU#36/IWDG
- * chase): catch the silent-corruption paths that otherwise vanish into an IWDG
- * reset, and route each to a distinct sticky last_fault sentinel. #undef-first
- * so this survives a CubeMX regen that might emit a default 0. */
-#undef  configCHECK_FOR_STACK_OVERFLOW
-#define configCHECK_FOR_STACK_OVERFLOW  2
-#undef  configUSE_MALLOC_FAILED_HOOK
-#define configUSE_MALLOC_FAILED_HOOK    1
-
-/* configASSERT latches DIAG_FAULT_ASSERT then disables IRQs + spins (as before)
- * so a FreeRTOS/HAL assert is reported on the bus instead of a silent hang. */
-extern void Diag_AssertFault(void);
-#define configASSERT( x ) if ((x) == 0) { Diag_AssertFault(); }
+#define configASSERT( x ) if ((x) == 0) {taskDISABLE_INTERRUPTS(); for( ;; );}
 /* USER CODE END 1 */
 
 /* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS
 standard names. */
 #define vPortSVCHandler    SVC_Handler
 #define xPortPendSVHandler PendSV_Handler
-
 /* IMPORTANT: After 10.3.1 update, Systick_Handler comes from NVIC (if SYS timebase = systick), otherwise from cmsis_os2.c */
 
-#define USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION 1
+#define USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION 0
 
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */

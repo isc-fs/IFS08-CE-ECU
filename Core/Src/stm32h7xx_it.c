@@ -20,11 +20,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32h7xx_it.h"
-#include "FreeRTOS.h"
-#include "task.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "diag.h"   /* Diag_LatchFault: sticky fault sentinel for 0x704 (#36) */
+#include "app/app_globals.h"   /* ecu_fault_latch_set_c -- latch a fault sentinel before the hang */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,11 +58,10 @@
 /* External variables --------------------------------------------------------*/
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
-extern FDCAN_HandleTypeDef hfdcan3;
-extern SD_HandleTypeDef hsd1;
-extern SPI_HandleTypeDef hspi1;
 extern TIM_HandleTypeDef htim16;
 extern UART_HandleTypeDef huart10;
+extern TIM_HandleTypeDef htim23;
+
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -93,7 +90,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-  Diag_LatchFault(DIAG_FAULT_HARDFAULT);
+  ecu_fault_latch_set_c(0xF1u);   /* FaultCode::HardFault -> 0x704 last_fault */
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -108,7 +105,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-  Diag_LatchFault(DIAG_FAULT_MEMMANAGE);
+  ecu_fault_latch_set_c(0xF2u);   /* FaultCode::MemManage -> 0x704 last_fault */
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
@@ -123,7 +120,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-  Diag_LatchFault(DIAG_FAULT_BUSFAULT);
+  ecu_fault_latch_set_c(0xF3u);   /* FaultCode::BusFault -> 0x704 last_fault */
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
@@ -138,7 +135,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-  Diag_LatchFault(DIAG_FAULT_USAGEFAULT);
+  ecu_fault_latch_set_c(0xF4u);   /* FaultCode::UsageFault -> 0x704 last_fault */
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {
@@ -158,28 +155,6 @@ void DebugMon_Handler(void)
   /* USER CODE BEGIN DebugMonitor_IRQn 1 */
 
   /* USER CODE END DebugMonitor_IRQn 1 */
-}
-
-/**
-  * @brief This function handles System tick timer.
-  */
-void SysTick_Handler(void)
-{
-  /* USER CODE BEGIN SysTick_IRQn 0 */
-
-  /* USER CODE END SysTick_IRQn 0 */
-  HAL_IncTick();
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
-  {
-#endif /* INCLUDE_xTaskGetSchedulerState */
-  xPortSysTickHandler();
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-  }
-#endif /* INCLUDE_xTaskGetSchedulerState */
-  /* USER CODE BEGIN SysTick_IRQn 1 */
-
-  /* USER CODE END SysTick_IRQn 1 */
 }
 
 /******************************************************************************/
@@ -218,31 +193,11 @@ void FDCAN2_IT0_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles SPI1 global interrupt.
+  * @brief This function handles FDCAN3 interrupt 0.
   */
-void SPI1_IRQHandler(void)
+void FDCAN3_IT0_IRQHandler(void)
 {
-  /* USER CODE BEGIN SPI1_IRQn 0 */
-
-  /* USER CODE END SPI1_IRQn 0 */
-  HAL_SPI_IRQHandler(&hspi1);
-  /* USER CODE BEGIN SPI1_IRQn 1 */
-
-  /* USER CODE END SPI1_IRQn 1 */
-}
-
-/**
-  * @brief This function handles SDMMC1 global interrupt.
-  */
-void SDMMC1_IRQHandler(void)
-{
-  /* USER CODE BEGIN SDMMC1_IRQn 0 */
-
-  /* USER CODE END SDMMC1_IRQn 0 */
-  HAL_SD_IRQHandler(&hsd1);
-  /* USER CODE BEGIN SDMMC1_IRQn 1 */
-
-  /* USER CODE END SDMMC1_IRQn 1 */
+  HAL_FDCAN_IRQHandler(&hfdcan3);
 }
 
 /**
@@ -274,17 +229,17 @@ void USART10_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles FDCAN3 interrupt 0.
+  * @brief This function handles TIM23 global interrupt.
   */
-void FDCAN3_IT0_IRQHandler(void)
+void TIM23_IRQHandler(void)
 {
-  /* USER CODE BEGIN FDCAN3_IT0_IRQn 0 */
+  /* USER CODE BEGIN TIM23_IRQn 0 */
 
-  /* USER CODE END FDCAN3_IT0_IRQn 0 */
-  HAL_FDCAN_IRQHandler(&hfdcan3);
-  /* USER CODE BEGIN FDCAN3_IT0_IRQn 1 */
+  /* USER CODE END TIM23_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim23);
+  /* USER CODE BEGIN TIM23_IRQn 1 */
 
-  /* USER CODE END FDCAN3_IT0_IRQn 1 */
+  /* USER CODE END TIM23_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

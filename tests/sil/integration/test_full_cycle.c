@@ -197,9 +197,14 @@ static void fc_drive_to_active(void)
 
     fc_reset();
 
-    /* 1. VDC config: inv_vdc_ready=1, dc_bus=0 (no auto-precharge) */
+    /* 1. VDC config: inv_vdc_ready=1, dc_bus=0 (no auto-precharge). Also model a
+     *    present, running AMS (0x4A0 byte0=3=Run): the precharge gate now
+     *    requires a fresh, non-Start AMS status alongside the 0x020 ACK, and the
+     *    staleness guard bounces the FSM back to the boot gate without it. */
     memset(data, 0, sizeof(data));
     fc_inject(&hfdcan1, FC_TX_STATE_7, data, 6u);
+    { uint8_t ams[8] = {3u, 0, 0, 1u, 0, 0, 0, 0};
+      fc_inject(&hfdcan2, 0x4A0u, ams, 8u); }
     AppState_Snapshot(&snap);
     Control_Step10ms(&snap, &out);   /* WAIT_VDC→BOOT→WAIT_PRECHARGE_ACK */
     fc_drain(&hfdcan2);

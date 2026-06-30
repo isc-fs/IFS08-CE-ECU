@@ -1,10 +1,8 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x703  PitDiag_fwinfo -- firmware semantic version + the first 4 bytes of
- * the git hash. Mirrors PitDiag_BuildFwInfo(). 100 ms while enabled.
- *
- * git_hash is a big-endian uint32 so it reads as the hex prefix git4[0..3];
- * the adapter packs (git4[0]<<24 | git4[1]<<16 | git4[2]<<8 | git4[3]).
+ * the git hash. 100 ms while enabled. git_hash is big-endian so it reads as
+ * the hex prefix; the adapter packs git4[0]<<24 | git4[1]<<16 | ...
  */
 
 CAN_MSG(PitDiag_fwinfo, 0x703, 7, "VCU", 100)
