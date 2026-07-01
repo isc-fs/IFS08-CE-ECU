@@ -41,6 +41,12 @@ struct VehicleState {
     std::uint16_t v_cell_min_mV     = 0;      // 0x12C / 0x4A0
     std::uint8_t  ams_fsm_state     = 0;      // 0x4A0 byte0 (== AmsFsmError -> Error)
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
+    std::uint16_t vmin_module[5]    = {};     // 0x131/0x132, mV, per module
+    std::uint16_t vmax_module[5]    = {};     // 0x133/0x134, mV, per module
+    std::int16_t  current_accu_dA   = 0;      // 0x135, deciamps (+ = discharge)
+    std::int16_t  current_dcdc_dA   = 0;      // 0x135, deciamps
+    std::int16_t  tmax_module[5]    = {};     // 0x136/0x137, degC, per module
+    std::int16_t  tmax_dcdc         = 0;      // 0x137, degC (AMS-side stub until a real sensor exists)
 };
 
 class VehicleService {
