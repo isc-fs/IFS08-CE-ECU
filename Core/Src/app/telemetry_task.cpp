@@ -14,12 +14,18 @@
 
 using namespace ecu;
 
+// RF_SLOW (AMS per-module + GPS) is sent every 200 ms cycle, same as RF_FAST --
+// no 500 ms sub-rate scheduler like the legacy protocol had. Same
+// simplification already applied to the CAN3 dash frames (see
+// docs/CAN3_MAP.md); revisit if nRF24 airtime becomes a problem.
 namespace {
 
 constexpr uint8_t  RfMagic = 0xECu;
 constexpr uint8_t  RfVersion = 0x02u;
 constexpr uint8_t  RfFastKind = 3u;
 constexpr uint8_t  RfFastFragments = 2u;
+constexpr uint8_t  RfSlowKind = 4u;
+constexpr uint8_t  RfSlowFragments = 5u;
 constexpr uint32_t PeriodMs = 200u;
 
 void put_u16(uint8_t* p, uint16_t v) {
@@ -154,6 +160,9 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     send_dash(0x521u, d, 6u);
 }
 
+// Byte layout matches IFS08-TE-main's ISC_RTT_serial.py parse_radio_v2_frame()
+// exactly -- that's the live ground-station consumer, not docs/RADIO_MAP.md's
+// legacy layout. Keep both in sync if either changes.
 void send_radio_fast(const VehicleState& v, uint16_t seq, uint8_t frag) {
     uint8_t p[32] = {};
     p[0] = RfMagic;
@@ -167,17 +176,76 @@ void send_radio_fast(const VehicleState& v, uint16_t seq, uint8_t frag) {
         p[8] = g_last_ctrl_state;
         p[9] = v.inv_state;
         p[10] = v.ams_fsm_state;
+        p[11] = g_last_start_button;
         p[12] = v.ok_precharge ? 1u : 0u;
+        p[13] = g_last_ev_2_3;
+        p[14] = g_last_t11_8_9;
         p[15] = v.last_vconfig_tick ? 1u : 0u;
         p[16] = v.inv_error;
         put_u16(&p[17], static_cast<uint16_t>(g_last_torque_pct));
         put_u16(&p[19], v.inv_dc_bus_V);
         put_u16(&p[21], v.v_cell_min_mV);
+        put_u16(&p[23], g_last_apps1_raw);
+        put_u16(&p[25], g_last_apps2_raw);
+        put_u16(&p[27], g_last_brake_raw);
     } else {
         put_u16(&p[8], v.inv_temp_motor1);
         put_u16(&p[10], v.inv_temp_pwrstg);
         put_u16(&p[12], v.inv_temp_board);
         put_u32(&p[14], static_cast<uint32_t>(v.inv_rpm));
+        // p[18..21] inv_speed_actual / p[22..25] inv_current_actual:
+        // PLACEHOLDER (0) -- same reason as CAN3 0x515/0x516, see
+        // docs/CAN3_MAP.md (the 0x465 byte mapping was never verified,
+        // not even in the legacy polling firmware -- "REPLACE" TODOs).
+    }
+
+    Telemetry_Send32(p);
+}
+
+void send_radio_slow(const VehicleState& v, uint16_t seq, uint8_t frag) {
+    uint8_t p[32] = {};
+    p[0] = RfMagic;
+    p[1] = RfVersion;
+    p[2] = frag;
+    p[3] = RfSlowFragments;
+    put_u16(&p[4], seq);
+    p[6] = RfSlowKind;
+
+    switch (frag) {
+    case 0u:
+        // p[8] soc: PLACEHOLDER (0), AMS has no SOC estimator (deferred, see
+        // IFS08-CE-AMS acu_tx_encoders.hpp).
+        put_u16(&p[9], static_cast<uint16_t>(v.current_accu_dA));
+        put_u16(&p[11], static_cast<uint16_t>(v.current_dcdc_dA));
+        put_u16(&p[13], static_cast<uint16_t>(v.tmax_dcdc));
+        // p[15..30] gps_speed/course/altitude/fix_type/sat_count/hdop:
+        // PLACEHOLDER (0), no GPS driver in this firmware.
+        put_u32(&p[23], osKernelGetTickCount());  // tick_ms: real
+        break;
+    case 1u:
+        // gps_latitude (p[8..11]) / gps_longitude (p[12..15]): PLACEHOLDER (0).
+        break;
+    case 2u:
+        put_u16(&p[8],  v.vmin_module[0]);
+        put_u16(&p[10], v.vmin_module[1]);
+        put_u16(&p[12], v.vmin_module[2]);
+        put_u16(&p[14], v.vmin_module[3]);
+        put_u16(&p[16], v.vmin_module[4]);
+        break;
+    case 3u:
+        put_u16(&p[8],  v.vmax_module[0]);
+        put_u16(&p[10], v.vmax_module[1]);
+        put_u16(&p[12], v.vmax_module[2]);
+        put_u16(&p[14], v.vmax_module[3]);
+        put_u16(&p[16], v.vmax_module[4]);
+        break;
+    default:  // 4u
+        put_u16(&p[8],  static_cast<uint16_t>(v.tmax_module[0]));
+        put_u16(&p[10], static_cast<uint16_t>(v.tmax_module[1]));
+        put_u16(&p[12], static_cast<uint16_t>(v.tmax_module[2]));
+        put_u16(&p[14], static_cast<uint16_t>(v.tmax_module[3]));
+        put_u16(&p[16], static_cast<uint16_t>(v.tmax_module[4]));
+        break;
     }
 
     Telemetry_Send32(p);
@@ -196,6 +264,9 @@ void telemetry_emit_for_test(const VehicleState& v, uint16_t seq) {
     send_dashboard(v, seq);
     send_radio_fast(v, seq, 0u);
     send_radio_fast(v, seq, 1u);
+    for (uint8_t f = 0; f < RfSlowFragments; ++f) {
+        send_radio_slow(v, seq, f);
+    }
 }
 
 }  // namespace ecu
@@ -214,6 +285,9 @@ extern "C" void ecu_telemetry_task_run(void *argument) {
         send_dashboard(v, seq);
         send_radio_fast(v, seq, 0u);
         send_radio_fast(v, seq, 1u);
+        for (uint8_t f = 0; f < RfSlowFragments; ++f) {
+            send_radio_slow(v, seq, f);
+        }
 
         tick += PeriodMs;
         osDelayUntil(tick);

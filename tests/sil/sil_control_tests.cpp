@@ -34,7 +34,7 @@ void telemetry_emit_for_test(const VehicleState& v, uint16_t seq);
 
 static CanFrame g_dash_tx[24];
 static int g_dash_tx_count = 0;
-static uint8_t g_radio_tx[2][32];
+static uint8_t g_radio_tx[8][32];
 static int g_radio_tx_count = 0;
 
 namespace ecu {
@@ -47,7 +47,7 @@ bool can_tx_post(const CanFrame& f) noexcept {
 }
 
 extern "C" void Telemetry_Send32(const uint8_t payload[32]) {
-    if (g_radio_tx_count < 2) {
+    if (g_radio_tx_count < static_cast<int>(sizeof(g_radio_tx) / sizeof(g_radio_tx[0]))) {
         std::memcpy(g_radio_tx[g_radio_tx_count++], payload, 32);
     }
 }
@@ -621,10 +621,66 @@ static void test_telemetry_dash() {
           g_dash_tx[11].data[6] == 0x01u && g_dash_tx[11].data[7] == 0x00u,
           "0x51B tick_ms LE (123456, real RTOS tick)");
 
-    CHECK(g_radio_tx_count == 2, "emits 2 NRF radio fragments");
-    CHECK(g_radio_tx[0][0] == 0xEC && g_radio_tx[0][1] == 0x02, "radio magic/version");
-    CHECK(g_radio_tx[0][2] == 0 && g_radio_tx[1][2] == 1, "radio fragment indexes");
-    CHECK(g_radio_tx[0][3] == 2 && g_radio_tx[1][3] == 2, "radio fragment count");
+    // Radio: 2 RF_FAST + 5 RF_SLOW fragments, byte layout matching
+    // IFS08-TE-main's ISC_RTT_serial.py parse_radio_v2_frame() exactly.
+    CHECK(g_radio_tx_count == 7, "emits 2 RF_FAST + 5 RF_SLOW radio fragments");
+    for (int i = 0; i < g_radio_tx_count; ++i) {
+        CHECK(g_radio_tx[i][0] == 0xEC && g_radio_tx[i][1] == 0x02, "radio magic/version");
+    }
+    CHECK(g_radio_tx[0][2] == 0 && g_radio_tx[0][3] == 2 && g_radio_tx[0][6] == 3,
+          "RF_FAST frag0 header (kind=3, count=2)");
+    CHECK(g_radio_tx[1][2] == 1 && g_radio_tx[1][3] == 2 && g_radio_tx[1][6] == 3,
+          "RF_FAST frag1 header");
+    for (int i = 2; i < 7; ++i) {
+        CHECK(g_radio_tx[i][2] == (i - 2) && g_radio_tx[i][3] == 5 && g_radio_tx[i][6] == 4,
+              "RF_SLOW frag header (kind=4, count=5)");
+    }
+
+    // RF_FAST frag0: matches ISC_RTT_serial.py's `kind == RF_FAST and fragment_index == 0`.
+    const uint8_t* rf0 = g_radio_tx[0];
+    CHECK(rf0[8]==7 && rf0[9]==4 && rf0[10]==2, "RF_FAST frag0 ecu/inv/ams state");
+    CHECK(rf0[11]==1, "RF_FAST frag0 boton_arranque");
+    CHECK(rf0[12]==1, "RF_FAST frag0 ok_precarga");
+    CHECK(rf0[13]==1 && rf0[14]==0, "RF_FAST frag0 flag_ev_2_3/flag_t11_8_9");
+    CHECK(rf0[15]==1 && rf0[16]==5, "RF_FAST frag0 inv_vdc_ready + inv_error");
+    CHECK(rf0[17]==0x2A && rf0[18]==0x00, "RF_FAST frag0 torque_total LE (42)");
+    CHECK(rf0[19]==0x84 && rf0[20]==0x01, "RF_FAST frag0 inv_dc_bus_voltage LE (388)");
+    CHECK(rf0[21]==0xE4 && rf0[22]==0x0C, "RF_FAST frag0 v_celda_min LE (3300)");
+    CHECK(rf0[23]==0xC4 && rf0[24]==0x09, "RF_FAST frag0 s1_aceleracion LE (2500)");
+    CHECK(rf0[25]==0x34 && rf0[26]==0x08, "RF_FAST frag0 s2_aceleracion LE (2100)");
+    CHECK(rf0[27]==0xB0 && rf0[28]==0x04, "RF_FAST frag0 s_freno LE (1200)");
+
+    // RF_FAST frag1: temps/rpm real; speed/current placeholder (0x465 unverified).
+    const uint8_t* rf1 = g_radio_tx[1];
+    CHECK(rf1[8]==82 && rf1[10]==91 && rf1[12]==90, "RF_FAST frag1 temps");
+    CHECK(rf1[14]==0x40 && rf1[15]==0xE2 && rf1[16]==0x01 && rf1[17]==0x00, "RF_FAST frag1 rpm LE (123456)");
+    bool speed_current_zero = true;
+    for (int b = 18; b <= 25; ++b) if (rf1[b] != 0) speed_current_zero = false;
+    CHECK(speed_current_zero, "RF_FAST frag1 speed/current placeholder is zero");
+
+    // RF_SLOW frag0: soc placeholder + real currents/temp_dcdc + gps placeholder + real tick_ms.
+    const uint8_t* rs0 = g_radio_tx[2];
+    CHECK(rs0[8]==0, "RF_SLOW frag0 soc placeholder");
+    CHECK(rs0[9]==0xCE && rs0[10]==0xFF, "RF_SLOW frag0 corriente_accu LE (-50 dA)");
+    CHECK(rs0[11]==0x0C && rs0[12]==0x00, "RF_SLOW frag0 corriente_dcdc LE (12 dA)");
+    CHECK(rs0[13]==0x2A && rs0[14]==0x00, "RF_SLOW frag0 temp_dcdc LE (42)");
+    CHECK(rs0[23]==0x40 && rs0[24]==0xE2 && rs0[25]==0x01 && rs0[26]==0x00, "RF_SLOW frag0 tick_ms LE (123456)");
+
+    // RF_SLOW frag1: GPS lat/lon, all placeholder.
+    bool latlon_zero = true;
+    for (int b = 8; b <= 15; ++b) if (g_radio_tx[3][b] != 0) latlon_zero = false;
+    CHECK(latlon_zero, "RF_SLOW frag1 gps lat/lon placeholder is zero");
+
+    // RF_SLOW frag2/3/4: real per-module vmin/vmax/tmax.
+    const uint8_t* rs2 = g_radio_tx[4];
+    CHECK(rs2[8]==100 && rs2[10]==101 && rs2[12]==102 && rs2[14]==103 && rs2[16]==104,
+          "RF_SLOW frag2 vmin_modulo[0..4] LE");
+    const uint8_t* rs3 = g_radio_tx[5];
+    CHECK(rs3[8]==200 && rs3[10]==201 && rs3[12]==202 && rs3[14]==203 && rs3[16]==204,
+          "RF_SLOW frag3 vmax_modulo[0..4] LE");
+    const uint8_t* rs4 = g_radio_tx[6];
+    CHECK(rs4[8]==30 && rs4[10]==31 && rs4[12]==32 && rs4[14]==33 && rs4[16]==34,
+          "RF_SLOW frag4 temp_max_modulo[0..4] LE");
 }
 
 // ----- dispatch -------------------------------------------------------------

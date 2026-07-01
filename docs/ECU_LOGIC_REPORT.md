@@ -73,7 +73,11 @@ Archivos: `Core/Src/app/telemetry_task.cpp`, `Core/Src/nrf24.c`, `Core/Src/app/d
   estimador) y GPS (`0x519-0x51B` salvo `tick_ms`, no hay driver). El resto
   -- incluidos voltajes/temps por módulo y corrientes AMS (`0x131-0x137`
   decodificados en `vehicle_service.cpp`) -- es dato real. Ver `docs/CAN3_MAP.md`.
-- Radio nRF24: publica dos fragmentos `RF_FAST` de 32 bytes.
+- Radio nRF24: publica `RF_FAST` (2 fragmentos) + `RF_SLOW` (5 fragmentos),
+  layout verificado contra el parser real de `IFS08-TE-main`
+  (`ISC_RTT_serial.py`). Mismos placeholders que CAN3 (velocidad/corriente
+  inversor, SOC, GPS salvo `tick_ms`) más `RF_EVENT` (aún no implementado,
+  requiere detección de transición de estado). Ver `docs/RADIO_MAP.md`.
 - `DiagTask`: publica salud firmware `0x704` cada 1 s.
 
 ## 2.5 Orquestación RTOS
