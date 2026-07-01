@@ -89,7 +89,8 @@ BO_ 1796 PitDiag_health: 8 VCU
  SG_ task_control : 32|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ task_can_rx : 33|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ task_can_tx : 34|1@1+ (1,0) [0|0] "bit" Vector__XXX
- SG_ task_diag : 35|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ task_telemetry : 35|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ task_diag : 36|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ reset_cause : 40|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
