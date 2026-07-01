@@ -17,8 +17,8 @@
 | Secuencias de arranque | No | **Sí** (S3 recorre 6 estados) |
 | Pipeline sensor→control→CAN | No | **Sí** (S8 lo ejecuta completo) |
 
-Cada suite llama a **múltiples módulos reales** en cadena:  
-`CanRx_ParseAndUpdate` → `AppState_Snapshot` → `Control_Step10ms` / `Control_ComputeTorque` → `CAN_Pack16` / `Telemetry_Build32`.
+Cada suite llama a **múltiples módulos reales** en cadena. En la ruta C++ actual:
+`VehicleService` → `Controller` → `can_tx_post` / `telemetry_emit_for_test`.
 
 ---
 
@@ -249,14 +249,14 @@ CAN RX (sensor s1)
     → AppState_Snapshot → in (copia local)
     → Control_Step10ms → out (torque_pct + tramas CAN)
     → CAN_Pack16 → osMessageQueuePut (cola TX)
-    → Telemetry_Build32 → buffer de 32 bytes
+    → TelemetryTask cada 200 ms → CAN3 dashboard + dos fragmentos nRF24
 ```
 
 | Test | Qué verifica |
 |---|---|
 | `8.2_control_output_valid` | `out.torque_pct` ∈ [0, 100] |
 | `8.3_no_frames_no_enqueue` | Si no hay tramas, la cola TX queda vacía |
-| `8.4_telemetry_s1_byte6` | Byte 6 del payload = LSB de `s1_aceleracion` |
+| `SIL_TelemetryDash` | Verifica periodo de 200 ms, las 18 tramas CAN3 (`0x510..0x521`, orden y payload real vs. placeholder) y 2 fragmentos nRF24 |
 | `8.5_telemetry_not_garbage` | Los primeros 16 bytes no son todos 0xFF |
 | `8.6_multi_cycle` | 5 ciclos consecutivos con `osDelay(10)` sin corrupción |
 

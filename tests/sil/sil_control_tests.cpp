@@ -22,9 +22,38 @@
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
+#include "app/app_globals.h"     // telemetry-visible last control state
 
 using namespace ecu;
 using namespace ecu::config;
+
+namespace ecu {
+uint32_t telemetry_period_ms_for_test();
+void telemetry_emit_for_test(const VehicleState& v, uint16_t seq);
+}
+
+static CanFrame g_dash_tx[24];
+static int g_dash_tx_count = 0;
+static uint8_t g_radio_tx[2][32];
+static int g_radio_tx_count = 0;
+
+namespace ecu {
+bool can_tx_post(const CanFrame& f) noexcept {
+    if (g_dash_tx_count < static_cast<int>(sizeof(g_dash_tx) / sizeof(g_dash_tx[0]))) {
+        g_dash_tx[g_dash_tx_count++] = f;
+    }
+    return true;
+}
+}
+
+extern "C" void Telemetry_Send32(const uint8_t payload[32]) {
+    if (g_radio_tx_count < 2) {
+        std::memcpy(g_radio_tx[g_radio_tx_count++], payload, 32);
+    }
+}
+
+extern "C" uint32_t osKernelGetTickCount(void) { return 123456u; }
+extern "C" void osDelayUntil(uint32_t) {}
 
 // ----- tiny test framework --------------------------------------------------
 static int g_checks = 0;
@@ -287,6 +316,13 @@ static void test_dsl_parity() {
     std::printf("[dsl_parity]\n");
     CHECK(static_cast<uint32_t>(ACU_ok_precharge_ID) == AcuOkPrechargeId,  "ACU_ok_precharge_ID == config");
     CHECK(static_cast<uint32_t>(ACU_v_cell_min_ID)   == AcuVCellMinId,     "ACU_v_cell_min_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_vmin_module_a_ID) == AcuVminModuleAId, "ACU_vmin_module_a_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_vmin_module_b_ID) == AcuVminModuleBId, "ACU_vmin_module_b_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_vmax_module_a_ID) == AcuVmaxModuleAId, "ACU_vmax_module_a_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_vmax_module_b_ID) == AcuVmaxModuleBId, "ACU_vmax_module_b_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_currents_ID)      == AcuCurrentsId,    "ACU_currents_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_tmax_module_a_ID) == AcuTmaxModuleAId, "ACU_tmax_module_a_ID == config");
+    CHECK(static_cast<uint32_t>(ACU_tmax_module_b_ID) == AcuTmaxModuleBId, "ACU_tmax_module_b_ID == config");
     CHECK(static_cast<uint32_t>(AMS_status_ID)       == AmsStatusId,       "AMS_status_ID == config");
     CHECK(static_cast<uint32_t>(BL_boot_trigger_ID)  == BlBootTriggerCanId, "BL_boot_trigger_ID == config");
 }
@@ -422,6 +458,175 @@ static void test_inverter_rx() {
     CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
 }
 
+// Per-module AMS RX (0x131-0x137): all big-endian on the wire (AMS-owned
+// layout), unlike the dash-facing CAN3 frames TelemetryTask builds (LE).
+static void test_ams_module_rx() {
+    std::printf("[ams_module_rx]\n");
+    VehicleService& vs = VehicleService::instance();
+
+    CanFrame vmin_a{};
+    vmin_a.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    vmin_a.id  = AcuVminModuleAId;            // 0x131
+    vmin_a.dlc = 6;
+    vmin_a.data[0]=0x0C; vmin_a.data[1]=0xE4; // 3300 mV BE
+    vmin_a.data[2]=0x0C; vmin_a.data[3]=0xEE; // 3310 mV BE
+    vmin_a.data[4]=0x0C; vmin_a.data[5]=0xF8; // 3320 mV BE
+    CHECK(vs.update_from_frame(vmin_a), "0x131 accepted");
+
+    CanFrame vmin_b{};
+    vmin_b.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    vmin_b.id  = AcuVminModuleBId;            // 0x132
+    vmin_b.dlc = 4;
+    vmin_b.data[0]=0x0D; vmin_b.data[1]=0x02; // 3330 mV BE
+    vmin_b.data[2]=0x0D; vmin_b.data[3]=0x0C; // 3340 mV BE
+    CHECK(vs.update_from_frame(vmin_b), "0x132 accepted");
+
+    CanFrame currents{};
+    currents.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    currents.id  = AcuCurrentsId;              // 0x135
+    currents.dlc = 4;
+    currents.data[0]=0xFF; currents.data[1]=0xCE; // -50 dA BE (signed, discharge negative here = charging)
+    currents.data[2]=0x00; currents.data[3]=0x0C; // 12 dA BE
+    CHECK(vs.update_from_frame(currents), "0x135 accepted");
+
+    CanFrame tmax_b{};
+    tmax_b.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    tmax_b.id  = AcuTmaxModuleBId;              // 0x137
+    tmax_b.dlc = 6;
+    tmax_b.data[0]=0x00; tmax_b.data[1]=0x21;   // 33 degC BE
+    tmax_b.data[2]=0x00; tmax_b.data[3]=0x22;   // 34 degC BE
+    tmax_b.data[4]=0x00; tmax_b.data[5]=0x2A;   // 42 degC BE
+    CHECK(vs.update_from_frame(tmax_b), "0x137 accepted");
+
+    const VehicleState s = vs.snapshot();
+    CHECK(s.vmin_module[0]==3300 && s.vmin_module[1]==3310 && s.vmin_module[2]==3320,
+          "0x131 per-module vmin 0..2 decoded BE");
+    CHECK(s.vmin_module[3]==3330 && s.vmin_module[4]==3340,
+          "0x132 per-module vmin 3..4 decoded BE");
+    CHECK(s.current_accu_dA==-50 && s.current_dcdc_dA==12,
+          "0x135 currents decoded BE signed");
+    CHECK(s.tmax_module[3]==33 && s.tmax_module[4]==34 && s.tmax_dcdc==42,
+          "0x137 tmax 3..4 + dcdc stub decoded BE signed");
+}
+
+static void test_telemetry_dash() {
+    std::printf("[telemetry_dash]\n");
+    std::memset(g_dash_tx, 0, sizeof(g_dash_tx));
+    std::memset(g_radio_tx, 0, sizeof(g_radio_tx));
+    g_dash_tx_count = 0;
+    g_radio_tx_count = 0;
+    g_last_torque_pct = 42;
+    g_last_ctrl_state = 7;
+    g_last_apps1_raw = 2500;
+    g_last_apps2_raw = 2100;
+    g_last_brake_raw = 1200;
+    g_last_start_button = 1;
+    g_last_ev_2_3 = 1;
+    g_last_t11_8_9 = 0;
+
+    VehicleState v{};
+    v.inv_state = 4;
+    v.inv_error = 5;
+    v.inv_dc_bus_V = 388;
+    v.inv_temp_board = 90;
+    v.inv_temp_pwrstg = 91;
+    v.inv_temp_motor1 = 82;
+    v.inv_rpm = 123456;
+    v.last_vconfig_tick = 99;
+    v.ok_precharge = true;
+    v.v_cell_min_mV = 3300;
+    v.ams_fsm_state = 2;
+    v.vmin_module[0] = 100; v.vmin_module[1] = 101; v.vmin_module[2] = 102;
+    v.vmin_module[3] = 103; v.vmin_module[4] = 104;
+    v.vmax_module[0] = 200; v.vmax_module[1] = 201; v.vmax_module[2] = 202;
+    v.vmax_module[3] = 203; v.vmax_module[4] = 204;
+    v.current_accu_dA = -50;
+    v.current_dcdc_dA = 12;
+    v.tmax_module[0] = 30; v.tmax_module[1] = 31; v.tmax_module[2] = 32;
+    v.tmax_module[3] = 33; v.tmax_module[4] = 34;
+    v.tmax_dcdc = 42;
+
+    telemetry_emit_for_test(v, 0x1234u);
+
+    CHECK(telemetry_period_ms_for_test() == 200u, "DASH telemetry period is 200 ms");
+    CHECK(g_dash_tx_count == 18, "emits all 18 DASH CAN3 frames (0x510..0x521, docs/CAN3_MAP.md)");
+    for (int i = 0; i < g_dash_tx_count; ++i) {
+        CHECK(g_dash_tx[i].bus == static_cast<uint8_t>(CanBus::Dash), "DASH frame uses FDCAN3 bus");
+    }
+
+    static const uint32_t kExpectedIds[18] = {
+        0x510u, 0x511u, 0x512u, 0x513u, 0x514u, 0x515u, 0x516u, 0x517u, 0x518u,
+        0x519u, 0x51Au, 0x51Bu, 0x51Cu, 0x51Du, 0x51Eu, 0x51Fu, 0x520u, 0x521u
+    };
+    for (int i = 0; i < 18; ++i) {
+        CHECK(g_dash_tx[i].id == kExpectedIds[i], "DASH CAN3 frame order matches docs/CAN3_MAP.md");
+    }
+
+    CHECK(g_dash_tx[0].dlc == 8, "status frame 0x510 DLC 8");
+    CHECK(g_dash_tx[0].data[0] == 4 && g_dash_tx[0].data[1] == 42, "0x510 inv state + torque");
+    CHECK(g_dash_tx[0].data[2] == 0x01, "0x510 byte2: bit0 EV.2.3 set, bit1 T11.8.9 clear");
+    CHECK(g_dash_tx[0].data[3] == 1, "0x510 precharge");
+    CHECK(g_dash_tx[0].data[4] == 1, "0x510 start button (real, from ControlTask)");
+    CHECK(g_dash_tx[0].data[6] == 0x34 && g_dash_tx[0].data[7] == 0x12, "0x510 sequence LE");
+
+    CHECK(g_dash_tx[1].dlc == 6, "pedals frame 0x511 DLC 6");
+    CHECK(g_dash_tx[1].data[0] == 0xC4 && g_dash_tx[1].data[1] == 0x09, "0x511 apps1 raw LE (2500)");
+    CHECK(g_dash_tx[1].data[2] == 0x34u && g_dash_tx[1].data[3] == 0x08, "0x511 apps2 raw LE (2100)");
+    CHECK(g_dash_tx[1].data[4] == 0xB0u && g_dash_tx[1].data[5] == 0x04, "0x511 brake raw LE (1200)");
+
+    CHECK(g_dash_tx[2].id == 0x512u && g_dash_tx[2].data[0] == 0x84 && g_dash_tx[2].data[1] == 0x01, "0x512 VDC LE");
+    CHECK(g_dash_tx[7].id == 0x517u && g_dash_tx[7].data[0] == 7 && g_dash_tx[7].data[1] == 2, "0x517 control + AMS state");
+
+    // 0x518: soc placeholder (byte0) + real currents/temp_dcdc (from ACU_currents
+    // 0x135 / ACU_tmax_module_b 0x137, forwarded LE for the dash).
+    CHECK(g_dash_tx[8].data[0] == 0, "0x518 soc placeholder (AMS has no SOC estimator)");
+    CHECK(g_dash_tx[8].data[1] == 0xCEu && g_dash_tx[8].data[2] == 0xFFu, "0x518 corriente_accu LE (-50 dA)");
+    CHECK(g_dash_tx[8].data[3] == 0x0Cu && g_dash_tx[8].data[4] == 0x00u, "0x518 corriente_dcdc LE (12 dA)");
+    CHECK(g_dash_tx[8].data[5] == 0x2Au && g_dash_tx[8].data[6] == 0x00u, "0x518 temp_dcdc LE (42 degC)");
+
+    // 0x515/0x516/0x519/0x51A: no real source yet (see telemetry_task.cpp
+    // comments) -- placeholder, must stay all-zero payload.
+    static const int kPlaceholderIdx[] = {5, 6, 9, 10};
+    for (int idx : kPlaceholderIdx) {
+        bool all_zero = true;
+        for (uint8_t b = 0; b < g_dash_tx[idx].dlc; ++b) {
+            if (g_dash_tx[idx].data[b] != 0) { all_zero = false; break; }
+        }
+        CHECK(all_zero, "placeholder DASH frame payload is all-zero (no real source yet)");
+    }
+
+    // 0x51C/0x51D: per-module vmin (real, from ACU_vmin_module_a/b).
+    CHECK(g_dash_tx[12].data[0]==100 && g_dash_tx[12].data[2]==101 && g_dash_tx[12].data[4]==102,
+          "0x51C vmin modulos 0..2 LE");
+    CHECK(g_dash_tx[13].data[0]==103 && g_dash_tx[13].data[2]==104,
+          "0x51D vmin modulos 3..4 LE");
+
+    // 0x51E/0x51F: per-module vmax (real, from ACU_vmax_module_a/b).
+    CHECK(g_dash_tx[14].data[0]==200 && g_dash_tx[14].data[2]==201 && g_dash_tx[14].data[4]==202,
+          "0x51E vmax modulos 0..2 LE");
+    CHECK(g_dash_tx[15].data[0]==203 && g_dash_tx[15].data[2]==204,
+          "0x51F vmax modulos 3..4 LE");
+
+    // 0x520/0x521: per-module tmax + temp_dcdc (real, from ACU_tmax_module_a/b).
+    CHECK(g_dash_tx[16].data[0]==30 && g_dash_tx[16].data[2]==31 && g_dash_tx[16].data[4]==32,
+          "0x520 tmax modulos 0..2 LE");
+    CHECK(g_dash_tx[17].data[0]==33 && g_dash_tx[17].data[2]==34 && g_dash_tx[17].data[4]==42,
+          "0x521 tmax modulos 3..4 + temp_dcdc LE");
+
+    // 0x51B: gps_longitude placeholder (bytes 0-3) + tick_ms real (bytes 4-7).
+    CHECK(g_dash_tx[11].data[0] == 0 && g_dash_tx[11].data[1] == 0 &&
+          g_dash_tx[11].data[2] == 0 && g_dash_tx[11].data[3] == 0,
+          "0x51B gps_longitude placeholder is zero");
+    CHECK(g_dash_tx[11].data[4] == 0x40u && g_dash_tx[11].data[5] == 0xE2u &&
+          g_dash_tx[11].data[6] == 0x01u && g_dash_tx[11].data[7] == 0x00u,
+          "0x51B tick_ms LE (123456, real RTOS tick)");
+
+    CHECK(g_radio_tx_count == 2, "emits 2 NRF radio fragments");
+    CHECK(g_radio_tx[0][0] == 0xEC && g_radio_tx[0][1] == 0x02, "radio magic/version");
+    CHECK(g_radio_tx[0][2] == 0 && g_radio_tx[1][2] == 1, "radio fragment indexes");
+    CHECK(g_radio_tx[0][3] == 2 && g_radio_tx[1][3] == 2, "radio fragment count");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -440,6 +645,8 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_rx();
+    test_ams_module_rx();
+    test_telemetry_dash();
 }
 
 int main(int argc, char** argv) {
@@ -462,6 +669,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
+    else if (!std::strcmp(m, "--test-ams-module-rx"))      test_ams_module_rx();
+    else if (!std::strcmp(m, "--test-telemetry-dash"))     test_telemetry_dash();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);

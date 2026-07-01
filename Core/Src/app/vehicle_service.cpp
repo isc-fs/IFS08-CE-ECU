@@ -6,6 +6,20 @@
 
 #include <cstdint>
 
+namespace {
+
+// Generic BE16 reads, shared by the per-module AMS frames (0x131-0x137):
+// unlike the single-field frames above, these carry 2-3 same-shaped fields
+// each, so a shared helper beats repeating the shift-pattern per field.
+std::uint16_t be16(const std::uint8_t* d) noexcept {
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(d[0]) << 8) | d[1]);
+}
+std::int16_t be16_s(const std::uint8_t* d) noexcept {
+    return static_cast<std::int16_t>(be16(d));
+}
+
+}  // namespace
+
 namespace ecu {
 
 VehicleService& VehicleService::instance() noexcept {
@@ -118,6 +132,59 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.ams_fsm_state = decode_ams_fsm_state(f.data);
             state_.v_cell_min_mV = decode_ams_min_cell(f.data);
             state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuVminModuleAId) {             // 0x131
+            if (f.dlc < 6) return false;
+            state_.vmin_module[0] = be16(&f.data[0]);
+            state_.vmin_module[1] = be16(&f.data[2]);
+            state_.vmin_module[2] = be16(&f.data[4]);
+            state_.last_ams_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuVminModuleBId) {             // 0x132
+            if (f.dlc < 4) return false;
+            state_.vmin_module[3] = be16(&f.data[0]);
+            state_.vmin_module[4] = be16(&f.data[2]);
+            state_.last_ams_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuVmaxModuleAId) {             // 0x133
+            if (f.dlc < 6) return false;
+            state_.vmax_module[0] = be16(&f.data[0]);
+            state_.vmax_module[1] = be16(&f.data[2]);
+            state_.vmax_module[2] = be16(&f.data[4]);
+            state_.last_ams_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuVmaxModuleBId) {             // 0x134
+            if (f.dlc < 4) return false;
+            state_.vmax_module[3] = be16(&f.data[0]);
+            state_.vmax_module[4] = be16(&f.data[2]);
+            state_.last_ams_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuCurrentsId) {                // 0x135
+            if (f.dlc < 4) return false;
+            state_.current_accu_dA = be16_s(&f.data[0]);
+            state_.current_dcdc_dA = be16_s(&f.data[2]);
+            state_.last_ams_tick    = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuTmaxModuleAId) {             // 0x136
+            if (f.dlc < 6) return false;
+            state_.tmax_module[0] = be16_s(&f.data[0]);
+            state_.tmax_module[1] = be16_s(&f.data[2]);
+            state_.tmax_module[2] = be16_s(&f.data[4]);
+            state_.last_ams_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuTmaxModuleBId) {             // 0x137
+            if (f.dlc < 6) return false;
+            state_.tmax_module[3] = be16_s(&f.data[0]);
+            state_.tmax_module[4] = be16_s(&f.data[2]);
+            state_.tmax_dcdc      = be16_s(&f.data[4]);
+            state_.last_ams_tick  = f.timestamp_ms;
             return true;
         }
         return false;

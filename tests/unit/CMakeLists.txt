@@ -14,7 +14,6 @@ FetchContent_MakeAvailable(Unity)
 set(PROJECT_SOURCES
     ../../Core/Src/can.c
     ../../Core/Src/control.c
-    ../../Core/Src/telemetry.c
     ../../Core/Src/app_state.c
 )
 
@@ -23,7 +22,6 @@ set(TEST_SOURCES
     mocks.c
     test_can_parsing.c
     test_control_logic.c
-    test_telemetry.c
     test_app_state.c
     test_error_handling.c
     unity_runner.c

@@ -63,12 +63,18 @@ Funciones clave:
 
 ## 2.4 Telemetría y diagnóstico
 
-Archivos: `Core/Src/telemetry.c`, `Core/Src/diag.c`
+Archivos: `Core/Src/app/telemetry_task.cpp`, `Core/Src/nrf24.c`, `Core/Src/app/diag_task.cpp`
 
-- `Telemetry_Build32()`: empaqueta 32 bytes de estado.
-- `Telemetry_Send32()`: weak, transporte final dependiente del proyecto.
-- `Diag_Report()`: métricas de colas y heap.
-- `Diag_Log()`: weak en firmware base (en SIL se sobreescribe por mock).
+- `TelemetryTask`: cada 200 ms toma `VehicleService::snapshot()` + los `g_last_*`
+  que `ControlTask` mirror-ea (pedales, botón, flags EV.2.3/T11.8.9).
+- CAN3 dashboard: publica los 18 IDs `0x510..0x521` que espera el DASH.
+  Placeholder `0` solo en: velocidad/corriente inversor (`0x515/0x516`, el
+  protocolo NX/EMC no las expone), SOC (`0x518` byte0, el AMS no tiene
+  estimador) y GPS (`0x519-0x51B` salvo `tick_ms`, no hay driver). El resto
+  -- incluidos voltajes/temps por módulo y corrientes AMS (`0x131-0x137`
+  decodificados en `vehicle_service.cpp`) -- es dato real. Ver `docs/CAN3_MAP.md`.
+- Radio nRF24: publica dos fragmentos `RF_FAST` de 32 bytes.
+- `DiagTask`: publica salud firmware `0x704` cada 1 s.
 
 ## 2.5 Orquestación RTOS
 
@@ -186,7 +192,7 @@ En la configuración activa de `freertos.c`:
 - `ControlTask`: bucle con `osDelay(10)` (100 Hz nominal).
 - `CanRxTask`: polling cada 5 ms.
 - `CanTxTask`: vaciado de cola y `osDelay(20)`.
-- `TelemetryTask`: cada 100 ms.
+- `TelemetryTask`: cada 200 ms.
 - `DiagTask`: actividad mínima.
 - `IntegrationTestTask`: ejecuta suite y luego se suspende.
 

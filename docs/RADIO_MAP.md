@@ -8,8 +8,8 @@ troceado por cadencia.
 
 Origen en codigo:
 
-- serializacion radio: [Core/Src/telemetry.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/telemetry.c:154)
-- estructura base: [Core/Inc/telemetry.h](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Inc/telemetry.h:33)
+- serializacion radio: [Core/Src/app/telemetry_task.cpp](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app/telemetry_task.cpp:72)
+- transporte nRF24: [Core/Src/nrf24.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/nrf24.c:478)
 
 ## Cabecera comun
 
@@ -22,16 +22,16 @@ Todos los paquetes radio ocupan `32` bytes.
 | 2 | `fragment_index` | fragmento actual |
 | 3 | `fragment_count` | numero total de fragmentos del frame |
 | 4-5 | `sequence` LE | secuencia del frame |
-| 6 | `kind` | `3=RF_FAST`, `4=RF_SLOW`, `5=RF_EVENT` |
-| 7 | `event_type` | `0..3` segun `telemetry_event_type_t` |
+| 6 | `kind` | `3=RF_FAST` |
+| 7 | reservado | `0` |
 
 Bytes `8..31`: payload del fragmento.
 
 ## Cadencia
 
-- `RF_FAST`: cada `100 ms`
-- `RF_SLOW`: cada `500 ms`
-- `RF_EVENT`: solo cuando hay evento
+- `RF_FAST`: cada `200 ms`
+- `RF_SLOW`: no se emite en el firmware actual
+- `RF_EVENT`: no se emite en el firmware actual
 
 ## RF_FAST
 
@@ -44,18 +44,16 @@ Fragmentos: `2`
 | 8 | `ecu_fsm_state` |
 | 9 | `inv_state` |
 | 10 | `ams_state` |
-| 11 | `boton_arranque` |
+| 11 | reservado |
 | 12 | `ok_precarga` |
-| 13 | `flag_ev_2_3` |
-| 14 | `flag_t11_8_9` |
+| 13 | reservado |
+| 14 | reservado |
 | 15 | `inv_vdc_ready` |
 | 16 | `inv_error` |
 | 17-18 | `torque_total` LE |
 | 19-20 | `inv_dc_bus_voltage` LE |
 | 21-22 | `v_celda_min` LE |
-| 23-24 | `s1_aceleracion` LE |
-| 25-26 | `s2_aceleracion` LE |
-| 27-28 | `s_freno` LE |
+| 23-31 | reservado |
 
 ### Fragmento 1
 
@@ -65,10 +63,11 @@ Fragmentos: `2`
 | 10-11 | `inv_igbt_temp` LE |
 | 12-13 | `inv_air_temp` LE |
 | 14-17 | `inv_rpm` LE |
-| 18-21 | `inv_speed_actual` LE |
-| 22-25 | `inv_current_actual` LE |
+| 18-31 | reservado |
 
 ## RF_SLOW
+
+No emitido actualmente por `TelemetryTask`.
 
 Fragmentos: `5`
 
@@ -126,6 +125,8 @@ Fragmentos: `5`
 | 16-17 | `temp_max_modulo[4]` LE |
 
 ## RF_EVENT
+
+No emitido actualmente por `TelemetryTask`.
 
 Fragmentos: `1`
 

@@ -37,6 +37,18 @@ extern volatile uint8_t g_pit_diag_enabled;
 extern uint32_t g_last_torque_pct;
 extern uint8_t  g_last_ctrl_state;
 
+/* Pedals/plausibility, mirrored from ControlTask's realtime-local IoInputs +
+ * CtrlOutput so TelemetryTask (200 ms, non-realtime) can publish them on
+ * FDCAN3 (0x511, 0x510 flags) without pulling the pedal path off its inline
+ * read-once-per-10ms-cycle design (see io_signals.hpp). Display-only: the
+ * safety decision is made in ControlTask itself, this is just a mirror. */
+extern uint16_t g_last_apps1_raw;
+extern uint16_t g_last_apps2_raw;
+extern uint16_t g_last_brake_raw;
+extern uint8_t  g_last_start_button;
+extern uint8_t  g_last_ev_2_3;
+extern uint8_t  g_last_t11_8_9;
+
 /* Called once from freertos.c USER CODE after osKernelInitialize(), before the
  * scheduler starts. Currently just zeroes the step counters; a hook point for
  * any app-side RTOS object the .ioc can't carry. */

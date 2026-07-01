@@ -103,6 +103,13 @@ inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 // DSL-generated <Msg>_ID so these can't silently drift.
 inline constexpr uint32_t AcuOkPrechargeId     = 0x020u;     // AMS precharge-OK
 inline constexpr uint32_t AcuVCellMinId        = 0x12Cu;     // AMS min cell voltage
+inline constexpr uint32_t AcuVminModuleAId     = 0x131u;     // AMS per-module vmin, modules 0..2
+inline constexpr uint32_t AcuVminModuleBId     = 0x132u;     // AMS per-module vmin, modules 3..4
+inline constexpr uint32_t AcuVmaxModuleAId     = 0x133u;     // AMS per-module vmax, modules 0..2
+inline constexpr uint32_t AcuVmaxModuleBId     = 0x134u;     // AMS per-module vmax, modules 3..4
+inline constexpr uint32_t AcuCurrentsId        = 0x135u;     // AMS accu/dcdc currents (deciamps)
+inline constexpr uint32_t AcuTmaxModuleAId     = 0x136u;     // AMS per-module tmax, modules 0..2
+inline constexpr uint32_t AcuTmaxModuleBId     = 0x137u;     // AMS per-module tmax, modules 3..4 + dcdc stub
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
 inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)

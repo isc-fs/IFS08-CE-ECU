@@ -44,6 +44,7 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 | `ControlTask`  | **Realtime**  | 10 ms   | Único actor de seguridad. Lee IO, snapshot, `step()`, salidas, `0x100` **en todos los estados**, stream pit-diag opcional, **único que patea el IWDG**. |
 | `CanRxTask`    | AboveNormal   | ~RX     | Drena `can_rx_queue`. Despacha: trigger BL → cmd pit-diag → VehicleService. |
 | `CanTxTask`    | AboveNormal   | ~TX     | Drena `can_tx_queue` → `HAL_FDCAN_AddMessageToTxFifoQ`. |
+| `TelemetryTask`| Normal        | 200 ms  | Snapshot de `VehicleService`, arma tramas dashboard (`can_tx_post`, bus FDCAN3) y 2 fragmentos radio nRF24 (`Telemetry_Send32`). |
 | `DiagTask`     | Low           | 1000 ms | Emite `0x704` (health) **aparte de ControlTask**, para sobrevivir a un cuelgue de éste. |
 
 ---
@@ -73,11 +74,14 @@ precarga.
 |-----------|--------|-----|
 | **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x466 · TX 0x360/0x362. |
 | **ACU**   | FDCAN2 | AMS + Pit-Tool (compartido). RX 0x020/0x12C/0x4A0/0x002/0x7E0 · TX 0x100 + stream pit-diag. |
+| **Dash**  | FDCAN3 | Telemetría hacia el dashboard (500 kbit/s, timing calcado del FDCAN1 del DASH). TX únicamente, desde `TelemetryTask` cada 200 ms: los 18 IDs `0x510..0x521` que espera `IFS08-CE-DASH`. Todo lleva dato real salvo: velocidad/corriente inversor (`0x515/0x516`, el protocolo NX/EMC no las expone hoy), SOC (`0x518` byte0, el AMS no tiene estimador — diferido en `IFS08-CE-AMS`) y GPS (`0x519-0x51B` salvo `tick_ms`, no hay driver). Los per-módulo AMS (voltajes/temps, `0x51C-0x521`) y corrientes (`0x518`) se decodifican de `0x131-0x137` en `vehicle_service.cpp` — ver `docs/CAN3_MAP.md`. |
 
-**No hay FDCAN3** (sólo quedan los handlers débiles del vector de arranque). El `0x600`
+El `0x600`
 está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FDCAN2 es
 **387 words** (no solapa con FDCAN1) — esto fue la raíz del TX-dead #48; se aplica en el
-`MX_FDCAN1/2_Init` de `fdcan.c`.
+`MX_FDCAN1/2_Init` de `fdcan.c`. FDCAN3 encadena a continuación en **582 words** (tras los
+195 words de FDCAN2) y cierra en 969; el zero-init de `HAL_FDCAN_MspInit` cubre las tres
+regiones (1000 words).
 
 ### Contrato de mensajes (generado del DSL)
 
@@ -112,6 +116,9 @@ está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FD
 
 - `0x020` ACU_ok_precharge — precarga OK / HV viva (la FSM gatea aquí).
 - `0x12C` ACU_v_cell_min — mín. tensión de celda (mV, BE) → derate de torque por celda baja.
+- `0x131`/`0x132`/`0x133`/`0x134` ACU_vmin/vmax_module_a/b — voltajes por módulo (mV, BE) → solo telemetría dash (`0x51C-0x51F`), no alimentan la FSM.
+- `0x135` ACU_currents — corriente accu/DCDC (deciamps, BE) → solo telemetría dash (`0x518`).
+- `0x136`/`0x137` ACU_tmax_module_a/b — temps máximas por módulo + stub DCDC (degC, BE) → solo telemetría dash (`0x520/0x521`).
 - `0x4A0` AMS_status — `fsm_state` (5=Error) / `ams_ok` → distingue Start vs Error latcheado.
 - `0x461`/`0x463`/`0x466` — inversor: App_State / rpm / DC-bus V.
 - `0x002` BL_boot_trigger — magic `0xB007AD12` → escribe magic en RTC backup + reset.
@@ -208,6 +215,7 @@ CubeMX exige editar ese CMakeLists a mano).
 | `Core/Src/app/can_rx_task.cpp` | Drena RX, despacha, único escritor de VehicleService. |
 | `Core/Src/app/can_tx_task.cpp` | Único punto TX del FDCAN; selecciona bus por `frame.bus`. |
 | `Core/Src/app/diag_task.cpp` | `0x704` health cada 1 s, separado de control. |
+| `Core/Src/app/telemetry_task.cpp` | Dashboard FDCAN3 (`0x510/0x512/0x513/0x514/0x517`) + radio nRF24 (`RF_FAST`), cada 200 ms. Ver `docs/CAN3_MAP.md` / `docs/RADIO_MAP.md`. |
 | `Core/Src/app/app_init_task.cpp` | Bring-up FDCAN1/2 one-shot (fix #48). |
 | `Core/Src/app/io_signals.cpp` | ADC3 (freno, APPS1/2) + GPIO (botón, RTDS, LEDs). |
 | `Core/Src/app/inverter.cpp` | Adaptador inversor NX/EMC: setpoints 0x360/0x362, decode 0x461/63/66. |

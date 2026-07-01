@@ -135,10 +135,13 @@ void MX_FDCAN3_Init(void)
   hfdcan3.Init.AutoRetransmission = ENABLE;
   hfdcan3.Init.TransmitPause = DISABLE;
   hfdcan3.Init.ProtocolException = DISABLE;
-  hfdcan3.Init.NominalPrescaler = 6;
-  hfdcan3.Init.NominalSyncJumpWidth = 1;
-  hfdcan3.Init.NominalTimeSeg1 = 2;
-  hfdcan3.Init.NominalTimeSeg2 = 5;
+  /* Match DASH EnvioCanMain FDCAN1 bus timing electrically: 500 kbit/s with
+   * ~72% sample point. ECU keeps the shared FDCAN kernel clock on HSE so
+   * FDCAN1/2 timing is not disturbed. */
+  hfdcan3.Init.NominalPrescaler = 1;
+  hfdcan3.Init.NominalSyncJumpWidth = 13;
+  hfdcan3.Init.NominalTimeSeg1 = 34;
+  hfdcan3.Init.NominalTimeSeg2 = 13;
   hfdcan3.Init.DataPrescaler = 1;
   hfdcan3.Init.DataSyncJumpWidth = 1;
   hfdcan3.Init.DataTimeSeg1 = 1;
@@ -146,15 +149,15 @@ void MX_FDCAN3_Init(void)
   hfdcan3.Init.MessageRAMOffset = 582;
   hfdcan3.Init.StdFiltersNbr = 1;
   hfdcan3.Init.ExtFiltersNbr = 1;
-  hfdcan3.Init.RxFifo0ElmtsNbr = 16;
+  hfdcan3.Init.RxFifo0ElmtsNbr = 32;
   hfdcan3.Init.RxFifo0ElmtSize = FDCAN_DATA_BYTES_8;
-  hfdcan3.Init.RxFifo1ElmtsNbr = 16;
+  hfdcan3.Init.RxFifo1ElmtsNbr = 32;
   hfdcan3.Init.RxFifo1ElmtSize = FDCAN_DATA_BYTES_8;
   hfdcan3.Init.RxBuffersNbr = 0;
   hfdcan3.Init.RxBufferSize = FDCAN_DATA_BYTES_8;
   hfdcan3.Init.TxEventsNbr = 0;
   hfdcan3.Init.TxBuffersNbr = 0;
-  hfdcan3.Init.TxFifoQueueElmtsNbr = 16;
+  hfdcan3.Init.TxFifoQueueElmtsNbr = 32;
   hfdcan3.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   hfdcan3.Init.TxElmtSize = FDCAN_DATA_BYTES_8;
   if (HAL_FDCAN_Init(&hfdcan3) != HAL_OK)
@@ -213,9 +216,9 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
    * killed every app TX (the 32-deep TX FIFO sits in RAM the BL never wrote).
    * Zero the shared SRAMCAN once, here: after the FDCAN clock is enabled (above)
    * and before HAL_FDCAN_Init lays out the filters/FIFOs. FDCAN1 MspInit runs
-   * first, so this covers FDCAN2's region too (640 words >= the 582-word
-   * footprint of FDCAN1@0 + FDCAN2@387). */
-  for (uint32_t i = 0; i < 800u; ++i) {
+   * first, so this covers all three regions too (1000 words >= the 969-word
+   * footprint of FDCAN1@0 + FDCAN2@387 + FDCAN3@582). */
+  for (uint32_t i = 0; i < 1000u; ++i) {
     ((volatile uint32_t *)SRAMCAN_BASE)[i] = 0u;
   }
   /* USER CODE END FDCAN1_MspInit 1 */

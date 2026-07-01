@@ -991,7 +991,7 @@ static void test_rtos_task_startup(void)
     sil_check_task_metric(APP_TASK_ID_SD_LOG, 1u, 1u, "SdLogTask after init");
     sil_check_task_metric(APP_TASK_ID_DASH, 1u, 1u, "DashTask after init");
 
-    sil_run_manual(120u, 1u);
+    sil_run_manual(220u, 1u);
 
     sil_check_task_metric(APP_TASK_ID_CONTROL, 1u, 5u, "ControlTask periodic activity");
     sil_check_task_metric(APP_TASK_ID_CAN_RX, 1u, 5u, "CanRxTask periodic activity");
