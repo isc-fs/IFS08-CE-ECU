@@ -23,6 +23,7 @@
 #include "adc.h"
 #include "fdcan.h"
 #include "iwdg.h"
+#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "usb_otg.h"
@@ -118,6 +119,7 @@ int main(void)
   MX_GPIO_Init();
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
+  MX_SPI1_Init();
   MX_TIM1_Init();
   MX_TIM16_Init();
   MX_ADC3_Init();
