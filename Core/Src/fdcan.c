@@ -89,7 +89,7 @@ void MX_FDCAN2_Init(void)
   hfdcan2.Instance = FDCAN2;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan2.Init.AutoRetransmission = ENABLE;   /* BL #94: MUST be ENABLE -- single-shot silently drops lost-arbitration frames on the shared ACU bus (FDCAN1 already ENABLE) */
+  hfdcan2.Init.AutoRetransmission = ENABLE;   /* BL #94: MUST be ENABLE -- single-shot silently drops lost-arbitration frames on the shared ACU bus (FDCAN1 already ENABLE). RE-APPLY after any CubeMX regen. */
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
   hfdcan2.Init.NominalPrescaler = 3;

@@ -94,8 +94,10 @@ inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback con
 // Non-overlapping MessageRAM offset for FDCAN2, in words. FDCAN1 keeps offset 0
 // and occupies 1 std + 2 ext + 32*4*3 = 387 words of the shared 10 KB SRAMCAN;
 // FDCAN2 starts right after so the two instances DON'T overlap -- overlap was
-// the #48 TX-dead root cause. CubeMX assigns 0 to every instance and reverts it
-// on regen, so App_InitTask re-applies it (regen-stable).
+// the #48 TX-dead root cause. CubeMX resets it to 0 on EVERY regen, so it MUST be
+// re-applied by hand in MX_FDCAN2_Init (fdcan.c) each time -- NOT regen-stable, and
+// App_InitTask does NOT re-apply it. (2026-07-01: a regen silently reset this + the
+// FDCAN2 AutoRetransmission=ENABLE; both had to be restored in fdcan.c.)
 inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 
 // ---- CAN IDs the ECU CONSUMES (RX) -----------------------------------------
