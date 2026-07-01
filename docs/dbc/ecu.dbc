@@ -100,6 +100,38 @@ BO_ 32 ACU_ok_precharge: 1 AMS
 BO_ 300 ACU_v_cell_min: 2 AMS
  SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
 
+BO_ 305 ACU_vmin_module_a: 6 AMS
+ SG_ vmin_module0 : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmin_module1 : 23|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmin_module2 : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 306 ACU_vmin_module_b: 4 AMS
+ SG_ vmin_module3 : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmin_module4 : 23|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 307 ACU_vmax_module_a: 6 AMS
+ SG_ vmax_module0 : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmax_module1 : 23|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmax_module2 : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 308 ACU_vmax_module_b: 4 AMS
+ SG_ vmax_module3 : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ vmax_module4 : 23|16@0+ (1,0) [0|0] "mV" Vector__XXX
+
+BO_ 309 ACU_currents: 4 AMS
+ SG_ current_accu_dA : 7|16@0- (0.1,0) [0|0] "A" Vector__XXX
+ SG_ current_dcdc_dA : 23|16@0- (0.1,0) [0|0] "A" Vector__XXX
+
+BO_ 310 ACU_tmax_module_a: 6 AMS
+ SG_ tmax_module0 : 7|16@0- (1,0) [0|0] "degC" Vector__XXX
+ SG_ tmax_module1 : 23|16@0- (1,0) [0|0] "degC" Vector__XXX
+ SG_ tmax_module2 : 39|16@0- (1,0) [0|0] "degC" Vector__XXX
+
+BO_ 311 ACU_tmax_module_b: 6 AMS
+ SG_ tmax_module3 : 7|16@0- (1,0) [0|0] "degC" Vector__XXX
+ SG_ tmax_module4 : 23|16@0- (1,0) [0|0] "degC" Vector__XXX
+ SG_ tmax_dcdc : 39|16@0- (1,0) [0|0] "degC" Vector__XXX
+
 BO_ 1184 AMS_status: 8 AMS
  SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ ams_ok : 8|8@1+ (1,0) [0|0] "bool" Vector__XXX
@@ -124,6 +156,13 @@ BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
+BA_ "GenMsgCycleTime" BO_ 305 100;
+BA_ "GenMsgCycleTime" BO_ 306 100;
+BA_ "GenMsgCycleTime" BO_ 307 100;
+BA_ "GenMsgCycleTime" BO_ 308 100;
+BA_ "GenMsgCycleTime" BO_ 309 50;
+BA_ "GenMsgCycleTime" BO_ 310 250;
+BA_ "GenMsgCycleTime" BO_ 311 250;
 BA_ "GenMsgCycleTime" BO_ 1184 500;
 
 VAL_ 1792 fsm_state 0 "WaitInvVdcConfig" 1 "Precharge" 2 "WaitStartBrake" 3 "R2dDelay" 4 "WaitInvStandby" 5 "Active" 6 "AmsError" ;
