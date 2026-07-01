@@ -320,11 +320,7 @@ void StartDiagTask(void *argument)
 void StartTelemetryTask(void *argument)
 {
   /* USER CODE BEGIN StartTelemetryTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ecu_telemetry_task_run(argument);
   /* USER CODE END StartTelemetryTask */
 }
 

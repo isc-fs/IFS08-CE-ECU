@@ -31,6 +31,10 @@ const uint32_t kDlcCode[9] = {
 };
 
 void hal_send(const ecu::CanFrame& f) {
+    // FDCAN3 (Dash) is not wired yet -- drop dash frames here so they don't fall
+    // through to hfdcan2 (ACU) and pollute the shared bus. The telemetry task
+    // already builds them; tranche 4 replaces this guard with routing to hfdcan3.
+    if (f.bus == static_cast<uint8_t>(ecu::CanBus::Dash)) return;
     FDCAN_HandleTypeDef* h =
         (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv)) ? &hfdcan1 : &hfdcan2;
 
