@@ -17,6 +17,7 @@
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;          // INV
 extern FDCAN_HandleTypeDef hfdcan2;          // ACU / shared
+extern FDCAN_HandleTypeDef hfdcan3;          // DASH (FDCAN3)
 extern osMessageQueueId_t  can_tx_queueHandle;
 }
 
@@ -31,12 +32,9 @@ const uint32_t kDlcCode[9] = {
 };
 
 void hal_send(const ecu::CanFrame& f) {
-    // FDCAN3 (Dash) is not wired yet -- drop dash frames here so they don't fall
-    // through to hfdcan2 (ACU) and pollute the shared bus. The telemetry task
-    // already builds them; tranche 4 replaces this guard with routing to hfdcan3.
-    if (f.bus == static_cast<uint8_t>(ecu::CanBus::Dash)) return;
-    FDCAN_HandleTypeDef* h =
-        (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv)) ? &hfdcan1 : &hfdcan2;
+    FDCAN_HandleTypeDef* h = &hfdcan2;                                        // ACU (default)
+    if (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv))       h = &hfdcan1;  // INV
+    else if (f.bus == static_cast<uint8_t>(ecu::CanBus::Dash)) h = &hfdcan3;  // DASH (FDCAN3)
 
     FDCAN_TxHeaderTypeDef tx = {};
     tx.Identifier          = f.id;
