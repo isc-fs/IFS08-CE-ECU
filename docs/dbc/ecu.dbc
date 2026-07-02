@@ -80,7 +80,7 @@ BO_ 1797 PitDiag_brake: 3 VCU
 
 BO_ 1794 PitDiag_inverter: 7 VCU
  SG_ dc_bus_voltage : 7|16@0+ (1,0) [0|0] "V" Vector__XXX
- SG_ inv_rpm : 23|32@0- (1,0) [0|0] "erpm" Vector__XXX
+ SG_ inv_rpm : 23|32@0- (1,0) [0|0] "rpm" Vector__XXX
  SG_ inv_error : 48|8@1+ (1,0) [0|0] "code" Vector__XXX
 
 BO_ 1798 PitDiag_inverter_temps: 4 VCU

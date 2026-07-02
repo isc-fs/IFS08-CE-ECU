@@ -67,7 +67,9 @@ CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
 CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     PitDiag_inverter_t inv{};
     inv.dc_bus_voltage = v.inv_dc_bus_V;
-    inv.inv_rpm        = v.inv_rpm;    // 0x463 EMachine_Speed_erpm (20-bit signed)
+    // 0x463 reports ELECTRICAL rpm; diag shows MECHANICAL shaft rpm, same
+    // convention as the uDV 0x506 feed (erpm / MotorPolePairs, 10).
+    inv.inv_rpm        = v.inv_rpm / config::MotorPolePairs;
     inv.inv_error      = v.inv_error;
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);

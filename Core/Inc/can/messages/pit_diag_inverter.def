@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: proprietary */
 /*
  * 0x702  PitDiag_inverter -- inverter DC-bus voltage, motor speed (SIGNED,
- * raw ELECTRICAL rpm as the inverter reports it -- mechanical = erpm / 10
- * pole pairs), and the inverter error/state code, decoded from the NX/EMC
- * inverter frames (0x466 DCBus_Voltage_V, 0x463 EMachine_Speed_erpm,
- * 0x461 DEM_Code). 100 ms while enabled.
+ * MECHANICAL shaft rpm: the inverter reports ELECTRICAL rpm on 0x463 and the
+ * builder converts, erpm / MotorPolePairs(10) -- same convention as the uDV
+ * 0x506 feed), and the inverter error/state code. Decoded from the NX/EMC
+ * frames (0x466 DCBus_Voltage_V, 0x463 EMachine_Speed_erpm, 0x461 DEM_Code).
+ * 100 ms while enabled.
  */
 
 CAN_MSG(PitDiag_inverter, 0x702, 7, "VCU", 100)
     FIELD_BE   (dc_bus_voltage, uint16_t, 0, 16, 1, 0, "V")
-    FIELD_BE_S (inv_rpm,        int32_t,  2, 32, 1, 0, "erpm")
+    FIELD_BE_S (inv_rpm,        int32_t,  2, 32, 1, 0, "rpm")
     FIELD_LE   (inv_error,      uint8_t,  6, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_inverter)
