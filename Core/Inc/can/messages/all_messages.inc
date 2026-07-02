@@ -33,7 +33,7 @@
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */
 #include "acu_v_cell_min.def"       /* 0x12C  AMS min cell voltage            */
 #include "ams_status.def"           /* 0x4A0  AMS FSM state / ams_ok          */
-#include "udv_accel_cmd.def"        /* 0x507  uDV accel command (f32 LE raw)  */
+#include "udv_torque_cmd.def"       /* 0x507  uDV torque command (s32 LE, %)  */
 #include "udv_r2d_request.def"      /* 0x510  uDV DV ready-to-drive request   */
 #include "bl_boot_trigger.def"      /* 0x002  jump-to-bootloader magic        */
 #include "pit_diag_cmd.def"         /* 0x7E0  pit-diag enable/disable magic   */

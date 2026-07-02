@@ -120,8 +120,8 @@ BO_ 1184 AMS_status: 8 AMS
  SG_ min_cell_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
  SG_ max_cell_mV : 55|16@0+ (1,0) [0|0] "mV" Vector__XXX
 
-BO_ 1287 UDV_accel_cmd: 4 uDV
- SG_ accel_cmd_raw : 0|32@1+ (1,0) [0|0] "f32le" Vector__XXX
+BO_ 1287 UDV_torque_cmd: 4 uDV
+ SG_ torque_pct : 0|32@1- (1,0) [0|0] "%" Vector__XXX
 
 BO_ 1296 UDV_r2d_request: 1 uDV
  SG_ r2d_request : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX

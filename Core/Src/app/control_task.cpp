@@ -89,7 +89,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.dv_r2d_req    = (veh.udv_r2d_request != 0u) &&
                            VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
         ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
-        ci.dv_torque_pct = VehicleService::condition_udv_accel(veh.udv_accel_raw);
+        ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);

@@ -5,7 +5,6 @@
 #include "app/ecu_config.hpp"
 
 #include <cstdint>
-#include <cstring>
 
 namespace ecu {
 
@@ -44,13 +43,14 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
-std::uint32_t VehicleService::decode_udv_accel_raw(const std::uint8_t* d) noexcept {
-    // 0x507: raw IEEE-754 float32 bits, little-endian on the wire (uDV STM32
-    // side, #17). Stored as the raw pattern; the app layer bit-casts to float.
-    return static_cast<std::uint32_t>(d[0]) |
-           (static_cast<std::uint32_t>(d[1]) << 8) |
-           (static_cast<std::uint32_t>(d[2]) << 16) |
-           (static_cast<std::uint32_t>(d[3]) << 24);
+std::int32_t VehicleService::decode_udv_torque_cmd(const std::uint8_t* d) noexcept {
+    // 0x507: torque command as an INTEGER percent, int32 little-endian on the
+    // wire (agreed with the DV team; replaced the original float32 idea).
+    const std::uint32_t u = static_cast<std::uint32_t>(d[0]) |
+                            (static_cast<std::uint32_t>(d[1]) << 8) |
+                            (static_cast<std::uint32_t>(d[2]) << 16) |
+                            (static_cast<std::uint32_t>(d[3]) << 24);
+    return static_cast<std::int32_t>(u);
 }
 
 std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
@@ -64,19 +64,14 @@ std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
     return static_cast<std::int32_t>(raw);
 }
 
-std::uint8_t VehicleService::condition_udv_accel(std::uint32_t raw_bits) noexcept {
-    // Fail-safe conditioning of the autonomous accel command (#17): reinterpret
-    // the LE wire bits as IEEE-754 float (memcpy -- no std::bit_cast in C++17),
-    // then reject anything that is not a sane 0..100 command. NaN compares
-    // false to everything, so the >= 0 gate rejects it too; +inf clamps to 100.
-    // PENDING: the DV team's units/scale -- placeholder treats the value AS a
-    // torque percent.
-    float f = 0.0f;
-    static_assert(sizeof(f) == sizeof(raw_bits), "f32 <-> u32");
-    std::memcpy(&f, &raw_bits, sizeof(f));
-    if (!(f >= 0.0f)) return 0u;      // NaN or negative -> 0 (fail-safe)
-    if (f >= 100.0f)  return 100u;    // +inf and overrange clamp
-    return static_cast<std::uint8_t>(f);
+std::uint8_t VehicleService::condition_udv_torque(std::int32_t cmd) noexcept {
+    // Fail-safe conditioning of the autonomous torque command (#17): the wire
+    // value is an integer percent; anything outside 0..100 is not a sane
+    // command. Negative -> 0 (regen/reverse is NOT in the contract -- an
+    // explicit extension if ever wanted), overrange clamps.
+    if (cmd < 0)   return 0u;
+    if (cmd > 100) return 100u;
+    return static_cast<std::uint8_t>(cmd);
 }
 
 // ---- freshness -------------------------------------------------------------
@@ -147,9 +142,9 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         }
         // --- uDV / autonomous (#17). Deliberately does NOT touch last_ams_tick:
         //     uDV traffic must not keep the AMS freshness (ok_precharge) alive.
-        if (f.id == config::UdvAccelCmdId) {                // 0x507
+        if (f.id == config::UdvTorqueCmdId) {               // 0x507
             if (f.dlc < 4) return false;
-            state_.udv_accel_raw     = decode_udv_accel_raw(f.data);
+            state_.udv_torque_cmd    = decode_udv_torque_cmd(f.data);
             state_.last_udv_cmd_tick = f.timestamp_ms;
             return true;
         }

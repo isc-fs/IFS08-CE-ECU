@@ -290,7 +290,7 @@ static void test_dsl_parity() {
     CHECK(static_cast<uint32_t>(ACU_v_cell_min_ID)   == AcuVCellMinId,     "ACU_v_cell_min_ID == config");
     CHECK(static_cast<uint32_t>(AMS_status_ID)       == AmsStatusId,       "AMS_status_ID == config");
     CHECK(static_cast<uint32_t>(BL_boot_trigger_ID)  == BlBootTriggerCanId, "BL_boot_trigger_ID == config");
-    CHECK(static_cast<uint32_t>(UDV_accel_cmd_ID)    == UdvAccelCmdId,     "UDV_accel_cmd_ID == config");
+    CHECK(static_cast<uint32_t>(UDV_torque_cmd_ID)   == UdvTorqueCmdId,    "UDV_torque_cmd_ID == config");
     CHECK(static_cast<uint32_t>(UDV_r2d_request_ID)  == UdvR2dRequestId,   "UDV_r2d_request_ID == config");
 }
 
@@ -432,14 +432,14 @@ static void test_inverter_rx() {
 static void test_dv_mode() {
     std::printf("[dv_mode]\n");
 
-    // --- the 0x507 conditioner (fail-safe float -> pct) ---
-    CHECK(VehicleService::condition_udv_accel(0x40200000u) == 2,   "2.5f -> 2 (truncate)");
-    CHECK(VehicleService::condition_udv_accel(0x42200000u) == 40,  "40.0f -> 40");
-    CHECK(VehicleService::condition_udv_accel(0x42C80000u) == 100, "100.0f -> 100");
-    CHECK(VehicleService::condition_udv_accel(0x43160000u) == 100, "150.0f clamps to 100");
-    CHECK(VehicleService::condition_udv_accel(0xBF800000u) == 0,   "-1.0f -> 0 (fail-safe)");
-    CHECK(VehicleService::condition_udv_accel(0x7FC00000u) == 0,   "NaN -> 0 (fail-safe)");
-    CHECK(VehicleService::condition_udv_accel(0x7F800000u) == 100, "+inf clamps to 100");
+    // --- the 0x507 conditioner (fail-safe integer % -> pct) ---
+    CHECK(VehicleService::condition_udv_torque(0)   == 0,        "0 -> 0");
+    CHECK(VehicleService::condition_udv_torque(40)  == 40,       "40 -> 40");
+    CHECK(VehicleService::condition_udv_torque(100) == 100,      "100 -> 100");
+    CHECK(VehicleService::condition_udv_torque(150) == 100,      "150 clamps to 100");
+    CHECK(VehicleService::condition_udv_torque(-1)  == 0,        "-1 -> 0 (fail-safe, no regen by accident)");
+    CHECK(VehicleService::condition_udv_torque(INT32_MIN) == 0,  "INT32_MIN -> 0");
+    CHECK(VehicleService::condition_udv_torque(INT32_MAX) == 100, "INT32_MAX clamps to 100");
 
     Controller c;
     uint32_t t = 0;
@@ -534,22 +534,24 @@ static void test_dv_mode() {
 static void test_udv_rx() {
     std::printf("[udv_rx]\n");
 
-    // 0x507 payload is the raw IEEE-754 f32 pattern, little-endian on the wire.
-    // 2.5f = 0x40200000 -> LE bytes {00 00 20 40}.
-    const std::uint8_t f25[4] = {0x00, 0x00, 0x20, 0x40};
-    CHECK(VehicleService::decode_udv_accel_raw(f25) == 0x40200000u, "f32 LE raw pattern (2.5f)");
+    // 0x507 payload is an integer percent, int32 little-endian on the wire.
+    // 40 -> {28 00 00 00}; -1 -> {FF FF FF FF} (sign-preserving decode).
+    const std::uint8_t p40[4] = {0x28, 0x00, 0x00, 0x00};
+    const std::uint8_t m1[4]  = {0xFF, 0xFF, 0xFF, 0xFF};
+    CHECK(VehicleService::decode_udv_torque_cmd(p40) == 40, "s32 LE decode (40)");
+    CHECK(VehicleService::decode_udv_torque_cmd(m1)  == -1, "s32 LE decode preserves sign (-1)");
 
     VehicleService& vs = VehicleService::instance();
     const std::uint32_t ams_tick_before = vs.snapshot().last_ams_tick;
 
     CanFrame a{};
     a.bus = static_cast<std::uint8_t>(CanBus::Acu);
-    a.id  = UdvAccelCmdId;       // 0x507
+    a.id  = UdvTorqueCmdId;      // 0x507
     a.dlc = 4;
-    a.data[0]=0x00; a.data[1]=0x00; a.data[2]=0x20; a.data[3]=0x40;
+    a.data[0]=0x28; a.data[1]=0x00; a.data[2]=0x00; a.data[3]=0x00;   // 40%
     a.timestamp_ms = 1234;
     CHECK(vs.update_from_frame(a), "0x507 accepted");
-    CHECK(vs.snapshot().udv_accel_raw == 0x40200000u, "accel raw reaches the snapshot");
+    CHECK(vs.snapshot().udv_torque_cmd == 40, "torque cmd reaches the snapshot");
     CHECK(vs.snapshot().last_udv_cmd_tick == 1234u, "0x507 freshness tick stamped");
 
     CanFrame r{};

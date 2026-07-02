@@ -43,7 +43,7 @@ struct VehicleState {
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
     // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---
-    std::uint32_t udv_accel_raw     = 0;      // 0x507 raw IEEE-754 f32 bits (LE wire); app bit-casts
+    std::int32_t  udv_torque_cmd    = 0;      // 0x507 torque command, s32 LE (integer %, unconditioned)
     std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
     std::uint32_t last_udv_cmd_tick = 0;      // 0x507 seen
     std::uint32_t last_udv_r2d_tick = 0;      // 0x510 seen
@@ -73,12 +73,11 @@ public:
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
     static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
-    static std::uint32_t decode_udv_accel_raw(const std::uint8_t* d) noexcept; // 0x507 LE32 (raw f32 bits)
+    static std::int32_t  decode_udv_torque_cmd(const std::uint8_t* d) noexcept; // 0x507 s32 LE (integer %)
 
-    // Condition the raw 0x507 float bits into a torque percentage the control
-    // core can consume: NaN/negative -> 0, > 100 -> 100. PENDING the DV team's
-    // units/scale spec -- placeholder treats the float AS a percent. Pure.
-    static std::uint8_t  condition_udv_accel(std::uint32_t raw_bits) noexcept;
+    // Condition the 0x507 integer percent into what the control core consumes:
+    // negative -> 0 (fail-safe), > 100 clamps to 100. Pure.
+    static std::uint8_t  condition_udv_torque(std::int32_t cmd) noexcept;
 
 private:
     VehicleService() = default;
