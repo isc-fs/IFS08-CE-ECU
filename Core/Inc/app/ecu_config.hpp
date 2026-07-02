@@ -47,6 +47,10 @@ inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 
 
 inline constexpr uint16_t BrakeArmRaw          = 900;   // COMMISSION: brake-to-arm (R2D)
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
+// DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
+// the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
+// a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
+inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
 // BRING-UP: brake reading injected when ECU_STUB_BRAKE is compiled in (used only then,
 // in io_signals). 0 = released; set ABOVE BrakeArmRaw to arm R2D, BELOW BrakePressedRaw
 // to dodge the EV.2.3 cut (e.g. 1500). Irrelevant to a flight build (stub not compiled).
@@ -89,6 +93,8 @@ inline constexpr uint8_t  StartDebounceSamples = 5;     // x ControlPeriodMs (=5
 // ---- Freshness / staleness (ms) -------------------------------------------
 inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuStale window
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
+inline constexpr uint32_t UdvCmdStaleMs        = 100;   // 0x507 accel stream stale -> DV torque 0 (never APPS)
+inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request considered current
 
 // ---- FDCAN ------------------------------------------------------------------
 // Non-overlapping MessageRAM offset for FDCAN2, in words. FDCAN1 keeps offset 0
@@ -104,6 +110,8 @@ inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 inline constexpr uint32_t AcuOkPrechargeId     = 0x020u;     // AMS precharge-OK
 inline constexpr uint32_t AcuVCellMinId        = 0x12Cu;     // AMS min cell voltage
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
+inline constexpr uint32_t UdvAccelCmdId        = 0x507u;     // uDV accel command (raw f32 LE)
+inline constexpr uint32_t UdvR2dRequestId      = 0x510u;     // uDV DV ready-to-drive request
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
 inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)
 inline constexpr uint32_t InvRxTempId          = 0x464u;     // EMC_TX_STATE_5 (board/stage/motor temps, raw -50 = degC)

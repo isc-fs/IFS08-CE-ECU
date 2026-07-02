@@ -41,6 +41,12 @@ struct VehicleState {
     std::uint16_t v_cell_min_mV     = 0;      // 0x12C / 0x4A0
     std::uint8_t  ams_fsm_state     = 0;      // 0x4A0 byte0 (== AmsFsmError -> Error)
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
+    // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
+    //     must NOT keep the AMS freshness alive (or vice versa). ---
+    std::uint32_t udv_accel_raw     = 0;      // 0x507 raw IEEE-754 f32 bits (LE wire); app bit-casts
+    std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
+    std::uint32_t last_udv_cmd_tick = 0;      // 0x507 seen
+    std::uint32_t last_udv_r2d_tick = 0;      // 0x510 seen
 };
 
 class VehicleService {
@@ -67,6 +73,7 @@ public:
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
     static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
+    static std::uint32_t decode_udv_accel_raw(const std::uint8_t* d) noexcept; // 0x507 LE32 (raw f32 bits)
 
 private:
     VehicleService() = default;

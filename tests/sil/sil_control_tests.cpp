@@ -21,6 +21,7 @@
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
+#include "app/udv_tx.hpp"        // uDV autonomous-contract TX builders (#17)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
 
 using namespace ecu;
@@ -289,6 +290,8 @@ static void test_dsl_parity() {
     CHECK(static_cast<uint32_t>(ACU_v_cell_min_ID)   == AcuVCellMinId,     "ACU_v_cell_min_ID == config");
     CHECK(static_cast<uint32_t>(AMS_status_ID)       == AmsStatusId,       "AMS_status_ID == config");
     CHECK(static_cast<uint32_t>(BL_boot_trigger_ID)  == BlBootTriggerCanId, "BL_boot_trigger_ID == config");
+    CHECK(static_cast<uint32_t>(UDV_accel_cmd_ID)    == UdvAccelCmdId,     "UDV_accel_cmd_ID == config");
+    CHECK(static_cast<uint32_t>(UDV_r2d_request_ID)  == UdvR2dRequestId,   "UDV_r2d_request_ID == config");
 }
 
 // Inverter TX adapter -- IDs / modes / byte layout / torque map matched
@@ -422,6 +425,70 @@ static void test_inverter_rx() {
     CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
 }
 
+// uDV autonomous contract (#17) -- RX decode/store + the ECU->uDV TX builders.
+static void test_udv_rx() {
+    std::printf("[udv_rx]\n");
+
+    // 0x507 payload is the raw IEEE-754 f32 pattern, little-endian on the wire.
+    // 2.5f = 0x40200000 -> LE bytes {00 00 20 40}.
+    const std::uint8_t f25[4] = {0x00, 0x00, 0x20, 0x40};
+    CHECK(VehicleService::decode_udv_accel_raw(f25) == 0x40200000u, "f32 LE raw pattern (2.5f)");
+
+    VehicleService& vs = VehicleService::instance();
+    const std::uint32_t ams_tick_before = vs.snapshot().last_ams_tick;
+
+    CanFrame a{};
+    a.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    a.id  = UdvAccelCmdId;       // 0x507
+    a.dlc = 4;
+    a.data[0]=0x00; a.data[1]=0x00; a.data[2]=0x20; a.data[3]=0x40;
+    a.timestamp_ms = 1234;
+    CHECK(vs.update_from_frame(a), "0x507 accepted");
+    CHECK(vs.snapshot().udv_accel_raw == 0x40200000u, "accel raw reaches the snapshot");
+    CHECK(vs.snapshot().last_udv_cmd_tick == 1234u, "0x507 freshness tick stamped");
+
+    CanFrame r{};
+    r.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    r.id  = UdvR2dRequestId;     // 0x510
+    r.dlc = 1;
+    r.data[0] = 1;
+    r.timestamp_ms = 1250;
+    CHECK(vs.update_from_frame(r), "0x510 accepted");
+    CHECK(vs.snapshot().udv_r2d_request == 1u, "R2D request stored");
+    CHECK(vs.snapshot().last_udv_r2d_tick == 1250u, "0x510 freshness tick stamped");
+
+    // The safety property: uDV traffic must NOT refresh the AMS freshness.
+    CHECK(vs.snapshot().last_ams_tick == ams_tick_before, "uDV frames don't touch last_ams_tick");
+
+    // Undersized frames are rejected (dlc guards).
+    CanFrame bad = a; bad.dlc = 3;
+    CHECK(!vs.update_from_frame(bad), "short 0x507 rejected");
+}
+
+static void test_udv_tx() {
+    std::printf("[udv_tx]\n");
+
+    const CanFrame ts = UdvTx::build_ts_active(true);
+    CHECK(ts.id == VCU_ts_active_ID && ts.dlc == 1, "0x504 id/dlc");
+    CHECK(ts.bus == static_cast<std::uint8_t>(CanBus::Acu), "0x504 on the ACU bus");
+    CHECK(ts.data[0] == 1u, "ts_active true -> byte0 = 1");
+    CHECK(UdvTx::build_ts_active(false).data[0] == 0u, "ts_active false -> 0");
+
+    const CanFrame br = UdvTx::build_brake_over_limit(true);
+    CHECK(br.id == VCU_brake_over_limit_ID && br.dlc == 1, "0x505 id/dlc");
+    CHECK(br.data[0] == 1u, "brake over limit -> byte0 = 1");
+    CHECK(UdvTx::build_brake_over_limit(false).data[0] == 0u, "under limit -> 0");
+
+    // 0x506: s32 LE. 74560 = 0x00012340 -> {40 23 01 00}; -1 -> {FF FF FF FF}.
+    const CanFrame rp = UdvTx::build_motor_rpm(74560);
+    CHECK(rp.id == VCU_motor_rpm_ID && rp.dlc == 4, "0x506 id/dlc");
+    CHECK(rp.data[0]==0x40 && rp.data[1]==0x23 && rp.data[2]==0x01 && rp.data[3]==0x00,
+          "rpm +74560 little-endian");
+    const CanFrame rn = UdvTx::build_motor_rpm(-1);
+    CHECK(rn.data[0]==0xFF && rn.data[1]==0xFF && rn.data[2]==0xFF && rn.data[3]==0xFF,
+          "rpm -1 sign-preserving (s32 LE)");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -440,6 +507,8 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_rx();
+    test_udv_rx();
+    test_udv_tx();
 }
 
 int main(int argc, char** argv) {
@@ -462,6 +531,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
+    else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);

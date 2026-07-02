@@ -43,6 +43,15 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
+std::uint32_t VehicleService::decode_udv_accel_raw(const std::uint8_t* d) noexcept {
+    // 0x507: raw IEEE-754 float32 bits, little-endian on the wire (uDV STM32
+    // side, #17). Stored as the raw pattern; the app layer bit-casts to float.
+    return static_cast<std::uint32_t>(d[0]) |
+           (static_cast<std::uint32_t>(d[1]) << 8) |
+           (static_cast<std::uint32_t>(d[2]) << 16) |
+           (static_cast<std::uint32_t>(d[3]) << 24);
+}
+
 std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
     // EMachine_Speed_erpm: 20-bit SIGNED, little-endian, frame bit 44 -- the LSB
     // sits at byte5 bit4, so the 20 bits span d5[4:7] | d6 | d7. Sign-extend from
@@ -118,6 +127,20 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.ams_fsm_state = decode_ams_fsm_state(f.data);
             state_.v_cell_min_mV = decode_ams_min_cell(f.data);
             state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        // --- uDV / autonomous (#17). Deliberately does NOT touch last_ams_tick:
+        //     uDV traffic must not keep the AMS freshness (ok_precharge) alive.
+        if (f.id == config::UdvAccelCmdId) {                // 0x507
+            if (f.dlc < 4) return false;
+            state_.udv_accel_raw     = decode_udv_accel_raw(f.data);
+            state_.last_udv_cmd_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::UdvR2dRequestId) {              // 0x510
+            if (f.dlc < 1) return false;
+            state_.udv_r2d_request   = f.data[0];
+            state_.last_udv_r2d_tick = f.timestamp_ms;
             return true;
         }
         return false;
