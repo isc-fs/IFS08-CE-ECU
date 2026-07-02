@@ -584,14 +584,18 @@ static void test_udv_tx() {
     CHECK(br.data[0] == 1u, "brake over limit -> byte0 = 1");
     CHECK(UdvTx::build_brake_over_limit(false).data[0] == 0u, "under limit -> 0");
 
-    // 0x506: s32 LE. 74560 = 0x00012340 -> {40 23 01 00}; -1 -> {FF FF FF FF}.
+    // 0x506 takes ERPM and transmits MECHANICAL rpm = erpm / MotorPolePairs
+    // (10, powertrain-confirmed), s32 LE. 74560 erpm -> 7456 mech = 0x1D20
+    // -> {20 1D 00 00}; -15 erpm -> -1 mech -> {FF FF FF FF}; -1 erpm -> 0
+    // (integer division truncates toward zero).
     const CanFrame rp = UdvTx::build_motor_rpm(74560);
     CHECK(rp.id == VCU_motor_rpm_ID && rp.dlc == 4, "0x506 id/dlc");
-    CHECK(rp.data[0]==0x40 && rp.data[1]==0x23 && rp.data[2]==0x01 && rp.data[3]==0x00,
-          "rpm +74560 little-endian");
-    const CanFrame rn = UdvTx::build_motor_rpm(-1);
+    CHECK(rp.data[0]==0x20 && rp.data[1]==0x1D && rp.data[2]==0x00 && rp.data[3]==0x00,
+          "74560 erpm -> 7456 mechanical rpm, little-endian");
+    const CanFrame rn = UdvTx::build_motor_rpm(-15);
     CHECK(rn.data[0]==0xFF && rn.data[1]==0xFF && rn.data[2]==0xFF && rn.data[3]==0xFF,
-          "rpm -1 sign-preserving (s32 LE)");
+          "-15 erpm -> -1 mechanical (sign-preserving s32 LE)");
+    CHECK(UdvTx::build_motor_rpm(-1).data[0] == 0x00, "-1 erpm -> 0 (truncates toward zero)");
 }
 
 // ----- dispatch -------------------------------------------------------------

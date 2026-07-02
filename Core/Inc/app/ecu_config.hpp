@@ -80,6 +80,11 @@ inline constexpr double   CellVDerateScale     = 1000.0;
 inline constexpr double   CellVDerateFloorFactor = 0.05;
 inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
 
+// ---- Motor ------------------------------------------------------------------
+// The inverter reports EMachine_Speed_erpm (0x463) -- ELECTRICAL rpm. Mechanical
+// shaft rpm = erpm / pole pairs. Powertrain-confirmed 2026-07-03: 10 pole pairs.
+inline constexpr int32_t  MotorPolePairs       = 10;
+
 // ---- Inverter command unit map (used by the deferred inverter E2E adapter) -
 // torque_units = pct*240/90 - 2400/90  maps 10..100% -> 0..240, then the
 // inverter's signed two's-complement convention is applied in the adapter.

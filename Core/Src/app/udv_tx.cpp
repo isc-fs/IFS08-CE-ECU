@@ -2,6 +2,8 @@
 
 #include "app/udv_tx.hpp"
 
+#include "app/ecu_config.hpp"
+
 #include "can/can_codecs.hpp"
 
 namespace ecu {
@@ -37,9 +39,13 @@ CanFrame UdvTx::build_brake_over_limit(bool over_limit) noexcept {
     return make_acu(VCU_brake_over_limit_ID, b);
 }
 
-CanFrame UdvTx::build_motor_rpm(std::int32_t rpm) noexcept {
+CanFrame UdvTx::build_motor_rpm(std::int32_t erpm) noexcept {
+    // The inverter reports ELECTRICAL rpm (EMachine_Speed_erpm); uDV's SLAM
+    // wants the MECHANICAL shaft speed. Convert here -- the pole-pair count is
+    // motor knowledge the ECU owns; uDV never needs it. Integer division
+    // truncates toward zero for both signs (C++), fine at 1-rpm resolution.
     VCU_motor_rpm_t m{};
-    m.motor_rpm = rpm;
+    m.motor_rpm = erpm / config::MotorPolePairs;
     std::uint8_t b[VCU_motor_rpm_DLC];
     encode_VCU_motor_rpm(m, b);
     return make_acu(VCU_motor_rpm_ID, b);
