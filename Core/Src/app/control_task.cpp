@@ -83,6 +83,13 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
         ci.v_cell_min_mV     = veh.v_cell_min_mV;
 #endif
+        // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
+        // and the conditioned 0x507 accel command with its own freshness --
+        // stale command => the core commands torque 0 (never APPS fallback).
+        ci.dv_r2d_req    = (veh.udv_r2d_request != 0u) &&
+                           VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
+        ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
+        ci.dv_torque_pct = VehicleService::condition_udv_accel(veh.udv_accel_raw);
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);
@@ -116,6 +123,9 @@ extern "C" void ecu_control_task_run(void *argument) {
             last_udv = now;
             can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
             can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
+            // 0x511 R2D confirm: repeated at 100 ms (loss-robust) with the DV
+            // latch as the value -- uDV keys on byte0 != 0.
+            can_tx_post(UdvTx::build_r2d_confirm(out.dv_mode));
         }
 
         // --- inverter setpoints (FDCAN1), EVERY cycle: PLAIN 0x360 mode + 0x362

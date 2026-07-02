@@ -45,4 +45,12 @@ CanFrame UdvTx::build_motor_rpm(std::int32_t rpm) noexcept {
     return make_acu(VCU_motor_rpm_ID, b);
 }
 
+CanFrame UdvTx::build_r2d_confirm(bool confirmed) noexcept {
+    VCU_r2d_confirm_t c{};
+    c.r2d_confirm = confirmed ? 1u : 0u;
+    std::uint8_t b[VCU_r2d_confirm_DLC];
+    encode_VCU_r2d_confirm(c, b);
+    return make_acu(VCU_r2d_confirm_ID, b);
+}
+
 }  // namespace ecu

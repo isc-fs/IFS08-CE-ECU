@@ -425,6 +425,111 @@ static void test_inverter_rx() {
     CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
 }
 
+// DV drive mode (#17): the trigger IS the mode decision at WaitStartBrake --
+// manual (start+brake) vs DV (0x510 request + EBS hard braking verified on our
+// own brake sensor). Latched per drive cycle; 0x507 is the torque source;
+// stale => 0, never APPS; EV.2.3/T.11.8.9 stay manual-only.
+static void test_dv_mode() {
+    std::printf("[dv_mode]\n");
+
+    // --- the 0x507 conditioner (fail-safe float -> pct) ---
+    CHECK(VehicleService::condition_udv_accel(0x40200000u) == 2,   "2.5f -> 2 (truncate)");
+    CHECK(VehicleService::condition_udv_accel(0x42200000u) == 40,  "40.0f -> 40");
+    CHECK(VehicleService::condition_udv_accel(0x42C80000u) == 100, "100.0f -> 100");
+    CHECK(VehicleService::condition_udv_accel(0x43160000u) == 100, "150.0f clamps to 100");
+    CHECK(VehicleService::condition_udv_accel(0xBF800000u) == 0,   "-1.0f -> 0 (fail-safe)");
+    CHECK(VehicleService::condition_udv_accel(0x7FC00000u) == 0,   "NaN -> 0 (fail-safe)");
+    CHECK(VehicleService::condition_udv_accel(0x7F800000u) == 100, "+inf clamps to 100");
+
+    Controller c;
+    uint32_t t = 0;
+    CtrlInputs in = good_drive_inputs();
+
+    // Walk to WaitStartBrake.
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "at WaitStartBrake");
+
+    // DV request WITHOUT the EBS hard braking -> refused (holds).
+    in.dv_r2d_req = true;
+    in.brake_raw  = BrakeDvHardRaw;          // not ABOVE the limit
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "0x510 without EBS braking -> holds");
+    CHECK(!o.dv_mode, "no DV latch without the brake verdict");
+
+    // DV request WITH EBS hard braking -> R2D, DV latched, RTDS sounds.
+    in.brake_raw = BrakeDvHardRaw + 200;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay, "0x510 + EBS hard braking -> R2dDelay (no start button)");
+    CHECK(o.dv_mode, "DV latched at the R2D entry");
+    CHECK(o.rtds_on, "RTDS sounds in DV too");
+
+    // Through RTDS + inverter ready -> Active, still DV.
+    in.dv_r2d_req = false;                   // request may drop after the handshake
+    in.brake_raw  = 0;                       // EBS releases
+    t += R2dSoundMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitInvStandby, "RTDS done -> WaitInvStandby");
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Active && o.dv_mode, "Active, DV latch held");
+
+    // Torque comes from the conditioned 0x507 -- NOT the pedals.
+    in.apps1_raw = 0; in.apps2_raw = 0;      // pedals idle (nobody seated)
+    in.dv_fresh = true; in.dv_torque_pct = 40;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 40, "DV torque = conditioned 0x507 (pedals idle)");
+    CHECK(o.inv_mode == InvMode::TorqueEnable && o.ok_to_drive, "drives in DV Active");
+
+    // Stale command stream => torque 0, stays Active, NEVER falls back to APPS.
+    in.dv_fresh = false;
+    in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;   // pedals pressed hard
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 0, "stale 0x507 -> torque 0, never APPS fallback");
+    CHECK(o.state == CtrlState::Active, "staleness does not exit the drive");
+    in.apps1_raw = 0; in.apps2_raw = 0;
+
+    // EV.2.3 is a driver-pedal rule: EBS pressure + DV torque must NOT trip it.
+    in.dv_fresh = true; in.dv_torque_pct = 50;
+    in.brake_raw = BrakePressedRaw + 500;    // EBS holding hard
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 50, "EV.2.3 does not gate DV torque (EBS pressure)");
+    in.brake_raw = 0;
+
+    // Drive-cycle exit clears the latch; the next entry re-decides the mode.
+    in.ok_precharge = false;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Precharge && !o.dv_mode, "exit to Precharge clears the DV latch");
+    in.ok_precharge = true;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "re-armed");
+    in.start_button = true; in.brake_raw = BrakeArmRaw + 100;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay && !o.dv_mode, "manual re-entry latches MANUAL");
+    in.start_button = false; in.brake_raw = 0;
+
+    // Both triggers true simultaneously -> manual wins (deterministic order).
+    Controller c2; uint32_t t2 = 0;
+    CtrlInputs in2 = good_drive_inputs();
+    c2.step(in2, t2); t2 += ControlPeriodMs;
+    c2.step(in2, t2); t2 += ControlPeriodMs;
+    in2.start_button = true; in2.dv_r2d_req = true;
+    in2.brake_raw = BrakeDvHardRaw + 200;    // satisfies BOTH brake gates
+    CtrlOutput o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+    CHECK(o2.state == CtrlState::R2dDelay && !o2.dv_mode, "both triggers -> manual precedence");
+
+    // AmsError pre-empts a DV drive and clears the latch.
+    Controller c3; uint32_t t3 = 0;
+    CtrlInputs in3 = good_drive_inputs();
+    c3.step(in3, t3); t3 += ControlPeriodMs;
+    c3.step(in3, t3); t3 += ControlPeriodMs;
+    in3.dv_r2d_req = true; in3.brake_raw = BrakeDvHardRaw + 200;
+    c3.step(in3, t3); t3 += ControlPeriodMs;                       // DV R2D
+    in3.ams_error = true;
+    CtrlOutput o3 = c3.step(in3, t3); t3 += ControlPeriodMs;
+    CHECK(o3.state == CtrlState::AmsError && !o3.dv_mode, "AmsError pre-empts DV + clears latch");
+    CHECK(o3.inv_mode == InvMode::Off && o3.torque_pct == 0, "inhibited in AmsError");
+}
+
 // uDV autonomous contract (#17) -- RX decode/store + the ECU->uDV TX builders.
 static void test_udv_rx() {
     std::printf("[udv_rx]\n");
@@ -507,6 +612,7 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_rx();
+    test_dv_mode();
     test_udv_rx();
     test_udv_tx();
 }
@@ -532,6 +638,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
+    else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);

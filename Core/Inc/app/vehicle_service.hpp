@@ -75,6 +75,11 @@ public:
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
     static std::uint32_t decode_udv_accel_raw(const std::uint8_t* d) noexcept; // 0x507 LE32 (raw f32 bits)
 
+    // Condition the raw 0x507 float bits into a torque percentage the control
+    // core can consume: NaN/negative -> 0, > 100 -> 100. PENDING the DV team's
+    // units/scale spec -- placeholder treats the float AS a percent. Pure.
+    static std::uint8_t  condition_udv_accel(std::uint32_t raw_bits) noexcept;
+
 private:
     VehicleService() = default;
     mutable VehicleState state_ = {};

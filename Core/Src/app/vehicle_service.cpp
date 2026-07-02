@@ -5,6 +5,7 @@
 #include "app/ecu_config.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 namespace ecu {
 
@@ -61,6 +62,21 @@ std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
                         (static_cast<std::uint32_t>(d[7]) << 12);
     if (raw & 0x80000u) raw |= 0xFFF00000u;             // sign-extend bit 19
     return static_cast<std::int32_t>(raw);
+}
+
+std::uint8_t VehicleService::condition_udv_accel(std::uint32_t raw_bits) noexcept {
+    // Fail-safe conditioning of the autonomous accel command (#17): reinterpret
+    // the LE wire bits as IEEE-754 float (memcpy -- no std::bit_cast in C++17),
+    // then reject anything that is not a sane 0..100 command. NaN compares
+    // false to everything, so the >= 0 gate rejects it too; +inf clamps to 100.
+    // PENDING: the DV team's units/scale -- placeholder treats the value AS a
+    // torque percent.
+    float f = 0.0f;
+    static_assert(sizeof(f) == sizeof(raw_bits), "f32 <-> u32");
+    std::memcpy(&f, &raw_bits, sizeof(f));
+    if (!(f >= 0.0f)) return 0u;      // NaN or negative -> 0 (fail-safe)
+    if (f >= 100.0f)  return 100u;    // +inf and overrange clamp
+    return static_cast<std::uint8_t>(f);
 }
 
 // ---- freshness -------------------------------------------------------------

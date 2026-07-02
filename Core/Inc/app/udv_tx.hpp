@@ -21,6 +21,7 @@ public:
     static CanFrame build_ts_active(bool ts_active) noexcept;              // 0x504
     static CanFrame build_brake_over_limit(bool over_limit) noexcept;      // 0x505
     static CanFrame build_motor_rpm(std::int32_t rpm) noexcept;            // 0x506
+    static CanFrame build_r2d_confirm(bool confirmed) noexcept;            // 0x511
 };
 
 }  // namespace ecu
