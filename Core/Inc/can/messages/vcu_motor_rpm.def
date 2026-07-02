@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x506  VCU_motor_rpm -- TX to uDV. The inverter EMachine_Speed_erpm
+ * (RX 0x463, 20-bit signed @ bit44, already sign-extended to int32 in
+ * VehicleService) relayed onto the ACU bus for the uDV SLAM / odometry
+ * pipeline. Signed: negative = reverse rotation. Little-endian to match the
+ * uDV STM32-side convention (#17 uses raw LE payloads).
+ */
+
+CAN_MSG(VCU_motor_rpm, 0x506, 4, "VCU", 10)
+    FIELD_LE_S (motor_rpm, int32_t, 0, 32, 1, 0, "rpm")
+CAN_MSG_END(VCU_motor_rpm)
