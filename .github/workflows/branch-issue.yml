@@ -55,18 +55,18 @@ jobs:
               });
             }
 
-            const issues = await github.rest.issues.listForRepo({
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo:  context.repo.repo,
               labels: type,
               state: 'all',
-              sort: 'created',
-              direction: 'desc',
               per_page: 100,
             });
-            const regex = new RegExp(`^\\[${type}/(\\d+)\\]`);
+            /* Accepts both bare `[feat/N]` titles and titled branches
+               like `[feat/N-short-title]`. */
+            const regex = new RegExp(`^\\[${type}/(\\d+)(?:-[^\\]]*)?\\]`);
             let maxNumber = 0;
-            for (const issue of issues.data) {
+            for (const issue of issues) {
               const match = issue.title.match(regex);
               if (match) maxNumber = Math.max(maxNumber, parseInt(match[1], 10));
             }

@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x100  VCU_heartbeat -- the DC-bus voltage the ECU streams to the ACU bus
+ * (FDCAN2) every control cycle. The AMS arms a VcuStale watchdog on this frame
+ * in Car mode and opens the AIRs if it stops, so its presence and layout are a
+ * load-bearing ECU<->AMS contract. Matches the AMS-side rx_vcu_dc_bus.def
+ * (LE uint16 V). Must be emitted in EVERY state, not just precharge.
+ *
+ * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(VCU_heartbeat, 0x100, 2, "VCU", 10)
+    FIELD_LE (dc_bus_voltage, uint16_t, 0, 16, 1, 0, "V")
+CAN_MSG_END(VCU_heartbeat)

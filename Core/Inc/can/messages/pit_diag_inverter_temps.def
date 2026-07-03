@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x706  PitDiag_inverter_temps -- the NX/EMC inverter's four temperatures,
+ * forwarded from 0x464 (EMC_TX_STATE_5). Each byte is the raw inverter reading;
+ * the -50 offset makes it degC on decode (NX encoding). 205 degC (raw 0xFF) is
+ * the inverter's "sensor disconnected" sentinel. 100 ms while pit-diag enabled.
+ */
+
+CAN_MSG(PitDiag_inverter_temps, 0x706, 4, "VCU", 100)
+    FIELD_LE (temp_board_degC,  uint8_t, 0, 8, 1, -50, "degC")
+    FIELD_LE (temp_pwrstg_degC, uint8_t, 1, 8, 1, -50, "degC")
+    FIELD_LE (temp_motor1_degC, uint8_t, 2, 8, 1, -50, "degC")
+    FIELD_LE (temp_motor2_degC, uint8_t, 3, 8, 1, -50, "degC")
+CAN_MSG_END(PitDiag_inverter_temps)
