@@ -38,6 +38,12 @@ uint8_t derate_for_cell_voltage(uint8_t torque, uint16_t v_mV) noexcept {
 void Controller::enter_(CtrlState s, uint32_t now_ms) noexcept {
     state_ = s;
     state_entry_ms_ = now_ms;
+    // The DV latch lives for one drive cycle: any exit from the drive ladder
+    // (back to a pre-R2D state, or the AmsError inhibit) clears it. The next
+    // R2D entry re-decides the mode from whichever trigger fires (#17).
+    if (s < CtrlState::R2dDelay || s == CtrlState::AmsError) {
+        dv_latched_ = false;
+    }
 }
 
 CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
@@ -77,6 +83,19 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
 
     if (ev23_latched_ || t11) torque = 0;
 
+    // DV torque source (#17): when the DV drive is latched the pedals are NOT
+    // the torque source -- the conditioned uDV 0x507 command is, and a stale
+    // command stream means torque 0, NEVER a fall-back to APPS (no driver is
+    // seated). EV.2.3 / T.11.8.9 are driver-pedal rules and do not gate the DV
+    // command (the EBS legitimately holds brake pressure in DV -- a naive
+    // EV.2.3 would cut torque the moment uDV commands accel). The pedal
+    // latches keep computing above (pedals idle; pit-diag verdicts stay live)
+    // but their zeroing applies to the pedal torque only. The cell-voltage
+    // derate below still applies -- pack protection is mode-independent.
+    if (dv_latched_) {
+        torque = in.dv_fresh ? in.dv_torque_pct : 0;
+    }
+
     // Low-cell-voltage derate (applied -- see note above).
     torque = derate_for_cell_voltage(torque, in.ams_fresh ? in.v_cell_min_mV : CellVDefaultMv);
 
@@ -101,7 +120,18 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         }
         break;
     case CtrlState::WaitStartBrake:
-        if (in.start_button && in.brake_raw > BrakeArmRaw) enter_(CtrlState::R2dDelay, now_ms);
+        // The trigger IS the mode decision (#17): whichever gate fires latches
+        // the mode for this drive cycle. Manual = seated driver (START + brake
+        // past the arm threshold). DV = the uDV R2D request (0x510, fresh)
+        // WHILE the EBS holds hard braking, verified on our own brake sensor
+        // (brake_raw > BrakeDvHardRaw) -- no start button in DV. The two are
+        // physically exclusive (driver seated vs ASMS on / AS mission running).
+        if (in.start_button && in.brake_raw > BrakeArmRaw) {
+            enter_(CtrlState::R2dDelay, now_ms);
+        } else if (in.dv_r2d_req && in.brake_raw > BrakeDvHardRaw) {
+            enter_(CtrlState::R2dDelay, now_ms);
+            dv_latched_ = true;   // after enter_ (which clears it for pre-R2D targets)
+        }
         break;
     case CtrlState::R2dDelay:
         if (static_cast<uint32_t>(now_ms - state_entry_ms_) >= R2dSoundMs) {
@@ -175,6 +205,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.ok_to_drive = drive;
     out.ev_2_3      = ev23_latched_;
     out.t11_8_9     = t11;
+    out.dv_mode     = dv_latched_;
     return out;
 }
 

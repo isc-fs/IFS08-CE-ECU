@@ -43,6 +43,16 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
+std::int32_t VehicleService::decode_udv_torque_cmd(const std::uint8_t* d) noexcept {
+    // 0x507: torque command as an INTEGER percent, int32 little-endian on the
+    // wire (agreed with the DV team; replaced the original float32 idea).
+    const std::uint32_t u = static_cast<std::uint32_t>(d[0]) |
+                            (static_cast<std::uint32_t>(d[1]) << 8) |
+                            (static_cast<std::uint32_t>(d[2]) << 16) |
+                            (static_cast<std::uint32_t>(d[3]) << 24);
+    return static_cast<std::int32_t>(u);
+}
+
 std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
     // EMachine_Speed_erpm: 20-bit SIGNED, little-endian, frame bit 44 -- the LSB
     // sits at byte5 bit4, so the 20 bits span d5[4:7] | d6 | d7. Sign-extend from
@@ -52,6 +62,16 @@ std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
                         (static_cast<std::uint32_t>(d[7]) << 12);
     if (raw & 0x80000u) raw |= 0xFFF00000u;             // sign-extend bit 19
     return static_cast<std::int32_t>(raw);
+}
+
+std::uint8_t VehicleService::condition_udv_torque(std::int32_t cmd) noexcept {
+    // Fail-safe conditioning of the autonomous torque command (#17): the wire
+    // value is an integer percent; anything outside 0..100 is not a sane
+    // command. Negative -> 0 (regen/reverse is NOT in the contract -- an
+    // explicit extension if ever wanted), overrange clamps.
+    if (cmd < 0)   return 0u;
+    if (cmd > 100) return 100u;
+    return static_cast<std::uint8_t>(cmd);
 }
 
 // ---- freshness -------------------------------------------------------------
@@ -118,6 +138,20 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.ams_fsm_state = decode_ams_fsm_state(f.data);
             state_.v_cell_min_mV = decode_ams_min_cell(f.data);
             state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        // --- uDV / autonomous (#17). Deliberately does NOT touch last_ams_tick:
+        //     uDV traffic must not keep the AMS freshness (ok_precharge) alive.
+        if (f.id == config::UdvTorqueCmdId) {               // 0x507
+            if (f.dlc < 4) return false;
+            state_.udv_torque_cmd    = decode_udv_torque_cmd(f.data);
+            state_.last_udv_cmd_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::UdvR2dRequestId) {              // 0x510
+            if (f.dlc < 1) return false;
+            state_.udv_r2d_request   = f.data[0];
+            state_.last_udv_r2d_tick = f.timestamp_ms;
             return true;
         }
         return false;

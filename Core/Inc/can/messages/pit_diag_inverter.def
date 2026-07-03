@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: proprietary */
 /*
- * 0x702  PitDiag_inverter -- inverter DC-bus voltage, motor RPM (SIGNED), and
- * the inverter error/state code, decoded from the NX/EMC inverter frames
- * (0x466 DCBus_Voltage_V, 0x463 EMachine_Speed_erpm, 0x461 DEM_Code).
+ * 0x702  PitDiag_inverter -- inverter DC-bus voltage, motor speed (SIGNED,
+ * MECHANICAL shaft rpm: the inverter reports ELECTRICAL rpm on 0x463 and the
+ * builder converts, erpm / MotorPolePairs(10) -- same convention as the uDV
+ * 0x506 feed), and the inverter error/state code. Decoded from the NX/EMC
+ * frames (0x466 DCBus_Voltage_V, 0x463 EMachine_Speed_erpm, 0x461 DEM_Code).
  * 100 ms while enabled.
  */
 

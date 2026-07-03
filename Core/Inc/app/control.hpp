@@ -68,6 +68,12 @@ struct CtrlInputs {
     bool     ok_precharge = false;       // 0x020
     bool     ams_error = false;          // 0x4A0 fsm_state == AmsFsmError
     uint16_t v_cell_min_mV = 0;          // 0x12C / 0x4A0
+    // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
+    // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
+    // and the ECU verifies it on its own brake sensor; no start button in DV.
+    bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
+    bool     dv_fresh = false;           // 0x507 stream fresh (UdvCmdStaleMs)
+    uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
 };
 
 struct CtrlOutput {
@@ -79,6 +85,9 @@ struct CtrlOutput {
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)
     bool      ev_2_3 = false;    // brake+throttle implausibility (latched)
     bool      t11_8_9 = false;   // APPS disagreement past the 100 ms window
+    // DV drive latched this cycle (the 0x510+EBS gate fired) -> torque source
+    // is the uDV 0x507 command; drives the 0x511 R2D-confirm emission.
+    bool      dv_mode = false;
 };
 
 // Holds the FSM state + the stateful plausibility latches across 10 ms steps.
@@ -96,6 +105,10 @@ private:
     bool      ev23_latched_ = false;
     bool      apps_disagree_active_ = false;
     uint32_t  apps_disagree_since_ms_ = 0;
+    // The mode decision (#17): latched by WHICH trigger fired at WaitStartBrake
+    // (manual start+brake vs DV 0x510+EBS-brake); cleared on any exit from the
+    // drive ladder (enter_ to a pre-R2D state or AmsError). Never swaps live.
+    bool      dv_latched_ = false;
 };
 
 // APPS travel %, clamped 0..100. Exposed for the pit-diag adapter (0x701) and

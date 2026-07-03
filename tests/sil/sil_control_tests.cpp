@@ -21,6 +21,7 @@
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
+#include "app/udv_tx.hpp"        // uDV autonomous-contract TX builders (#17)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
 
 using namespace ecu;
@@ -289,6 +290,8 @@ static void test_dsl_parity() {
     CHECK(static_cast<uint32_t>(ACU_v_cell_min_ID)   == AcuVCellMinId,     "ACU_v_cell_min_ID == config");
     CHECK(static_cast<uint32_t>(AMS_status_ID)       == AmsStatusId,       "AMS_status_ID == config");
     CHECK(static_cast<uint32_t>(BL_boot_trigger_ID)  == BlBootTriggerCanId, "BL_boot_trigger_ID == config");
+    CHECK(static_cast<uint32_t>(UDV_torque_cmd_ID)   == UdvTorqueCmdId,    "UDV_torque_cmd_ID == config");
+    CHECK(static_cast<uint32_t>(UDV_r2d_request_ID)  == UdvR2dRequestId,   "UDV_r2d_request_ID == config");
 }
 
 // Inverter TX adapter -- IDs / modes / byte layout / torque map matched
@@ -422,6 +425,181 @@ static void test_inverter_rx() {
     CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
 }
 
+// DV drive mode (#17): the trigger IS the mode decision at WaitStartBrake --
+// manual (start+brake) vs DV (0x510 request + EBS hard braking verified on our
+// own brake sensor). Latched per drive cycle; 0x507 is the torque source;
+// stale => 0, never APPS; EV.2.3/T.11.8.9 stay manual-only.
+static void test_dv_mode() {
+    std::printf("[dv_mode]\n");
+
+    // --- the 0x507 conditioner (fail-safe integer % -> pct) ---
+    CHECK(VehicleService::condition_udv_torque(0)   == 0,        "0 -> 0");
+    CHECK(VehicleService::condition_udv_torque(40)  == 40,       "40 -> 40");
+    CHECK(VehicleService::condition_udv_torque(100) == 100,      "100 -> 100");
+    CHECK(VehicleService::condition_udv_torque(150) == 100,      "150 clamps to 100");
+    CHECK(VehicleService::condition_udv_torque(-1)  == 0,        "-1 -> 0 (fail-safe, no regen by accident)");
+    CHECK(VehicleService::condition_udv_torque(INT32_MIN) == 0,  "INT32_MIN -> 0");
+    CHECK(VehicleService::condition_udv_torque(INT32_MAX) == 100, "INT32_MAX clamps to 100");
+
+    Controller c;
+    uint32_t t = 0;
+    CtrlInputs in = good_drive_inputs();
+
+    // Walk to WaitStartBrake.
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "at WaitStartBrake");
+
+    // DV request WITHOUT the EBS hard braking -> refused (holds).
+    in.dv_r2d_req = true;
+    in.brake_raw  = BrakeDvHardRaw;          // not ABOVE the limit
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "0x510 without EBS braking -> holds");
+    CHECK(!o.dv_mode, "no DV latch without the brake verdict");
+
+    // DV request WITH EBS hard braking -> R2D, DV latched, RTDS sounds.
+    in.brake_raw = BrakeDvHardRaw + 200;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay, "0x510 + EBS hard braking -> R2dDelay (no start button)");
+    CHECK(o.dv_mode, "DV latched at the R2D entry");
+    CHECK(o.rtds_on, "RTDS sounds in DV too");
+
+    // Through RTDS + inverter ready -> Active, still DV.
+    in.dv_r2d_req = false;                   // request may drop after the handshake
+    in.brake_raw  = 0;                       // EBS releases
+    t += R2dSoundMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitInvStandby, "RTDS done -> WaitInvStandby");
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Active && o.dv_mode, "Active, DV latch held");
+
+    // Torque comes from the conditioned 0x507 -- NOT the pedals.
+    in.apps1_raw = 0; in.apps2_raw = 0;      // pedals idle (nobody seated)
+    in.dv_fresh = true; in.dv_torque_pct = 40;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 40, "DV torque = conditioned 0x507 (pedals idle)");
+    CHECK(o.inv_mode == InvMode::TorqueEnable && o.ok_to_drive, "drives in DV Active");
+
+    // Stale command stream => torque 0, stays Active, NEVER falls back to APPS.
+    in.dv_fresh = false;
+    in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;   // pedals pressed hard
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 0, "stale 0x507 -> torque 0, never APPS fallback");
+    CHECK(o.state == CtrlState::Active, "staleness does not exit the drive");
+    in.apps1_raw = 0; in.apps2_raw = 0;
+
+    // EV.2.3 is a driver-pedal rule: EBS pressure + DV torque must NOT trip it.
+    in.dv_fresh = true; in.dv_torque_pct = 50;
+    in.brake_raw = BrakePressedRaw + 500;    // EBS holding hard
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.torque_pct == 50, "EV.2.3 does not gate DV torque (EBS pressure)");
+    in.brake_raw = 0;
+
+    // Drive-cycle exit clears the latch; the next entry re-decides the mode.
+    in.ok_precharge = false;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Precharge && !o.dv_mode, "exit to Precharge clears the DV latch");
+    in.ok_precharge = true;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "re-armed");
+    in.start_button = true; in.brake_raw = BrakeArmRaw + 100;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay && !o.dv_mode, "manual re-entry latches MANUAL");
+    in.start_button = false; in.brake_raw = 0;
+
+    // Both triggers true simultaneously -> manual wins (deterministic order).
+    Controller c2; uint32_t t2 = 0;
+    CtrlInputs in2 = good_drive_inputs();
+    c2.step(in2, t2); t2 += ControlPeriodMs;
+    c2.step(in2, t2); t2 += ControlPeriodMs;
+    in2.start_button = true; in2.dv_r2d_req = true;
+    in2.brake_raw = BrakeDvHardRaw + 200;    // satisfies BOTH brake gates
+    CtrlOutput o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+    CHECK(o2.state == CtrlState::R2dDelay && !o2.dv_mode, "both triggers -> manual precedence");
+
+    // AmsError pre-empts a DV drive and clears the latch.
+    Controller c3; uint32_t t3 = 0;
+    CtrlInputs in3 = good_drive_inputs();
+    c3.step(in3, t3); t3 += ControlPeriodMs;
+    c3.step(in3, t3); t3 += ControlPeriodMs;
+    in3.dv_r2d_req = true; in3.brake_raw = BrakeDvHardRaw + 200;
+    c3.step(in3, t3); t3 += ControlPeriodMs;                       // DV R2D
+    in3.ams_error = true;
+    CtrlOutput o3 = c3.step(in3, t3); t3 += ControlPeriodMs;
+    CHECK(o3.state == CtrlState::AmsError && !o3.dv_mode, "AmsError pre-empts DV + clears latch");
+    CHECK(o3.inv_mode == InvMode::Off && o3.torque_pct == 0, "inhibited in AmsError");
+}
+
+// uDV autonomous contract (#17) -- RX decode/store + the ECU->uDV TX builders.
+static void test_udv_rx() {
+    std::printf("[udv_rx]\n");
+
+    // 0x507 payload is an integer percent, int32 little-endian on the wire.
+    // 40 -> {28 00 00 00}; -1 -> {FF FF FF FF} (sign-preserving decode).
+    const std::uint8_t p40[4] = {0x28, 0x00, 0x00, 0x00};
+    const std::uint8_t m1[4]  = {0xFF, 0xFF, 0xFF, 0xFF};
+    CHECK(VehicleService::decode_udv_torque_cmd(p40) == 40, "s32 LE decode (40)");
+    CHECK(VehicleService::decode_udv_torque_cmd(m1)  == -1, "s32 LE decode preserves sign (-1)");
+
+    VehicleService& vs = VehicleService::instance();
+    const std::uint32_t ams_tick_before = vs.snapshot().last_ams_tick;
+
+    CanFrame a{};
+    a.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    a.id  = UdvTorqueCmdId;      // 0x507
+    a.dlc = 4;
+    a.data[0]=0x28; a.data[1]=0x00; a.data[2]=0x00; a.data[3]=0x00;   // 40%
+    a.timestamp_ms = 1234;
+    CHECK(vs.update_from_frame(a), "0x507 accepted");
+    CHECK(vs.snapshot().udv_torque_cmd == 40, "torque cmd reaches the snapshot");
+    CHECK(vs.snapshot().last_udv_cmd_tick == 1234u, "0x507 freshness tick stamped");
+
+    CanFrame r{};
+    r.bus = static_cast<std::uint8_t>(CanBus::Acu);
+    r.id  = UdvR2dRequestId;     // 0x510
+    r.dlc = 1;
+    r.data[0] = 1;
+    r.timestamp_ms = 1250;
+    CHECK(vs.update_from_frame(r), "0x510 accepted");
+    CHECK(vs.snapshot().udv_r2d_request == 1u, "R2D request stored");
+    CHECK(vs.snapshot().last_udv_r2d_tick == 1250u, "0x510 freshness tick stamped");
+
+    // The safety property: uDV traffic must NOT refresh the AMS freshness.
+    CHECK(vs.snapshot().last_ams_tick == ams_tick_before, "uDV frames don't touch last_ams_tick");
+
+    // Undersized frames are rejected (dlc guards).
+    CanFrame bad = a; bad.dlc = 3;
+    CHECK(!vs.update_from_frame(bad), "short 0x507 rejected");
+}
+
+static void test_udv_tx() {
+    std::printf("[udv_tx]\n");
+
+    const CanFrame ts = UdvTx::build_ts_active(true);
+    CHECK(ts.id == VCU_ts_active_ID && ts.dlc == 1, "0x504 id/dlc");
+    CHECK(ts.bus == static_cast<std::uint8_t>(CanBus::Acu), "0x504 on the ACU bus");
+    CHECK(ts.data[0] == 1u, "ts_active true -> byte0 = 1");
+    CHECK(UdvTx::build_ts_active(false).data[0] == 0u, "ts_active false -> 0");
+
+    const CanFrame br = UdvTx::build_brake_over_limit(true);
+    CHECK(br.id == VCU_brake_over_limit_ID && br.dlc == 1, "0x505 id/dlc");
+    CHECK(br.data[0] == 1u, "brake over limit -> byte0 = 1");
+    CHECK(UdvTx::build_brake_over_limit(false).data[0] == 0u, "under limit -> 0");
+
+    // 0x506 takes ERPM and transmits MECHANICAL rpm = erpm / MotorPolePairs
+    // (10, powertrain-confirmed), s32 LE. 74560 erpm -> 7456 mech = 0x1D20
+    // -> {20 1D 00 00}; -15 erpm -> -1 mech -> {FF FF FF FF}; -1 erpm -> 0
+    // (integer division truncates toward zero).
+    const CanFrame rp = UdvTx::build_motor_rpm(74560);
+    CHECK(rp.id == VCU_motor_rpm_ID && rp.dlc == 4, "0x506 id/dlc");
+    CHECK(rp.data[0]==0x20 && rp.data[1]==0x1D && rp.data[2]==0x00 && rp.data[3]==0x00,
+          "74560 erpm -> 7456 mechanical rpm, little-endian");
+    const CanFrame rn = UdvTx::build_motor_rpm(-15);
+    CHECK(rn.data[0]==0xFF && rn.data[1]==0xFF && rn.data[2]==0xFF && rn.data[3]==0xFF,
+          "-15 erpm -> -1 mechanical (sign-preserving s32 LE)");
+    CHECK(UdvTx::build_motor_rpm(-1).data[0] == 0x00, "-1 erpm -> 0 (truncates toward zero)");
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -440,6 +618,9 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_rx();
+    test_dv_mode();
+    test_udv_rx();
+    test_udv_tx();
 }
 
 int main(int argc, char** argv) {
@@ -462,6 +643,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
+    else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
+    else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);

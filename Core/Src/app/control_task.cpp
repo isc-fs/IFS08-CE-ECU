@@ -16,6 +16,7 @@
 #include "app/inverter.hpp"
 #include "app/io_signals.hpp"
 #include "app/pit_diag.hpp"
+#include "app/udv_tx.hpp"
 #include "app/vehicle_service.hpp"
 #include "app/watchdog.hpp"
 
@@ -34,6 +35,7 @@ extern "C" void ecu_control_task_run(void *argument) {
     IoSignals  io;
     auto&      vs       = VehicleService::instance();
     uint32_t   last_pit = 0;
+    uint32_t   last_udv = 0;
     uint32_t   tick     = osKernelGetTickCount();
 
     for (;;) {
@@ -81,6 +83,13 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
         ci.v_cell_min_mV     = veh.v_cell_min_mV;
 #endif
+        // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
+        // and the conditioned 0x507 accel command with its own freshness --
+        // stale command => the core commands torque 0 (never APPS fallback).
+        ci.dv_r2d_req    = (veh.udv_r2d_request != 0u) &&
+                           VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
+        ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
+        ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);
@@ -102,6 +111,21 @@ extern "C" void ecu_control_task_run(void *argument) {
             f.dlc = VCU_heartbeat_DLC;
             for (unsigned i = 0; i < VCU_heartbeat_DLC; ++i) f.data[i] = b[i];
             can_tx_post(f);
+        }
+
+        // --- uDV autonomous contract (#17), ACU bus, UNGATED (not pit-diag) ---
+        // 0x506 motor rpm every cycle (10 ms -- the uDV SLAM/odometry input);
+        // 0x504 TS-active + 0x505 brake-over-limit at 100 ms. ts_active is the
+        // FSM's own ok_precharge view (stub-consistent); the brake verdict uses
+        // the SAME threshold that will gate the DV R2D entry.
+        can_tx_post(UdvTx::build_motor_rpm(veh.inv_rpm));
+        if (static_cast<uint32_t>(now - last_udv) >= 100u) {
+            last_udv = now;
+            can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
+            can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
+            // 0x511 R2D confirm: repeated at 100 ms (loss-robust) with the DV
+            // latch as the value -- uDV keys on byte0 != 0.
+            can_tx_post(UdvTx::build_r2d_confirm(out.dv_mode));
         }
 
         // --- inverter setpoints (FDCAN1), EVERY cycle: PLAIN 0x360 mode + 0x362
