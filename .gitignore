@@ -40,3 +40,9 @@ test_output/
 
 # Windows
 Thumbs.db
+
+# Editor / IDE local config — .vscode/settings.json is the ONE shared file
+# (committed for the team's ISC MingoCAN flasher build+flash config);
+# everything else in .vscode/ (launch.json, personal tweaks) stays local.
+.vscode/*
+!.vscode/settings.json
