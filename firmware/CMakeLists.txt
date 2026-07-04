@@ -8,8 +8,8 @@
 # plus the hand-written C++17 application in Core/Src/app/. The host SIL/unit
 # tests live at the repo-root CMakeLists and are unaffected.
 #
-# NOTE: depends on a lean CubeMX regen of ECU.ioc (FDCAN1+2 only, the 6 tasks +
-# 2 queues, no SPI/I2C/FDCAN3, the startup_*.s). Globs Core/Src so it tracks the
+# NOTE: depends on a lean CubeMX regen of ECU.ioc (FDCAN1+2+3, the RTOS tasks +
+# queues, no SPI/I2C, the startup_*.s). Globs Core/Src so it tracks the
 # regen output automatically -- re-run cmake configure after a regen adds files.
 # ============================================================================
 cmake_minimum_required(VERSION 3.15)
@@ -26,7 +26,7 @@ endif()
 
 # Repo root (this file is in firmware/).
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/..)
-set(LINKER_SCRIPT ${REPO}/STM32H733ZGTX_FLASH.ld)
+set(LINKER_SCRIPT ${REPO}/STM32H733ZGTX_FLASH.ld CACHE FILEPATH "Linker script")
 
 # --- Firmware identity baked into the bootloader fwinfo record -------------
 # (Core/Src/app/firmware_info.cpp). Git short hash split into 4 bytes; build epoch.
@@ -86,6 +86,12 @@ endif()
 option(ECU_STUB_NO_INVERTER "Bypass the inverter gates to reach Active (calibration only)" OFF)
 if(ECU_STUB_NO_INVERTER)
   add_compile_definitions(ECU_STUB_NO_INVERTER)
+endif()
+
+# Bench image only -- publish non-zero telemetry without CAN inputs.
+option(ECU_TELEMETRY_DUMMY_DATA "Send dummy DASH/radio telemetry (bench only)" OFF)
+if(ECU_TELEMETRY_DUMMY_DATA)
+  add_compile_definitions(ECU_TELEMETRY_DUMMY_DATA)
 endif()
 
 # (Torque cap is now a source constant -- ecu_config.hpp TorqueCap, applied

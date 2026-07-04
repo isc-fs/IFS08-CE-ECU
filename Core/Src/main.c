@@ -27,9 +27,9 @@
 #include "usart.h"
 #include "usb_otg.h"
 #include "gpio.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "nrf24.h"
 
 /* USER CODE END Includes */
 
@@ -63,6 +63,20 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint8_t s_boot_uart_ready = 0U;
+
+static void Boot_UartPuts(const char *s)
+{
+  if (s_boot_uart_ready == 0U) {
+    return;
+  }
+
+  uint16_t n = 0U;
+  while ((s[n] != '\0') && (n < 80U)) {
+    ++n;
+  }
+  (void)HAL_UART_Transmit(&huart10, (uint8_t *)s, n, 20U);
+}
 
 /* USER CODE END 0 */
 
@@ -116,14 +130,19 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_USART10_UART_Init();
+  s_boot_uart_ready = 1U;
+  Boot_UartPuts("BOOT uart\r\n");
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
+  MX_FDCAN3_Init();
+  Boot_UartPuts("BOOT fdcan\r\n");
   MX_TIM1_Init();
   MX_TIM16_Init();
   MX_ADC3_Init();
-  MX_USART10_UART_Init();
   MX_USB_OTG_HS_PCD_Init();
   MX_IWDG1_Init();
+  Boot_UartPuts("BOOT periph\r\n");
   /* USER CODE BEGIN 2 */
   /* H7: HAL_PWR_EnableBkUpAccess() unlocks backup-domain WRITES but does not
    * clock the RTC. The fault latch (error_latch) and the BL boot-magic
@@ -135,11 +154,16 @@ int main(void)
   if ((RCC->BDCR & RCC_BDCR_RTCEN) == 0U) {
     __HAL_RCC_RTC_ENABLE();
   }
+  NRF24_BusInit();
+  Boot_UartPuts("BOOT nrf bus\r\n");
+  (void)NRF24_ApplyDefaultConfig();
+  Boot_UartPuts("BOOT nrf cfg\r\n");
   /* USER CODE END 2 */
 
   /* Init scheduler */
   osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
   MX_FREERTOS_Init();
+  Boot_UartPuts("BOOT rtos\r\n");
 
   /* Start scheduler */
   osKernelStart();
@@ -252,6 +276,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  Boot_UartPuts("ERR\r\n");
   __disable_irq();
   while (1)
   {

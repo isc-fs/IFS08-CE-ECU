@@ -356,7 +356,7 @@ Comportamiento relevante:
 
 ## 5. CAN dash
 
-Estas tramas se generan en `DashTask` a partir de `telemetry_frame_t`.
+Estas tramas se generan en `TelemetryTask` cada 200 ms.
 La salida al dash va por `CAN_BUS_DASH` (`FDCAN3`).
 
 ### ID `0x510`
@@ -424,7 +424,34 @@ La salida al dash va por `CAN_BUS_DASH` (`FDCAN3`).
 - DLC: `4`
 - Uso: `inv_current_actual` completo
 
-## 6. Snapshot interno (`app_inputs_t`)
+## 6. Radio TE
+
+`TelemetryTask` toma el mismo snapshot cada 200 ms y lo encola para
+`RadioTxTask` como `RF_SNAPSHOT`, compatible con TE:
+
+- payload radio: `32` bytes
+- cabecera: `magic=0xEC`, `version=0x03`, `kind=6`
+- `fragment_index`: `0..4`
+- `fragment_count`: `5`
+- datos utiles por fragmento: `24` bytes (`payload[8..31]`)
+- snapshot reensamblado: `102` bytes little-endian
+
+El layout del snapshot reensamblado es el que decodifica
+`IFS08-TE-main/ISC_REAL_TIME_25/ISC_RTT_serial.py` en `_decode_rf_snapshot()`:
+
+| Offset | Campo |
+|---|---|
+| `0..3` | `tick_ms` |
+| `4..5` | `sequence` |
+| `6` | `boton_arranque` |
+| `7..12` | `s1_aceleracion`, `s2_aceleracion`, `s_freno` |
+| `13..17` | `torque_total`, flags y estado FSM ECU |
+| `18..22` | `ok_precarga`, estado AMS, `v_celda_min`, `soc` |
+| `23..58` | min/max/tcorrientes/temperaturas de modulos AMS |
+| `59..81` | estado, error, tension, temperaturas, rpm, velocidad y corriente inversor |
+| `82..101` | GPS; actualmente se envia a cero si no hay fuente GPS |
+
+## 7. Snapshot interno (`app_inputs_t`)
 
 El snapshot interno compartido por la aplicacion contiene, entre otros, estos
 campos relevantes para ECU <-> AMS:
@@ -444,7 +471,7 @@ campos relevantes para ECU <-> AMS:
 
 Definicion: `Core/Inc/app_state.h`
 
-## 7. Notas de mantenimiento
+## 8. Notas de mantenimiento
 
 Si cambia el contrato ECU <-> AMS, hay que revisar como minimo:
 

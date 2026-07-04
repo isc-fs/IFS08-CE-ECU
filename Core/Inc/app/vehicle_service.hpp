@@ -29,6 +29,8 @@ struct VehicleState {
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
+    std::int32_t  inv_speed_actual  = 0;  // 0x465 actual speed
+    std::int32_t  inv_current_actual = 0; // 0x465 actual current
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
@@ -40,6 +42,13 @@ struct VehicleState {
     bool          ok_precharge      = false;  // 0x020 byte0 != 0
     std::uint16_t v_cell_min_mV     = 0;      // 0x12C / 0x4A0
     std::uint8_t  ams_fsm_state     = 0;      // 0x4A0 byte0 (== AmsFsmError -> Error)
+    std::uint8_t  soc               = 0;      // 0x130
+    std::uint16_t vmin_modulo[5]    = {};
+    std::uint16_t vmax_modulo[5]    = {};
+    std::int16_t  corriente_accu    = 0;
+    std::int16_t  corriente_dcdc    = 0;
+    std::int16_t  temp_dcdc         = 0;
+    std::int16_t  temp_max_modulo[5] = {};
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
     // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---
@@ -73,6 +82,8 @@ public:
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
     static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
+    static std::int16_t  decode_be_s16(const std::uint8_t* d) noexcept;
+    static std::uint16_t decode_be_u16(const std::uint8_t* d) noexcept;
     static std::int32_t  decode_udv_torque_cmd(const std::uint8_t* d) noexcept; // 0x507 s32 LE (integer %)
 
     // Condition the 0x507 integer percent into what the control core consumes:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // Single strong override of the HAL's weak HAL_FDCAN_RxFifo0Callback. Fires for
-// BOTH FDCAN1 (INV) and FDCAN2 (ACU); tags the frame with its bus and pushes it
+// FDCAN1 (INV), FDCAN2 (ACU) and FDCAN3 (DASH); tags the frame with its bus and pushes it
 // onto can_rx_queue for CanRxTask to dispatch. Non-blocking (ISR context): a
 // full queue drops the frame and bumps a counter.
 
@@ -15,6 +15,7 @@ extern "C" {
 
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 extern osMessageQueueId_t  can_rx_queueHandle;
 
 // ISR-side drop counter (queue full / pre-scheduler). Surfaced on a diag frame.
@@ -31,6 +32,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     uint8_t bus;
     if      (hfdcan == &hfdcan1) bus = 0u;  // CanBus::Inv
     else if (hfdcan == &hfdcan2) bus = 1u;  // CanBus::Acu
+    else if (hfdcan == &hfdcan3) bus = 2u;  // CanBus::Dash
     else                         return;
 
     FDCAN_RxHeaderTypeDef rxh;

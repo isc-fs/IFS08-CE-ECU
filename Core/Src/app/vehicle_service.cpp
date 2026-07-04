@@ -20,8 +20,7 @@ bool VehicleService::decode_ok_precharge(const std::uint8_t* d) noexcept {
 }
 
 std::uint16_t VehicleService::decode_v_cell_min(const std::uint8_t* d) noexcept {
-    return static_cast<std::uint16_t>(                       // BE16 @ bytes 0-1
-        (static_cast<std::uint16_t>(d[0]) << 8) | d[1]);
+    return decode_be_u16(d);                                 // BE16 @ bytes 0-1
 }
 
 std::uint8_t VehicleService::decode_ams_fsm_state(const std::uint8_t* d) noexcept {
@@ -29,8 +28,7 @@ std::uint8_t VehicleService::decode_ams_fsm_state(const std::uint8_t* d) noexcep
 }
 
 std::uint16_t VehicleService::decode_ams_min_cell(const std::uint8_t* d) noexcept {
-    return static_cast<std::uint16_t>(                       // BE16 @ bytes 4-5
-        (static_cast<std::uint16_t>(d[4]) << 8) | d[5]);
+    return decode_be_u16(&d[4]);                             // BE16 @ bytes 4-5
 }
 
 std::uint8_t VehicleService::decode_inv_state(const std::uint8_t* d) noexcept {
@@ -41,6 +39,15 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
     // DCBus_Voltage_V: 10-bit little-endian starting at frame bit 16.
     return static_cast<std::uint16_t>(
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
+}
+
+std::uint16_t VehicleService::decode_be_u16(const std::uint8_t* d) noexcept {
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(d[0]) << 8) | d[1]);
+}
+
+std::int16_t VehicleService::decode_be_s16(const std::uint8_t* d) noexcept {
+    return static_cast<std::int16_t>(decode_be_u16(d));
 }
 
 std::int32_t VehicleService::decode_udv_torque_cmd(const std::uint8_t* d) noexcept {
@@ -110,6 +117,17 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_inv_tick   = f.timestamp_ms;
             return true;
         }
+        if (f.id == 0x465u) {
+            if (f.dlc < 6) return false;
+            state_.inv_speed_actual = static_cast<std::int16_t>(
+                static_cast<std::uint16_t>(f.data[2]) |
+                (static_cast<std::uint16_t>(f.data[3]) << 8));
+            state_.inv_current_actual = static_cast<std::int16_t>(
+                static_cast<std::uint16_t>(f.data[4]) |
+                (static_cast<std::uint16_t>(f.data[5]) << 8));
+            state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
         if (f.id == config::InvRxDcBusId) {                 // 0x466
             if (f.dlc < 4) return false;
             state_.inv_dc_bus_V      = decode_inv_dc_bus_V(f.data);
@@ -137,6 +155,65 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             if (f.dlc < 8) return false;
             state_.ams_fsm_state = decode_ams_fsm_state(f.data);
             state_.v_cell_min_mV = decode_ams_min_cell(f.data);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x130u) {
+            if (f.dlc < 1) return false;
+            state_.soc = f.data[0];
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x131u) {
+            if (f.dlc < 6) return false;
+            state_.vmin_modulo[0] = decode_be_u16(&f.data[0]);
+            state_.vmin_modulo[1] = decode_be_u16(&f.data[2]);
+            state_.vmin_modulo[2] = decode_be_u16(&f.data[4]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x132u) {
+            if (f.dlc < 4) return false;
+            state_.vmin_modulo[3] = decode_be_u16(&f.data[0]);
+            state_.vmin_modulo[4] = decode_be_u16(&f.data[2]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x133u) {
+            if (f.dlc < 6) return false;
+            state_.vmax_modulo[0] = decode_be_u16(&f.data[0]);
+            state_.vmax_modulo[1] = decode_be_u16(&f.data[2]);
+            state_.vmax_modulo[2] = decode_be_u16(&f.data[4]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x134u) {
+            if (f.dlc < 4) return false;
+            state_.vmax_modulo[3] = decode_be_u16(&f.data[0]);
+            state_.vmax_modulo[4] = decode_be_u16(&f.data[2]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x135u) {
+            if (f.dlc < 4) return false;
+            state_.corriente_accu = decode_be_s16(&f.data[0]);
+            state_.corriente_dcdc = decode_be_s16(&f.data[2]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x136u) {
+            if (f.dlc < 6) return false;
+            state_.temp_max_modulo[0] = decode_be_s16(&f.data[0]);
+            state_.temp_max_modulo[1] = decode_be_s16(&f.data[2]);
+            state_.temp_max_modulo[2] = decode_be_s16(&f.data[4]);
+            state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == 0x137u) {
+            if (f.dlc < 6) return false;
+            state_.temp_max_modulo[3] = decode_be_s16(&f.data[0]);
+            state_.temp_max_modulo[4] = decode_be_s16(&f.data[2]);
+            state_.temp_dcdc = decode_be_s16(&f.data[4]);
             state_.last_ams_tick = f.timestamp_ms;
             return true;
         }

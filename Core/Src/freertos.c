@@ -29,6 +29,7 @@
 #include "app/app_globals.h"   /* ecu_app_globals_init, ecu_fault_latch_set_c */
 #include "app/app_tasks.h"     /* ecu_*_task_run trampolines */
 #include "app/can_frame.h"     /* CanFrame -> sizeof() for the queues below */
+#include "app/telemetry.h"     /* EcuRadioPacket -> radio queue item */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,6 +93,20 @@ const osThreadAttr_t DiagTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for TelemetryTask */
+osThreadId_t TelemetryTaskHandle;
+const osThreadAttr_t TelemetryTask_attributes = {
+  .name = "TelemetryTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for RadioTxTask */
+osThreadId_t RadioTxTaskHandle;
+const osThreadAttr_t RadioTxTask_attributes = {
+  .name = "RadioTxTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for can_rx_queue */
 osMessageQueueId_t can_rx_queueHandle;
 const osMessageQueueAttr_t can_rx_queue_attributes = {
@@ -101,6 +116,11 @@ const osMessageQueueAttr_t can_rx_queue_attributes = {
 osMessageQueueId_t can_tx_queueHandle;
 const osMessageQueueAttr_t can_tx_queue_attributes = {
   .name = "can_tx_queue"
+};
+/* Definitions for telemetry_radio_queue */
+osMessageQueueId_t telemetry_radio_queueHandle;
+const osMessageQueueAttr_t telemetry_radio_queue_attributes = {
+  .name = "telemetry_radio_queue"
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -114,6 +134,8 @@ void StartControlTask(void *argument);
 void StartCanRxTask(void *argument);
 void StartCanTxTask(void *argument);
 void StartDiagTask(void *argument);
+void StartTelemetryTask(void *argument);
+void StartRadioTxTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -178,6 +200,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of can_tx_queue */
   can_tx_queueHandle = osMessageQueueNew (32, sizeof(CanFrame), &can_tx_queue_attributes);
 
+  /* creation of telemetry_radio_queue */
+  telemetry_radio_queueHandle = osMessageQueueNew (8, sizeof(EcuRadioPacket), &telemetry_radio_queue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -200,6 +225,12 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of DiagTask */
   DiagTaskHandle = osThreadNew(StartDiagTask, NULL, &DiagTask_attributes);
+
+  /* creation of TelemetryTask */
+  TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
+
+  /* creation of RadioTxTask */
+  RadioTxTaskHandle = osThreadNew(StartRadioTxTask, NULL, &RadioTxTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -297,6 +328,34 @@ void StartDiagTask(void *argument)
   /* USER CODE BEGIN StartDiagTask */
   ecu_diag_task_run(argument);
   /* USER CODE END StartDiagTask */
+}
+
+/* USER CODE BEGIN Header_StartTelemetryTask */
+/**
+* @brief Function implementing the TelemetryTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTelemetryTask */
+void StartTelemetryTask(void *argument)
+{
+  /* USER CODE BEGIN StartTelemetryTask */
+  ecu_telemetry_task_run(argument);
+  /* USER CODE END StartTelemetryTask */
+}
+
+/* USER CODE BEGIN Header_StartRadioTxTask */
+/**
+* @brief Function implementing the RadioTxTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartRadioTxTask */
+void StartRadioTxTask(void *argument)
+{
+  /* USER CODE BEGIN StartRadioTxTask */
+  ecu_radio_tx_task_run(argument);
+  /* USER CODE END StartRadioTxTask */
 }
 
 /* Private application code --------------------------------------------------*/

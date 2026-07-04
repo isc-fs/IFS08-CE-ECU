@@ -98,6 +98,12 @@ extern "C" void ecu_control_task_run(void *argument) {
         if (out.torque_pct > config::TorqueCap) {
             out.torque_pct = config::TorqueCap;
         }
+        g_control_telemetry.state       = static_cast<uint8_t>(out.state);
+        g_control_telemetry.torque_pct  = out.torque_pct;
+        g_control_telemetry.ev_2_3      = out.ev_2_3 ? 1u : 0u;
+        g_control_telemetry.t11_8_9     = out.t11_8_9 ? 1u : 0u;
+        g_control_telemetry.ok_to_drive = out.ok_to_drive ? 1u : 0u;
+        g_control_telemetry.dv_mode     = out.dv_mode ? 1u : 0u;
 
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {

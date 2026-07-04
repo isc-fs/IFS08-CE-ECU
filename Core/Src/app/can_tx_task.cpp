@@ -17,6 +17,7 @@
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;          // INV
 extern FDCAN_HandleTypeDef hfdcan2;          // ACU / shared
+extern FDCAN_HandleTypeDef hfdcan3;          // DASH
 extern osMessageQueueId_t  can_tx_queueHandle;
 }
 
@@ -31,8 +32,12 @@ const uint32_t kDlcCode[9] = {
 };
 
 void hal_send(const ecu::CanFrame& f) {
-    FDCAN_HandleTypeDef* h =
-        (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv)) ? &hfdcan1 : &hfdcan2;
+    FDCAN_HandleTypeDef* h = &hfdcan2;
+    if (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv)) {
+        h = &hfdcan1;
+    } else if (f.bus == static_cast<uint8_t>(ecu::CanBus::Dash)) {
+        h = &hfdcan3;
+    }
 
     FDCAN_TxHeaderTypeDef tx = {};
     tx.Identifier          = f.id;

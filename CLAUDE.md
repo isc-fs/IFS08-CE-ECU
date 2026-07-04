@@ -45,6 +45,8 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 | `CanRxTask`    | AboveNormal   | ~RX     | Drena `can_rx_queue`. Despacha: trigger BL → cmd pit-diag → VehicleService. |
 | `CanTxTask`    | AboveNormal   | ~TX     | Drena `can_tx_queue` → `HAL_FDCAN_AddMessageToTxFifoQ`. |
 | `DiagTask`     | Low           | 1000 ms | Emite `0x704` (health) **aparte de ControlTask**, para sobrevivir a un cuelgue de éste. |
+| `TelemetryTask`| —             | ~ms     | Construye el frame de telemetría (io + veh + ctrl), lo manda al dash y fragmenta un snapshot a `telemetry_radio_queue`. |
+| `RadioTxTask`  | —             | ~cola   | Único dueño del bus nRF24 (`ecu_radio_tx_task_run`, `telemetry_task.cpp`). Drena `telemetry_radio_queue` → `Telemetry_RadioSend()`. Corre el diag de banco del nRF24 una vez al arrancar (ver sección nRF24 más abajo). |
 
 ---
 
@@ -181,6 +183,47 @@ uDV 0x03).
 
 ---
 
+## Telemetría radio (nRF24) — SPI **por software**, no periférico SPI1
+
+**El periférico SPI1 hardware de este board no lee MISO correctamente** (bench-confirmado
+2026-07: `SPI1->SR`/HAL reportaban transferencia OK pero MISO leía `0xFF` fijo, en TODAS las
+condiciones probadas — prescaler /64 y /256, dos módulos nRF24 distintos, cableado
+revisado). Un bit-bang GPIO puro en los mismos pines, en cambio, lee el STATUS real del
+chip (`0x0E`) de forma perfecta y repetible. Módulo y cableado quedaron descartados como
+causa; el fallo está aislado al *capture path* del propio periférico SPI1 en este
+MCU/board, sin causa raíz confirmada (habría que instrumentar con osciloscopio/analizador
+lógico, no disponible en el bench).
+
+**Consecuencia: `Core/Src/spi.c` y `Core/Inc/spi.h` fueron eliminados.** SPI1 no se usa en
+absoluto en el firmware actual. Todo el protocolo nRF24 se clockea a mano:
+
+- `NRF24_BusInit()` (`Core/Src/nrf24.c`) toma PA5/PA6/PA7 (SCK/MOSI/MISO) como **GPIO puro
+  permanente** — nunca vuelven a modo AF de SPI1.
+- `NRF24_BitBangTransfer()` (`Core/Src/nrf24.c`) es el transporte real: reemplaza a los
+  antiguos `SPI1_Transfer`/`SPI1_Transfer8` en los tres call-sites (`NRF24_SpiTransfer`,
+  `NRF24_ReadRawNop4`, `NRF24_ExecuteCommand`). Throughput de sobra para telemetría (unos
+  pocos ms por payload de 32 bytes).
+- Pines sin cambios respecto al diseño original: `NRF24_CS`=PB0, `NRF24_CE`=PC5,
+  `NRF24_IRQ`=PC4.
+- `NRF24_DiagnoseSerial()` corre **una sola vez**, al arrancar `ecu_radio_tx_task_run`
+  (`Core/Src/app/telemetry_task.cpp`, única tarea dueña del bus nRF24). Imprime por
+  USART10 (PG12 TX, 115200 8N1) un veredicto de banco: NOP/REG/write-readback de RF_CH
+  con dos patrones (`0x2A`/`0x15`). Si el nRF24 alguna vez vuelve a fallar (módulo,
+  cableado, alimentación), este es el primer sitio a mirar — el mensaje `VERDICT:`
+  distingue MISO-siempre-alto, MISO-siempre-bajo e inestable.
+- `g_spi_diag`/`ecu_spi_diag_t` (campos SPI del log `TASK` por UART) fueron retirados de
+  `app_globals.*` y `diag_task.cpp` — quedaban congelados en 0 al no usarse ya el
+  periférico.
+
+**Si en el futuro se quiere retomar el SPI1 hardware:** el punto de partida sería revisar
+`hspi1.Init.MasterSSIdleness`/`MasterInterDataIdleness` (ambos en 0 ciclos actualmente) o
+comparar formas de onda SCK/MOSI/MISO en HW-SPI vs bit-bang con un osciloscopio — nunca se
+llegó a esa instrumentación. Mientras tanto, **no reintroducir `spi.c`/`spi.h` sin repetir
+esta comparación**; si se regenera código desde `ECU.ioc` en CubeMX, es probable que
+vuelvan a aparecer con SPI1 habilitado y haya que borrarlos de nuevo.
+
+---
+
 ## Cómo compilar y correr SIL
 
 ```bash
@@ -213,6 +256,8 @@ CubeMX exige editar ese CMakeLists a mano).
 | `Core/Src/app/inverter.cpp` | Adaptador inversor NX/EMC: setpoints 0x360/0x362, decode 0x461/63/66. |
 | `Core/Src/app/vehicle_service.cpp` | Estado RX compartido (snapshot por control). |
 | `Core/Src/app/{bootloader,error_latch,reset_cause,firmware_info,pit_diag,watchdog}.cpp` | Trigger BL (0x002), latch de fault en BKPxR, reset cause, fwinfo (0x703), builders pit-diag, helpers IWDG. |
+| `Core/Src/app/telemetry_task.cpp` | `TelemetryTask` + `RadioTxTask` (único dueño del bus nRF24). Corre `NRF24_DiagnoseSerial()` al arrancar. |
+| `Core/Src/nrf24.c` · `Core/Inc/nrf24.h` | Driver nRF24 **por bit-bang GPIO** (sin SPI1 hardware, ver sección arriba). `NRF24_BitBangTransfer` es el transporte real. |
 | `Core/Inc/can/messages/*.def` + `all_messages.inc` | DSL CAN (fuente de verdad). |
 | `Core/Src/{main,fdcan,freertos}.c` | Handoff BL (#48), MX FDCAN + offset 387w, attrs de tareas. |
 | `docs/dbc/ecu.dbc` | DBC generado del DSL (dbcinator lo mantiene). |

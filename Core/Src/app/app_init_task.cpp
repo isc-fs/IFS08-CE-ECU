@@ -28,6 +28,7 @@
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;   // INV  (FDCAN1)
 extern FDCAN_HandleTypeDef hfdcan2;   // ACU  (FDCAN2, shared + flash)
+extern FDCAN_HandleTypeDef hfdcan3;   // DASH (FDCAN3)
 }
 
 // Bring-up milestones + per-instance results, surfaced on the diag stream so an
@@ -38,6 +39,7 @@ extern "C" {
 volatile std::uint8_t  g_app_init_progress    = 0;
 volatile std::uint32_t g_fdcan1_start_result  = 0xFFFFFFFFu;
 volatile std::uint32_t g_fdcan2_start_result  = 0xFFFFFFFFu;
+volatile std::uint32_t g_fdcan3_start_result  = 0xFFFFFFFFu;
 }
 
 namespace {
@@ -80,6 +82,7 @@ extern "C" void ecu_app_init_task_run(void *argument) {
     g_app_init_progress   = 4u;
     g_fdcan1_start_result = static_cast<std::uint32_t>(bring_up(&hfdcan1));
     g_app_init_progress   = 5u;
+    g_fdcan3_start_result = static_cast<std::uint32_t>(bring_up(&hfdcan3));
 
     g_app_init_progress = 6u;
     osThreadExit();   // single-shot: free the TCB + stack
