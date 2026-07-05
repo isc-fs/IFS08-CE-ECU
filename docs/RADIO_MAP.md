@@ -1,5 +1,10 @@
 # Radio Map
 
+> ⚠️ **SUPERSEDED (2026-07-05).** This documents the old RF_FAST/RF_SLOW
+> multi-kind protocol (version `0x02`), which the ground station **no longer
+> parses**. The current radio contract is the v2 fragmented snapshot —
+> see **[RADIO_SNAPSHOT_MAP.md](RADIO_SNAPSHOT_MAP.md)**. Kept for history.
+
 Contrato actual de radio entre la ECU y `IFS08-TE-main`.
 
 La ECU no envia floats ni IDs `0x600/0x610/...` por `nRF24`.
