@@ -33,6 +33,8 @@ class PitDiag {
 public:
     static CanFrame build_status(const CtrlOutput& c, const VehicleState& v,
                                  bool start_button) noexcept;   // 0x700
+    static CanFrame build_dv(const CtrlOutput& c, const CtrlInputs& in,
+                             const VehicleState& v) noexcept;   // 0x707
     static CanFrame build_pedals(const IoInputs& io) noexcept;  // 0x701
     static CanFrame build_inverter(const VehicleState& v) noexcept; // 0x702
     static CanFrame build_inverter_temps(const VehicleState& v) noexcept; // 0x706

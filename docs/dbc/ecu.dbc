@@ -63,6 +63,7 @@ BO_ 1792 PitDiag_status: 8 VCU
  SG_ rtds_active : 18|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ ok_precharge : 19|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ start_button : 20|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ dv_mode : 21|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ torque_pct : 24|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ v_cell_min_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
  SG_ torque_cmd : 55|16@0- (1,0) [0|0] "cmd" Vector__XXX
@@ -106,6 +107,15 @@ BO_ 1796 PitDiag_health: 8 VCU
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
 
+BO_ 1799 PitDiag_dv: 8 VCU
+ SG_ dv_r2d_req : 0|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ dv_cmd_fresh : 1|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ ts_active : 2|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ brake_over_limit : 3|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ r2d_confirm : 4|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ dv_torque_pct : 8|8@1+ (1,0) [0|0] "%" Vector__XXX
+ SG_ motor_rpm_mech : 16|16@1- (1,0) [0|0] "rpm" Vector__XXX
+
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -143,6 +153,7 @@ BA_ "GenMsgCycleTime" BO_ 1794 100;
 BA_ "GenMsgCycleTime" BO_ 1798 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
+BA_ "GenMsgCycleTime" BO_ 1799 100;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 1184 500;

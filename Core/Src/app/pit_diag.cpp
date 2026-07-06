@@ -44,12 +44,28 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     s.rtds_active  = c.rtds_on ? 1u : 0u;
     s.ok_precharge = v.ok_precharge ? 1u : 0u;
     s.start_button = start_button ? 1u : 0u;
+    s.dv_mode      = c.dv_mode ? 1u : 0u;   // #109: DV drive latched this cycle
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
     s.torque_cmd    = 0;   // inverter unit-map deferred (task #10)
     std::uint8_t b[PitDiag_status_DLC];
     encode_PitDiag_status(s, b);
     return make_acu(PitDiag_status_ID, b);
+}
+
+CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
+                           const VehicleState& v) noexcept {
+    PitDiag_dv_t d{};
+    d.dv_r2d_req       = in.dv_r2d_req ? 1u : 0u;                            // uDV 0x510 set+fresh
+    d.dv_cmd_fresh     = in.dv_fresh ? 1u : 0u;                              // uDV 0x507 stream fresh
+    d.ts_active        = in.ok_precharge ? 1u : 0u;                         // TX 0x504 view
+    d.brake_over_limit = (in.brake_raw > config::BrakeDvHardRaw) ? 1u : 0u; // TX 0x505 verdict
+    d.r2d_confirm      = c.dv_mode ? 1u : 0u;                               // TX 0x511 (== latched)
+    d.dv_torque_pct    = in.dv_torque_pct;                                  // conditioned 0x507
+    d.motor_rpm_mech   = static_cast<std::int16_t>(v.inv_rpm / config::MotorPolePairs);
+    std::uint8_t b[PitDiag_dv_DLC];
+    encode_PitDiag_dv(d, b);
+    return make_acu(PitDiag_dv_ID, b);
 }
 
 CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {

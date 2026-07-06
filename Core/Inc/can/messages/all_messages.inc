@@ -28,6 +28,7 @@
 #include "pit_diag_inverter_temps.def" /* 0x706  inverter temperatures        */
 #include "pit_diag_fwinfo.def"      /* 0x703                                  */
 #include "pit_diag_health.def"      /* 0x704                                  */
+#include "pit_diag_dv.def"          /* 0x707  DV drive-mode + autonomy (#109)  */
 
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */

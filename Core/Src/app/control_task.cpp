@@ -157,6 +157,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             static_cast<uint32_t>(now - last_pit) >= config::PitDiagStreamMs) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
+            can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
             can_tx_post(PitDiag::build_pedals(in));
             can_tx_post(PitDiag::build_inverter(veh));
             can_tx_post(PitDiag::build_inverter_temps(veh));
