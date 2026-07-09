@@ -45,7 +45,7 @@ inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 
 inline constexpr uint16_t Apps2AdcMin          = 2345;  // bench-cal (rest 2332 + margin)
 inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 - headroom)
 
-inline constexpr uint16_t BrakeArmRaw          = 900;   // COMMISSION: brake-to-arm (R2D)
+inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
