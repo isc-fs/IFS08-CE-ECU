@@ -130,3 +130,52 @@ arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU0
 **Bonus — settles the open E2E question.** If the inverter reaches Ready and the wheels
 spin from the plain `0x362` frames, the NX/EMC inverter **doesn't need E2E** (close E-004).
 If it never leaves `WaitInvStandby`, or ignores torque, E2E (or a config word) is required.
+
+---
+
+## 4. DV (driverless) R2D + torque without TS (`StubNoAms` + `StubNoInverter`)
+
+Exercise the **autonomous** drive path — the uDV requests R2D and streams torque — with
+**no tractive system energised**, a **real uDV on the FDCAN2 (ACU) bus**. The DV trigger is
+latched once at `WaitStartBrake`: `dv_r2d_req && brake_raw > BrakeDvHardRaw` — no start
+button, the EBS holds the hard braking, and the ECU verifies it on its own brake sensor
+(see [uDV integration #17](https://github.com/isc-fs/IFS08-CE-ECU/issues/17)).
+
+Two `ecu_config.hpp` toggles open the ladder to `Active` without HV; **`StubStart` must stay
+`false`** — manual wins the manual/DV precedence tie, so a stubbed start button would preempt
+the DV trigger:
+
+- **`config::StubNoAms`** — clears `Precharge` (as §3). **Disables the AMS safety gate.**
+- **`config::StubNoInverter`** — assumes the inverter vconfig + `Ready` state, clearing both
+  inverter gates (`WaitInvVdcConfig` + `WaitInvStandby`) so the FSM reaches `Active` with no
+  inverter on FDCAN1.
+
+**Brake** — the DV R2D gate needs `brake_raw > BrakeDvHardRaw` (2500):
+- If the **real EBS presses** the brake above 2500, leave `StubBrakeRaw = 0` (real ADC).
+- Otherwise set `StubBrakeRaw` above 2500 (and below `BrakePressedRaw` 3000, to dodge
+  EV.2.3) — e.g. `2700`.
+
+> **⚠ SAFETY.** No AMS, no inverter handshake — the same envelope as §3 (PSU limits + torque
+> cap + car on stands). Keep `TorqueCap` low for on-stands work; **`100` for flight only**.
+> BL-recovery-check first (`0x002` / `0xB007AD12`); never power-cut mid-write.
+
+**Build** — set the toggles in `ecu_config.hpp` (the `bench/car-stubs` branch already has
+them), then the ordinary firmware build (no `-D` stub flags):
+```bash
+#   ecu_config.hpp: StubNoAms = true;  StubNoInverter = true;  StubStart = false;
+#                   StubBrakeRaw = 2700;   // only if the EBS isn't pressing the brake
+cmake -S firmware -B build-fw-dv \
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
+cmake --build build-fw-dv
+```
+
+**Sequence**
+1. Flash it (`StubStart` **false**). Power the ECU; the real uDV joins FDCAN2.
+2. FSM walks `Precharge → WaitStartBrake` on the stubs. The ECU streams the uDV feed the
+   whole time: `0x506` motor rpm @10 ms, `0x504` TS-active / `0x505` brake-over-limit /
+   `0x511` R2D-confirm @100 ms.
+3. **uDV sends `0x510`** (R2D request) with the brake over 2500 → the ECU latches DV,
+   RTDS sounds (2 s), walks to `Active`. Confirm on pit-diag: `0x700` `dv_mode` bit set,
+   and `0x707` shows `dv_r2d_req` / `brake_over_limit` / `r2d_confirm`.
+4. **uDV streams `0x507`** torque % → conditioned to negative mechanical torque on `0x362`;
+   a stale command (> `UdvCmdStaleMs` 100 ms) commands **0**, never an APPS fallback.
