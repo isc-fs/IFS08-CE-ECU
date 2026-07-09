@@ -46,53 +46,60 @@ mapping.
 
 ---
 
-## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `ECU_STUB_START`)
+## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `StubStart`)
 
 R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on
 `dv_r2d_req && brake_raw > BrakeDvHardRaw` (`control.cpp`). During bring-up the brake
 line may be unpressurized and/or the start button unwired, leaving the FSM stuck in
 `WaitStartBrake`. Make the app **assume** those inputs so the **real** R2D/RTDS sequence
-runs — nothing to inject, no CAN traffic, no globals:
+runs — nothing to inject, no CAN traffic, no globals. **Both are config values in
+`ecu_config.hpp`, NOT build flags** — a false/zero toggle folds away at compile time
+(`if constexpr` / `!= 0`), so a flight `dev` build carries no stub code:
 
-- **`config::StubBrakeRaw`** (`ecu_config.hpp`, **not a build flag**) — a nonzero value is
-  injected as `brake_raw` instead of reading the ADC. Set it ABOVE the threshold you need:
-  `BrakeArmRaw` (900) for manual R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700),
-  and BELOW `BrakePressedRaw` (3000) to dodge the EV.2.3 cut. `0` = read the real ADC.
-- **`ECU_STUB_START`** — compile-time flag; `start_button` is taken as pressed (PB5 isn't read).
+- **`config::StubBrakeRaw`** — a nonzero value is injected as `brake_raw` instead of
+  reading the ADC. Set it ABOVE the threshold you need: `BrakeArmRaw` (900) for manual
+  R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700), and BELOW `BrakePressedRaw`
+  (3000) to dodge the EV.2.3 cut. `0` = read the real ADC (flight).
+- **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
   ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
-  (`control.cpp`), preempting the `dv_r2d_req` path.
+  (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
 
-**Build the bring-up image** (never a flight build) — set `StubBrakeRaw` in `ecu_config.hpp`
-first (the `bench/car-stubs` branch already has 2700):
+**Build the bring-up image** (never a flight build) — set the toggles in `ecu_config.hpp`
+first (the `bench/car-stubs` branch already has `StubBrakeRaw = 2700`), then the ordinary
+firmware build; there are no `-D` flags:
 ```bash
+#   ecu_config.hpp: StubBrakeRaw = 2700;  StubStart = true;  // MANUAL R2D only — leave
+#                                                            // StubStart false for DV/uDV
 cmake -S firmware -B build-fw-brake \
-  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
-  -DECU_STUB_START=ON          # MANUAL R2D only — omit for a DV/uDV R2D test
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 cmake --build build-fw-brake
 ```
 
 Flash it. Once precharge completes the FSM walks straight through:
 `WaitStartBrake → R2dDelay` → **RTDS sounds for `R2dSoundMs` (2 s)** → `WaitInvStandby`.
 Watch `0x700` `fsm_state` and the `rtds_active` bit (PB4). (Manual test: `StubBrakeRaw`
-alone, press the real start button; `ECU_STUB_START` alone, press the real brake.)
+alone, press the real start button; `StubStart` alone, press the real brake.)
 
-**⚠ Never flash an image with `StubBrakeRaw != 0` / `-DECU_STUB_START=ON` to drive.**
+**⚠ Never flash an image with `StubBrakeRaw != 0` / `StubStart = true` to drive.**
 
 `BrakeArmRaw` / `BrakePressedRaw` are `COMMISSION` placeholders — recalibrate the real
 brake once the line is purged (read `0x701 brake_raw` / `0x705` via pit-diag).
 
 ---
 
-## 3. R2D + capped torque on stands, no AMS (`ECU_STUB_NO_AMS` / `ECU_BRINGUP_TORQUE_CAP_PCT`)
+## 3. R2D + capped torque on stands, no AMS (`StubNoAms` / `TorqueCap`)
 
 First powered freewheel: **no AMS on the bus**, inverter on **bench PSUs**, car **on
-stands**. Two more compile-time flags on top of §2:
+stands**. Two more `ecu_config.hpp` values on top of §2 (again, config, **not** build flags):
 
-- **`ECU_STUB_NO_AMS`** — assume precharge-complete + AMS-healthy, so the FSM leaves
+- **`config::StubNoAms`** — assume precharge-complete + AMS-healthy, so the FSM leaves
   `Precharge` without `0x020`. It still gates on the inverter's `0x466` DC-bus report
-  first, so it won't arm into a dead bus. **This disables the AMS safety gate.**
-- **`ECU_BRINGUP_TORQUE_CAP_PCT=N`** — clamps the commanded torque to N % right after the
-  control step, so `0x362` to the inverter is capped (empty = no cap).
+  first, so it won't arm into a dead bus. Consumed as `if constexpr (config::StubNoAms)`,
+  so `false` discards it entirely. **This disables the AMS safety gate.**
+  (A companion `config::StubNoInverter` fakes the inverter present/vconfig/Ready for a
+  bench with no inverter either — likewise `if constexpr`, false on `dev`.)
+- **`config::TorqueCap`** — clamps the commanded torque to N % right after the control
+  step, so `0x362` to the inverter is capped (`100` = no cap).
 
 > **⚠ SAFETY — read before flashing.** This image has **no AMS protection**: no
 > over/under-voltage, over-current, or cell-temperature cutoff. The **PSU current limits**,
@@ -100,13 +107,13 @@ stands**. Two more compile-time flags on top of §2:
 > flash it to a car on the ground or with a real HV pack. BL-recovery-check first
 > (`0x002` / `0xB007AD12`); never power-cut mid-write.
 
-**Build** (20 % cap, freewheeling):
+**Build** (20 % cap, freewheeling) — set the toggles in `ecu_config.hpp`, then the ordinary
+firmware build (no `-D` stub flags):
 ```bash
-#   set config::StubBrakeRaw (ecu_config.hpp) to 2700 first — it is the brake stub now.
+#   ecu_config.hpp: StubBrakeRaw = 2700;  StubNoAms = true;  TorqueCap = 20;
+#                   StubStart = true;   // MANUAL only — leave false for a DV/uDV torque test
 cmake -S firmware -B build-fw-bringup \
-  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
-  -DECU_STUB_NO_AMS=ON -DECU_BRINGUP_TORQUE_CAP_PCT=20 \
-  -DECU_STUB_START=ON          # MANUAL only — omit for a DV/uDV R2D torque test
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 cmake --build build-fw-bringup
 arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU08.bin
 ```

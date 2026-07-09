@@ -49,14 +49,16 @@ void IoSignals::read(IoInputs& out) noexcept {
     out.apps1_raw = read_adc3(ADC_CHANNEL_7);
     out.apps2_raw = read_adc3(ADC_CHANNEL_2);
 
-#if defined(ECU_STUB_START)
-    // Bring-up: the start button may not be wired, so assume it's pressed (skip
-    // PB5). Compile-time only -- never a flight build.
-    const bool pressed = true;
-#else
-    const bool pressed =
-        (HAL_GPIO_ReadPin(START_GPIO_Port, START_Pin) == GPIO_PIN_SET);
-#endif
+    // Bench stub (config::StubStart, ecu_config.hpp — folds away when false): the
+    // start button may not be wired, so assume it's pressed (PB5 isn't read).
+    // config value, NOT a build flag -- never true for flight. ⚠ keep false for a
+    // DV/uDV R2D test: manual start preempts the dv_r2d_req path (control.cpp).
+    bool pressed;
+    if constexpr (config::StubStart) {
+        pressed = true;
+    } else {
+        pressed = (HAL_GPIO_ReadPin(START_GPIO_Port, START_Pin) == GPIO_PIN_SET);
+    }
     out.start_button = debounce_start(pressed);
 }
 

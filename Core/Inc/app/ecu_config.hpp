@@ -58,6 +58,16 @@ inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from 
 // flight — folds away at compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
+// ---- BENCH STUBS (bring-up only) — config toggles, NOT build flags ----------
+// All OFF on dev. Each is consumed as `if constexpr (config::StubX)`, so a false
+// toggle DISCARDS the stub code at compile time — a flight build (all false)
+// carries none of it, same guarantee the old -D flags gave. The bench/car-stubs
+// branch flips the ones a bench needs. ⚠ NEVER true for a flight/drive build —
+// StubNoAms / StubNoInverter DISABLE safety gates.
+inline constexpr bool StubNoAms      = false;  // assume precharge-OK + AMS-healthy (no AMS on the bus). DISABLES the AMS gate.
+inline constexpr bool StubNoInverter = false;  // fake inverter present/vconfig/Ready (no inverter). DISABLES the inverter handshake.
+inline constexpr bool StubStart      = false;  // assume start button pressed (PB5 unwired). MANUAL R2D only — keep false for a DV/uDV R2D test (else it preempts the 0x510 path).
+
 // ---- Torque / FSAE plausibility -------------------------------------------
 inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
 inline constexpr uint8_t  DeadbandLowPct       = 10;    // below -> 0
