@@ -54,13 +54,17 @@ stuck in `WaitStartBrake`. Two independent **compile-time** flags make the app s
 **assume** those inputs, so the **real** R2D/RTDS sequence runs — nothing to inject,
 no CAN traffic, no globals:
 
-- **`ECU_STUB_BRAKE`** — `brake_raw` is taken as fully pressed (the ADC isn't read).
+- **`ECU_STUB_BRAKE`** — `brake_raw` is taken from the `config::StubBrakeRaw` constant
+  instead of the ADC. **It defaults to `0` (released)**, which does *not* arm R2D — you
+  **must** raise `StubBrakeRaw` in `ecu_config.hpp` above the gate you want to clear
+  (`> BrakeArmRaw` to arm R2D; keep it `< BrakePressedRaw` to dodge the EV.2.3 cut).
 - **`ECU_STUB_START`** — `start_button` is taken as pressed (PB5 isn't read).
 
 Each is its own flag, OFF by default. Both are separate from the bench HIL start stub.
 
-**Build the bring-up image** (never a flight build):
+**Build the bring-up image** (never a flight build) — set `StubBrakeRaw` first:
 ```bash
+# in Core/Inc/app/ecu_config.hpp, e.g.:  StubBrakeRaw = 1000;  // > BrakeArmRaw, < BrakePressedRaw
 cmake -S firmware -B build-fw-brake \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
   -DECU_STUB_BRAKE=ON -DECU_STUB_START=ON      # drop either flag you don't need
@@ -79,16 +83,19 @@ brake once the line is purged (read `0x701 brake_raw` / `0x705` via pit-diag).
 
 ---
 
-## 3. R2D + capped torque on stands, no AMS (`ECU_STUB_NO_AMS` / `ECU_BRINGUP_TORQUE_CAP_PCT`)
+## 3. R2D + capped torque on stands, no AMS (`ECU_STUB_NO_AMS` + `config::TorqueCap`)
 
 First powered freewheel: **no AMS on the bus**, inverter on **bench PSUs**, car **on
-stands**. Two more compile-time flags on top of §2:
+stands**. One more compile-time flag on top of §2, plus a source constant:
 
 - **`ECU_STUB_NO_AMS`** — assume precharge-complete + AMS-healthy, so the FSM leaves
   `Precharge` without `0x020`. It still gates on the inverter's `0x466` DC-bus report
   first, so it won't arm into a dead bus. **This disables the AMS safety gate.**
-- **`ECU_BRINGUP_TORQUE_CAP_PCT=N`** — clamps the commanded torque to N % right after the
-  control step, so `0x362` to the inverter is capped (empty = no cap).
+- **`config::TorqueCap`** (in `ecu_config.hpp`) — clamps the commanded torque to N %
+  right after the control step, so `0x362` to the inverter is capped. Unlike the old
+  `ECU_BRINGUP_TORQUE_CAP_PCT` *build flag* (removed), this is an **always-applied**
+  constant: `100` = no cap, and it **MUST be `100` for any flight/drive build**. Lower
+  it (e.g. `20`) only for on-stands work.
 
 > **⚠ SAFETY — read before flashing.** This image has **no AMS protection**: no
 > over/under-voltage, over-current, or cell-temperature cutoff. The **PSU current limits**,
@@ -96,11 +103,13 @@ stands**. Two more compile-time flags on top of §2:
 > flash it to a car on the ground or with a real HV pack. BL-recovery-check first
 > (`0x002` / `0xB007AD12`); never power-cut mid-write.
 
-**Build** (20 % cap, freewheeling):
+**Build** (20 % cap, freewheeling) — set `TorqueCap = 20` and `StubBrakeRaw` (> `BrakeArmRaw`)
+in `ecu_config.hpp` first:
 ```bash
+# ecu_config.hpp:  TorqueCap = 20;  StubBrakeRaw = 1000;
 cmake -S firmware -B build-fw-bringup \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
-  -DECU_STUB_BRAKE=ON -DECU_STUB_NO_AMS=ON -DECU_BRINGUP_TORQUE_CAP_PCT=20 \
+  -DECU_STUB_BRAKE=ON -DECU_STUB_NO_AMS=ON \
   -DECU_STUB_START=ON          # drop this and press the real start button if it's wired
 cmake --build build-fw-bringup
 arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU08.bin
@@ -118,3 +127,54 @@ arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU0
 **Bonus — settles the open E2E question.** If the inverter reaches Ready and the wheels
 spin from the plain `0x362` frames, the NX/EMC inverter **doesn't need E2E** (close E-004).
 If it never leaves `WaitInvStandby`, or ignores torque, E2E (or a config word) is required.
+
+---
+
+## 4. DV (driverless) R2D + torque without TS (`ECU_STUB_NO_AMS` + `ECU_STUB_NO_INVERTER`)
+
+Exercise the **autonomous** drive path — the uDV requests R2D and streams torque — with
+**no tractive system energised**, a **real uDV on the FDCAN2 (ACU) bus**. The DV trigger is
+latched once at `WaitStartBrake`: `dv_r2d_req && brake_raw > BrakeDvHardRaw` — no start
+button, the EBS holds the hard braking, and the ECU verifies it on its own brake sensor
+(see [uDV integration #17](https://github.com/isc-fs/IFS08-CE-ECU/issues/17)).
+
+Two stub flags open the ladder to `Active` without HV; **`ECU_STUB_START` must stay OFF** —
+manual wins the manual/DV precedence tie, so a stubbed start button would preempt the DV
+trigger:
+
+- **`ECU_STUB_NO_AMS`** — clears `Precharge` (as §3). **Disables the AMS safety gate.**
+- **`ECU_STUB_NO_INVERTER`** — assumes the inverter vconfig + `Ready` state, clearing both
+  inverter gates (`WaitInvVdcConfig` + `WaitInvStandby`) so the FSM reaches `Active` with no
+  inverter on FDCAN1.
+
+**Brake** — the DV R2D gate needs `brake_raw > BrakeDvHardRaw` (2500):
+- If the **real EBS presses** the brake above 2500, build **without** `ECU_STUB_BRAKE`.
+- Otherwise add `-DECU_STUB_BRAKE=ON` and set `StubBrakeRaw > 2500` (and `< BrakePressedRaw`
+  3000, to dodge EV.2.3) in `ecu_config.hpp` — e.g. `2700`.
+
+> **⚠ SAFETY.** No AMS, no inverter handshake — the same envelope as §3 (PSU limits + torque
+> cap + car on stands). Keep `TorqueCap` low for on-stands work; **`100` for flight only**.
+> BL-recovery-check first (`0x002` / `0xB007AD12`); never power-cut mid-write.
+
+**Build** (real EBS pressing the brake shown; add `ECU_STUB_BRAKE` + `StubBrakeRaw` if not):
+```bash
+cmake -S firmware -B build-fw-dv \
+  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
+  -DECU_STUB_NO_AMS=ON -DECU_STUB_NO_INVERTER=ON
+  #  + -DECU_STUB_BRAKE=ON   (with StubBrakeRaw > 2500) if the EBS isn't pressing
+cmake --build build-fw-dv
+```
+
+**Sequence**
+1. Flash it (`ECU_STUB_START` **off**). Power the ECU; the real uDV joins FDCAN2.
+2. FSM walks `Precharge → WaitStartBrake` on the stubs. The ECU streams the uDV feed the
+   whole time: `0x506` motor rpm @10 ms, `0x504` TS-active / `0x505` brake-over-limit /
+   `0x511` R2D-confirm @100 ms.
+3. **uDV sends `0x510`** (R2D request) with the brake over 2500 → the ECU latches DV,
+   RTDS sounds (2 s), walks to `Active`. Confirm on pit-diag: `0x700` `dv_mode` bit set,
+   and `0x707` shows `dv_r2d_req` / `brake_over_limit` / `r2d_confirm`.
+4. **uDV streams `0x507`** torque % → conditioned to negative mechanical torque on `0x362`;
+   a stale command (> `UdvCmdStaleMs` 100 ms) commands **0**, never an APPS fallback.
+
+The on-stands DV image can be built ad-hoc as above, or from the parked `bench/car-stubs`
+overrides — whichever is current.
