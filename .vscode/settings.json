@@ -7,7 +7,7 @@
     // keep it in your USER settings, NOT here, so a teammate on a different
     // dongle (SLCAN / CANable) isn't forced onto PCAN.
     "iscFs.nodeId": "0x1",
-    "iscFs.buildCommand": "cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake && cmake --build build-fw",
+    "iscFs.buildCommand": "cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake && cmake --build build-fw",
     "iscFs.firmwareArtifact": "build-fw/ECU08.elf",
 
     // ── STM32CubeCLT editor tooling (cmake driver + clangd). ──
