@@ -76,7 +76,7 @@ inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
 // drive build *** -- unlike the old off-by-default ECU_BRINGUP_TORQUE_CAP_PCT build
 // flag this is ALWAYS applied; lower it only on stands.
-inline constexpr uint8_t  TorqueCap            = 20;
+inline constexpr uint8_t  TorqueCap            = 100;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
 inline constexpr uint8_t  Ev23SetPct           = 25;    // EV.2.3: brake + torque>this -> latch
