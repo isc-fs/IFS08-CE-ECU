@@ -46,33 +46,37 @@ mapping.
 
 ---
 
-## 2. R2D / RTDS test without brake pressure / start wiring (`ECU_STUB_BRAKE` / `ECU_STUB_START`)
+## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `ECU_STUB_START`)
 
-R2D arms on `start_button && brake_raw > BrakeArmRaw` (`control.cpp`). During bring-up
-the brake line may be unpressurized and/or the start button unwired, leaving the FSM
-stuck in `WaitStartBrake`. Two independent **compile-time** flags make the app simply
-**assume** those inputs, so the **real** R2D/RTDS sequence runs — nothing to inject,
-no CAN traffic, no globals:
+R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on
+`dv_r2d_req && brake_raw > BrakeDvHardRaw` (`control.cpp`). During bring-up the brake
+line may be unpressurized and/or the start button unwired, leaving the FSM stuck in
+`WaitStartBrake`. Make the app **assume** those inputs so the **real** R2D/RTDS sequence
+runs — nothing to inject, no CAN traffic, no globals:
 
-- **`ECU_STUB_BRAKE`** — `brake_raw` is taken as fully pressed (the ADC isn't read).
-- **`ECU_STUB_START`** — `start_button` is taken as pressed (PB5 isn't read).
+- **`config::StubBrakeRaw`** (`ecu_config.hpp`, **not a build flag**) — a nonzero value is
+  injected as `brake_raw` instead of reading the ADC. Set it ABOVE the threshold you need:
+  `BrakeArmRaw` (900) for manual R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700),
+  and BELOW `BrakePressedRaw` (3000) to dodge the EV.2.3 cut. `0` = read the real ADC.
+- **`ECU_STUB_START`** — compile-time flag; `start_button` is taken as pressed (PB5 isn't read).
+  ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
+  (`control.cpp`), preempting the `dv_r2d_req` path.
 
-Each is its own flag, OFF by default. Both are separate from the bench HIL start stub.
-
-**Build the bring-up image** (never a flight build):
+**Build the bring-up image** (never a flight build) — set `StubBrakeRaw` in `ecu_config.hpp`
+first (the `bench/car-stubs` branch already has 2700):
 ```bash
 cmake -S firmware -B build-fw-brake \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
-  -DECU_STUB_BRAKE=ON -DECU_STUB_START=ON      # drop either flag you don't need
+  -DECU_STUB_START=ON          # MANUAL R2D only — omit for a DV/uDV R2D test
 cmake --build build-fw-brake
 ```
 
-Flash it. With both flags on, once precharge completes the FSM walks straight through:
+Flash it. Once precharge completes the FSM walks straight through:
 `WaitStartBrake → R2dDelay` → **RTDS sounds for `R2dSoundMs` (2 s)** → `WaitInvStandby`.
-Watch `0x700` `fsm_state` and the `rtds_active` bit (PB4). (With only `ECU_STUB_BRAKE`,
-press the real start button; with only `ECU_STUB_START`, press the real brake.)
+Watch `0x700` `fsm_state` and the `rtds_active` bit (PB4). (Manual test: `StubBrakeRaw`
+alone, press the real start button; `ECU_STUB_START` alone, press the real brake.)
 
-**⚠ Never flash a `-DECU_STUB_BRAKE=ON` / `-DECU_STUB_START=ON` image to drive.**
+**⚠ Never flash an image with `StubBrakeRaw != 0` / `-DECU_STUB_START=ON` to drive.**
 
 `BrakeArmRaw` / `BrakePressedRaw` are `COMMISSION` placeholders — recalibrate the real
 brake once the line is purged (read `0x701 brake_raw` / `0x705` via pit-diag).
@@ -98,10 +102,11 @@ stands**. Two more compile-time flags on top of §2:
 
 **Build** (20 % cap, freewheeling):
 ```bash
+#   set config::StubBrakeRaw (ecu_config.hpp) to 2700 first — it is the brake stub now.
 cmake -S firmware -B build-fw-bringup \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake \
-  -DECU_STUB_BRAKE=ON -DECU_STUB_NO_AMS=ON -DECU_BRINGUP_TORQUE_CAP_PCT=20 \
-  -DECU_STUB_START=ON          # drop this and press the real start button if it's wired
+  -DECU_STUB_NO_AMS=ON -DECU_BRINGUP_TORQUE_CAP_PCT=20 \
+  -DECU_STUB_START=ON          # MANUAL only — omit for a DV/uDV R2D torque test
 cmake --build build-fw-bringup
 arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU08.bin
 ```

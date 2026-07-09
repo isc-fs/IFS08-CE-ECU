@@ -2,7 +2,7 @@
 
 #include "app/io_signals.hpp"
 
-#include "app/ecu_config.hpp"  // config::StubBrakeRaw (the ECU_STUB_BRAKE reading)
+#include "app/ecu_config.hpp"  // config::StubBrakeRaw (brake stub value/enable)
 
 #include "adc.h"     // hadc3
 #include "main.h"    // HAL + the CubeMX GPIO label defines (START_Pin, ...)
@@ -35,14 +35,17 @@ std::uint16_t read_adc3(std::uint32_t channel) noexcept {
 
 void IoSignals::read(IoInputs& out) noexcept {
     // ADC3 channels: brake IN3 (PF7), APPS1 IN7 (PF8, shared-analog), APPS2 IN2 (PF9).
-#if defined(ECU_STUB_BRAKE)
-    // Bring-up: inject config::StubBrakeRaw (tuned in ecu_config.hpp) when the brake
-    // sensor isn't wired. 0 = released; set it ABOVE BrakeArmRaw (900) to arm R2D and
-    // BELOW BrakePressedRaw (3000) to dodge the EV.2.3 cut (e.g. 1500). Never flight.
-    out.brake_raw = config::StubBrakeRaw;
-#else
-    out.brake_raw = read_adc3(ADC_CHANNEL_3);
-#endif
+    // Brake stub is a CONFIG VALUE, not a build flag: config::StubBrakeRaw != 0
+    // injects it as the brake reading (enable AND value both in ecu_config.hpp);
+    // 0 reads the real ADC (flight). Because StubBrakeRaw is constexpr this folds
+    // at compile time — a StubBrakeRaw==0 build carries only the ADC read. Set it
+    // ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW BrakePressedRaw
+    // (3000) to dodge the EV.2.3 cut (bench: 2700). NEVER nonzero for flight.
+    if (config::StubBrakeRaw != 0u) {
+        out.brake_raw = config::StubBrakeRaw;
+    } else {
+        out.brake_raw = read_adc3(ADC_CHANNEL_3);
+    }
     out.apps1_raw = read_adc3(ADC_CHANNEL_7);
     out.apps2_raw = read_adc3(ADC_CHANNEL_2);
 

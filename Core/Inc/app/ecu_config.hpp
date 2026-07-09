@@ -51,9 +51,11 @@ inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "b
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
 // a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
 inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
-// BRING-UP: brake reading injected when ECU_STUB_BRAKE is compiled in (used only then,
-// in io_signals). 0 = released; set ABOVE BrakeArmRaw to arm R2D, BELOW BrakePressedRaw
-// to dodge the EV.2.3 cut (e.g. 1500). Irrelevant to a flight build (stub not compiled).
+// BRING-UP brake stub, controlled by THIS value (no build flag): != 0 makes
+// io_signals inject it as brake_raw instead of reading the ADC; 0 = real ADC
+// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW
+// BrakePressedRaw (3000) to dodge the EV.2.3 cut (bench: 2700). MUST be 0 for
+// flight — folds away at compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
@@ -64,7 +66,7 @@ inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
 // drive build *** -- unlike the old off-by-default ECU_BRINGUP_TORQUE_CAP_PCT build
 // flag this is ALWAYS applied; lower it only on stands.
-inline constexpr uint8_t  TorqueCap            = 100;
+inline constexpr uint8_t  TorqueCap            = 20;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
 inline constexpr uint8_t  Ev23SetPct           = 25;    // EV.2.3: brake + torque>this -> latch
