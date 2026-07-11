@@ -3,6 +3,7 @@
 #include "app/app_globals.h"
 #include "app/app_tasks.h"
 #include "app/can_tx.hpp"
+#include "app/ecu_config.hpp"   // config::StubTelemetryDummy (bench dummy-telemetry toggle)
 #include "app/radio_snapshot.hpp"
 #include "app/vehicle_service.hpp"
 
@@ -205,6 +206,39 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
     }
 }
 
+// Bench only (config::StubTelemetryDummy): fill the VehicleState with a
+// deterministic synthetic SWEEP keyed on the frame `seq`, so the radio snapshot
+// + FDCAN3 dash show MOVING, plausible values with no live AMS/inverter on the
+// bus. Covers the CAN-sourced fields only; pedals/torque/flags stay real
+// (ControlTask's g_last_* mirrors). [[maybe_unused]] -- discarded when the
+// toggle is false, so a flight build never references it.
+[[maybe_unused]] void make_dummy_vehicle_state(VehicleState& v, uint16_t seq) {
+    const uint16_t s = seq;
+    // --- inverter (FDCAN1 0x461/0x463/0x464/0x466) ---
+    v.inv_state         = 4u;                                       // Ready
+    v.inv_error         = 0u;
+    v.inv_rpm           = static_cast<int32_t>((s % 160u) * 50u);   // 0..7950 erpm ramp
+    v.inv_dc_bus_V      = static_cast<uint16_t>(380u + (s % 40u));  // ~380..419 V
+    v.inv_temp_board    = static_cast<uint8_t>(30u + (s % 30u));    // raw byte (-50 -> degC)
+    v.inv_temp_pwrstg   = static_cast<uint8_t>(35u + (s % 30u));
+    v.inv_temp_motor1   = static_cast<uint8_t>(40u + (s % 30u));
+    v.inv_temp_motor2   = static_cast<uint8_t>(42u + (s % 30u));
+    v.last_vconfig_tick = 1u;                                       // -> vconfig_active = 1
+    // --- AMS / ACU (FDCAN2) ---
+    v.ok_precharge  = true;
+    v.ams_fsm_state = 2u;                                           // any non-Error state
+    v.v_cell_min_mV = static_cast<uint16_t>(3200u + (s % 600u));    // 3.20..3.80 V
+    for (unsigned i = 0; i < 5u; ++i) {
+        v.vmin_module[i] = static_cast<uint16_t>(3200u + i * 10u + (s % 200u));
+        v.vmax_module[i] = static_cast<uint16_t>(3600u + i * 10u + (s % 200u));
+        v.tmax_module[i] = static_cast<int16_t>(25 + static_cast<int>(i) * 2 +
+                                                static_cast<int>(s % 20u));
+    }
+    v.current_accu_dA = static_cast<int16_t>(static_cast<int>(s % 200u) - 100);  // -10.0..+9.9 A
+    v.current_dcdc_dA = static_cast<int16_t>(static_cast<int>(s % 100u) - 50);
+    v.tmax_dcdc       = static_cast<int16_t>(40 + static_cast<int>(s % 20u));
+}
+
 }  // namespace
 
 #if defined(SIL_BUILD)
@@ -230,8 +264,16 @@ extern "C" void ecu_telemetry_task_run(void *argument) {
 
     for (;;) {
         ++g_task_step[ECU_TASK_TELEMETRY];
-        const VehicleState v = vs.snapshot();
         ++seq;
+        // Live snapshot, or (bench) a synthetic sweep so the ground station / dash
+        // can be validated with no live AMS/inverter on the bus. The toggle folds
+        // away at compile time -- a flight build only ever takes the snapshot.
+        VehicleState v;   // default-inits to zero
+        if constexpr (config::StubTelemetryDummy) {
+            make_dummy_vehicle_state(v, seq);
+        } else {
+            v = vs.snapshot();
+        }
         send_dashboard(v, seq);
         send_radio_snapshot(v, seq, osKernelGetTickCount());
 

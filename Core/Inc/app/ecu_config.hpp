@@ -52,6 +52,17 @@ inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "b
 // to dodge the EV.2.3 cut (e.g. 1500). Irrelevant to a flight build (stub not compiled).
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
+// ---- BENCH TELEMETRY stub (bring-up only) — config toggle, NOT a build flag -
+// When true, TelemetryTask fills the VehicleState with a deterministic synthetic
+// SWEEP (keyed on the frame seq) instead of the live snapshot, so the nRF24 radio
+// snapshot AND the FDCAN3 dashboard carry MOVING values with no live AMS/inverter
+// on the bus -- lets you validate the ground station / dash decode + display on a
+// bare bench. Consumed as `if constexpr (config::StubTelemetryDummy)`, so false
+// discards it at compile time. ⚠ NEVER true for a flight/drive build (it would
+// broadcast fake pack/inverter telemetry). Covers the CAN-sourced fields; the
+// pedals/torque/flags still come from ControlTask's g_last_* mirrors.
+inline constexpr bool     StubTelemetryDummy   = false;
+
 // ---- Torque / FSAE plausibility -------------------------------------------
 inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
 inline constexpr uint8_t  DeadbandLowPct       = 10;    // below -> 0
