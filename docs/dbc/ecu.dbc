@@ -162,5 +162,6 @@ BA_ "GenMsgCycleTime" BO_ 1287 20;
 
 VAL_ 1792 fsm_state 0 "WaitInvVdcConfig" 1 "Precharge" 2 "WaitStartBrake" 3 "R2dDelay" 4 "WaitInvStandby" 5 "Active" 6 "AmsError" ;
 VAL_ 1792 inv_state 3 "Standby" 4 "Ready" ;
+VAL_ 1794 inv_error 0 "NoFault" 1 "LostMsg" 2 "Undervoltage" 3 "PwrStgOvertemp" 4 "PwrStgTempDegradation" 5 "EMCtrFault" 6 "TaskOverrun" 7 "CAN1_BusOff" 8 "EmachineOvertemp" 9 "PhaseCurrentSensorRange" 10 "PwrStgTempSensorRange" 11 "DCBusVoltageSensorRange" 12 "DPBoardOvertemp" 13 "DRVBoardOvertemp" 14 "AuxSupplyRange" 15 "EmachineOverspeed" ;
 VAL_ 1796 reset_cause 0 "Unknown" 1 "PowerOn" 2 "Pin" 3 "Software" 4 "IWDG" 5 "WWDG" 6 "LowPower" ;
 VAL_ 1796 last_fault 0 "None" 241 "HardFault" 242 "MemManage" 243 "BusFault" 244 "UsageFault" 245 "StackOverflow" 246 "MallocFailed" 247 "AssertFailed" ;
