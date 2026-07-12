@@ -79,10 +79,11 @@ BO_ 1797 PitDiag_brake: 3 VCU
  SG_ brake_pressure : 7|16@0+ (0.1,0) [0|0] "bar" Vector__XXX
  SG_ brake_pct : 16|8@1+ (1,0) [0|0] "%" Vector__XXX
 
-BO_ 1794 PitDiag_inverter: 7 VCU
+BO_ 1794 PitDiag_inverter: 8 VCU
  SG_ dc_bus_voltage : 7|16@0+ (1,0) [0|0] "V" Vector__XXX
  SG_ inv_rpm : 23|32@0- (1,0) [0|0] "rpm" Vector__XXX
  SG_ inv_error : 48|8@1+ (1,0) [0|0] "code" Vector__XXX
+ SG_ dem_present : 56|1@1+ (1,0) [0|0] "bit" Vector__XXX
 
 BO_ 1798 PitDiag_inverter_temps: 4 VCU
  SG_ temp_board_degC : 0|8@1+ (1,-50) [0|0] "degC" Vector__XXX

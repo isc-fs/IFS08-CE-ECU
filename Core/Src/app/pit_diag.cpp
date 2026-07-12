@@ -87,6 +87,7 @@ CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     // convention as the uDV 0x506 feed (erpm / MotorPolePairs, 10).
     inv.inv_rpm        = v.inv_rpm / config::MotorPolePairs;
     inv.inv_error      = v.inv_error;
+    inv.dem_present    = v.inv_dem_present ? 1u : 0u;   // active fault vs latched history
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);
     return make_acu(PitDiag_inverter_ID, b);

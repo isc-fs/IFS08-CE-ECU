@@ -92,6 +92,10 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             if (f.dlc < 5) return false;
             state_.inv_state     = decode_inv_state(f.data);
             state_.inv_error     = f.data[2];               // DEM_Code low byte
+            // DEM_Present (byte3 bit7): fault active NOW vs latched history. The
+            // NX boots latched (DEM_Code set, DEM_Present clear) -- this bit is
+            // what tells the two apart. dlc>=5 guaranteed by the guard above.
+            state_.inv_dem_present = (f.data[3] & 0x80u) != 0u;
             state_.last_inv_tick = f.timestamp_ms;
             return true;
         }
