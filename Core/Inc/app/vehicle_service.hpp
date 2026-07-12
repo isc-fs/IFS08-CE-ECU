@@ -28,6 +28,7 @@ struct VehicleState {
     // --- inverter (FDCAN1 / EMC) ---
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
+    bool          inv_dem_present   = false;  // 0x461 byte3 bit7: DEM active NOW vs latched history
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
