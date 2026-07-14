@@ -26,6 +26,11 @@ namespace {
 
 constexpr uint32_t PeriodMs = 200u;
 
+// Inter-fragment radio pacing: gap between the 5 nRF24 packets of one snapshot so
+// the ground station can flush each over serial before the next lands (reception
+// fix ported from MrAndy5's feat/1). 5 x this stays well under PeriodMs.
+constexpr uint32_t RadioFragmentPaceMs = 5u;
+
 void put_u16(uint8_t* p, uint16_t v) {
     p[0] = static_cast<uint8_t>(v);
     p[1] = static_cast<uint8_t>(v >> 8);
@@ -203,6 +208,14 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
         uint8_t p[kRadioFragmentSize];
         build_radio_fragment(p, snap, seq, frag);
         Telemetry_Send32(p);
+#if !defined(SIL_BUILD)
+        // Pace the fragments (~5 ms) so the ground station flushes each 32-byte
+        // packet over its serial link before the next arrives. Without this the 5
+        // back-to-back sends overrun the receiver and the snapshot is dropped --
+        // this is the reception fix from MrAndy5's feat/1, adapted to our
+        // direct-send path (the legacy branch paced in a separate radio-TX task).
+        osDelay(RadioFragmentPaceMs);
+#endif
     }
 }
 
