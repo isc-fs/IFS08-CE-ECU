@@ -23,6 +23,11 @@ inline constexpr uint32_t ControlPeriodMs      = 10;    // the realtime ControlT
 inline constexpr uint32_t DiagPeriodMs         = 1000;  // DiagTask (0x704 health)
 inline constexpr uint32_t PitDiagStreamMs      = 100;   // 0x700-0x705 cadence while enabled
 inline constexpr uint32_t CanRxWaitMs          = 100;   // CanRxTask queue wait -> 0x704 liveness wake on a quiescent bus (< DiagPeriodMs)
+// uDV contract (#17/#127) cyclic: 0x504 ts_active / 0x505 brake_over_limit /
+// 0x511 r2d_confirm. CONTRACT with the uDV -- their AS state machine times out
+// TS-active at 400 ms (4 missed) and FS-Rules T11.9.4 caps detection at 500 ms,
+// so do NOT raise this above ~125 ms without agreeing it on #127 first.
+inline constexpr uint32_t UdvTxPeriodMs        = 100;
 
 // ---- Start / ready-to-drive FSM -------------------------------------------
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
