@@ -5,6 +5,7 @@
 extern "C" {
 volatile uint32_t g_task_step[ECU_TASK_COUNT] = { 0, 0, 0, 0 };
 volatile uint8_t  g_pit_diag_enabled = 0;
+volatile uint32_t g_can_tx_dropped = 0u;
 }
 
 extern "C" void ecu_app_globals_init(void) {

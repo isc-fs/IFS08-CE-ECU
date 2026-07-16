@@ -2,6 +2,7 @@
 
 #include "app/pit_diag.hpp"
 
+#include "app/app_globals.h"   // g_can_tx_dropped (tx_dropped sticky bit)
 #include "app/ecu_config.hpp"
 
 #include "can/can_codecs.hpp"
@@ -45,6 +46,7 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     s.ok_precharge = v.ok_precharge ? 1u : 0u;
     s.start_button = start_button ? 1u : 0u;
     s.dv_mode      = c.dv_mode ? 1u : 0u;   // #109: DV drive latched this cycle
+    s.tx_dropped   = (g_can_tx_dropped != 0u) ? 1u : 0u;  // #127: any TX-queue drop since boot
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
     s.torque_cmd    = 0;   // inverter unit-map deferred (task #10)
