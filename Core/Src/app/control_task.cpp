@@ -120,7 +120,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         // FSM's own ok_precharge view (stub-consistent); the brake verdict uses
         // the SAME threshold that will gate the DV R2D entry.
         can_tx_post(UdvTx::build_motor_rpm(veh.inv_rpm));
-        if (static_cast<uint32_t>(now - last_udv) >= 100u) {
+        if (static_cast<uint32_t>(now - last_udv) >= config::UdvTxPeriodMs) {
             last_udv = now;
             can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
             can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
