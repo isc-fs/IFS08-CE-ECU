@@ -34,6 +34,13 @@ extern volatile uint32_t g_task_step[ECU_TASK_COUNT];
  * frame is deliberately ALWAYS-ON (ungated) -- it's the diagnostic lifeline. */
 extern volatile uint8_t g_pit_diag_enabled;
 
+/* Count of frames dropped by can_tx_post() because the TX queue was full (its
+ * osMessageQueuePut timed out at 0). Free-running, never reset. 0 on a healthy
+ * bus. Surfaced as the sticky `tx_dropped` bit on 0x700 -- if it is ever nonzero
+ * a safety-cyclic (0x100/0x504/...) may have been silently dropped. Also readable
+ * over SWD for the exact count. */
+extern volatile uint32_t g_can_tx_dropped;
+
 /* Called once from freertos.c USER CODE after osKernelInitialize(), before the
  * scheduler starts. Currently just zeroes the step counters; a hook point for
  * any app-side RTOS object the .ioc can't carry. */

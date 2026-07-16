@@ -55,8 +55,18 @@ void hal_send(const ecu::CanFrame& f) {
 namespace ecu {
 
 bool can_tx_post(const CanFrame& f) noexcept {
-    if (can_tx_queueHandle == NULL) return false;
-    return osMessageQueuePut(can_tx_queueHandle, &f, 0u, 0u) == osOK;
+    if (can_tx_queueHandle == NULL) {
+        ++g_can_tx_dropped;
+        return false;
+    }
+    // Non-blocking (timeout 0): a full queue DROPS the frame rather than stalling
+    // the poster. Count the drop so a silently-lost safety cyclic (0x100/0x504/...)
+    // is visible (sticky tx_dropped bit on 0x700; exact count over SWD).
+    if (osMessageQueuePut(can_tx_queueHandle, &f, 0u, 0u) == osOK) {
+        return true;
+    }
+    ++g_can_tx_dropped;
+    return false;
 }
 
 }  // namespace ecu
