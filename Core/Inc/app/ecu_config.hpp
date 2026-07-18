@@ -32,7 +32,6 @@ inline constexpr uint32_t UdvTxPeriodMs        = 100;
 // ---- Start / ready-to-drive FSM -------------------------------------------
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
 inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
-inline constexpr uint16_t PrechargeTargetV     = 300;   // inverter DC-bus "precharged" (V)
 
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
 inline constexpr uint8_t  InvStandbyState      = 3;
