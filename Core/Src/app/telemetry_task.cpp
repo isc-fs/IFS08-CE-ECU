@@ -10,11 +10,18 @@
 #include "telemetry.h"
 
 #include "cmsis_os2.h"
+#include "nrf24.h"   // bit-bang nRF24 driver (NRF24_BusInit / ApplyDefaultConfig / SendPayload)
 
 #include <cstdint>
 #include <cstring>
 
 using namespace ecu;
+
+// Telemetry_Send32 shim: telemetry.h declares it (used by send_radio_snapshot);
+// the bit-bang driver exposes NRF24_SendPayload. One 32-byte nRF24 payload.
+extern "C" void Telemetry_Send32(const uint8_t payload[32]) {
+    (void)NRF24_SendPayload(payload, 32u, 10u);
+}
 
 // Radio telemetry = the v2 "fragmented snapshot" (radio_snapshot.hpp): one
 // 102-byte snapshot in 5 nRF24 fragments per 200 ms cycle, matched byte-for-byte
@@ -274,6 +281,12 @@ extern "C" void ecu_telemetry_task_run(void *argument) {
     uint16_t seq = 0;
     uint32_t tick = osKernelGetTickCount();
     auto& vs = VehicleService::instance();
+
+    // Bring up the nRF24 on the bit-bang SPI transport (claims PA5/6/7 as GPIO,
+    // overriding the CubeMX SPI1 AF config -- SPI1 hardware can't read MISO on
+    // this board). Radio is idle until this runs.
+    NRF24_BusInit();
+    (void)NRF24_ApplyDefaultConfig();
 
     for (;;) {
         ++g_task_step[ECU_TASK_TELEMETRY];

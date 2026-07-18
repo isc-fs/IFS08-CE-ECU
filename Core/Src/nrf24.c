@@ -1,580 +1,811 @@
-#include "telemetry.h"
+#include "nrf24.h"
 
-#if !defined(SIL_BUILD) && !defined(UNIT_TEST)
-
-#include "diag.h"
 #include "main.h"
-#include "spi.h"
-
 #include <string.h>
 
-/* nRF24 transport backend for telemetry payloads and optional SD mirroring. */
+static void NRF24_BitBangDelay(void);
+static HAL_StatusTypeDef NRF24_BitBangTransfer(const uint8_t *tx, uint8_t *rx, uint8_t length);
 
-extern SPI_HandleTypeDef hspi1;
+static HAL_StatusTypeDef NRF24_SpiTransfer(uint8_t value, uint8_t *rxValue);
+static HAL_StatusTypeDef NRF24_ExecuteCommand(uint8_t command, const uint8_t *txData, uint8_t *rxData, uint8_t length, uint8_t *statusValue);
+static HAL_StatusTypeDef NRF24_SetConfigRegister(uint8_t configValue);
+static HAL_StatusTypeDef NRF24_WaitIrqAssert(uint32_t timeoutMs, uint8_t *statusValue);
+static void NRF24_Settle(void);
+static void NRF24_CsnDelay(void);
 
-#ifndef APP_SD_USE_FATFS
-#define APP_SD_USE_FATFS 0
-#endif
+#define NRF24_CMD_R_RX_PAYLOAD          0x61U
+#define NRF24_CMD_W_TX_PAYLOAD          0xA0U
+#define NRF24_CMD_FLUSH_TX              0xE1U
+#define NRF24_CMD_FLUSH_RX              0xE2U
 
-#define APP_NRF24_ECU_CHANNEL 0x4Cu
-#define APP_NRF24_ECU_ADDR_LEN 5u
-#define APP_NRF24_ECU_PAYLOAD_SIZE 32u
-#define APP_NRF24_ECU_TX_TIMEOUT_MS 40u
+#define NRF24_REG_CONFIG                0x00U
+#define NRF24_REG_EN_AA                 0x01U
+#define NRF24_REG_EN_RXADDR             0x02U
+#define NRF24_REG_SETUP_AW              0x03U
+#define NRF24_REG_SETUP_RETR            0x04U
+#define NRF24_REG_RF_CH                 0x05U
+#define NRF24_REG_RF_SETUP              0x06U
+#define NRF24_REG_STATUS                0x07U
+#define NRF24_REG_RX_ADDR_P0            0x0AU
+#define NRF24_REG_TX_ADDR               0x10U
+#define NRF24_REG_RX_PW_P0              0x11U
+#define NRF24_REG_FIFO_STATUS           0x17U
+#define NRF24_REG_DYNPD                 0x1CU
+#define NRF24_REG_FEATURE               0x1DU
 
-static const uint8_t s_nrf24_addr[APP_NRF24_ECU_ADDR_LEN] = {'E', 'C', 'U', '0', '1'};
+#define NRF24_CONFIG_EN_CRC             0x08U
+#define NRF24_CONFIG_CRCO               0x04U
+#define NRF24_CONFIG_PWR_UP             0x02U
+#define NRF24_CONFIG_PRIM_RX            0x01U
 
-static uint8_t s_nrf24_ready;
-static uint8_t s_nrf24_diag_reported;
-static uint8_t s_sd_diag_reported;
-static uint32_t s_nrf24_tx_ok_count;
-static uint32_t s_nrf24_uart_trace_count;
+#define NRF24_STATUS_RX_DR              0x40U
+#define NRF24_STATUS_TX_DS              0x20U
+#define NRF24_STATUS_MAX_RT             0x10U
 
-#define NRF24_CMD_R_REGISTER   0x00u
-#define NRF24_CMD_W_REGISTER   0x20u
-#define NRF24_CMD_W_TX_PAYLOAD 0xA0u
-#define NRF24_CMD_FLUSH_TX     0xE1u
-#define NRF24_CMD_NOP          0xFFu
+#define NRF24_FIFO_STATUS_RX_EMPTY      0x01U
 
-#define NRF24_REG_CONFIG       0x00u
-#define NRF24_REG_EN_AA        0x01u
-#define NRF24_REG_EN_RXADDR    0x02u
-#define NRF24_REG_SETUP_AW     0x03u
-#define NRF24_REG_SETUP_RETR   0x04u
-#define NRF24_REG_RF_CH        0x05u
-#define NRF24_REG_RF_SETUP     0x06u
-#define NRF24_REG_STATUS       0x07u
-#define NRF24_REG_RX_ADDR_P0   0x0Au
-#define NRF24_REG_TX_ADDR      0x10u
-#define NRF24_REG_RX_PW_P0     0x11u
-#define NRF24_REG_FIFO_STATUS  0x17u
-#define NRF24_REG_DYNPD        0x1Cu
-#define NRF24_REG_FEATURE      0x1Du
+static const uint8_t g_nrf24Address[5] = { 'E', 'C', 'U', '0', '1' };
 
-#define NRF24_CONFIG_EN_CRC    0x08u
-#define NRF24_CONFIG_PWR_UP    0x02u
-#define NRF24_CONFIG_PRIM_RX   0x01u
-
-#define NRF24_STATUS_RX_DR     0x40u
-#define NRF24_STATUS_TX_DS     0x20u
-#define NRF24_STATUS_MAX_RT    0x10u
-
-#define NRF24_FIFO_TX_FULL     0x20u
-
-static void nrf24_csn_low(void)
+void NRF24_BusInit(void)
 {
-  HAL_GPIO_WritePin(NRF24_CS_GPIO_Port, NRF24_CS_Pin, GPIO_PIN_RESET);
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /* Bench-confirmed on this board: the SPI1 hardware peripheral read MISO as
+     stuck-high (0xFF) regardless of baud rate (tried /64 and /256), while a
+     plain-GPIO bit-bang on the exact same wiring reliably read the nRF24's
+     real STATUS byte (0x0E). Module and wiring are proven good; the fault was
+     isolated to the SPI1 peripheral's capture path on this MCU/board. SPI1 is
+     no longer used at all (spi.c/spi.h removed) -- SCK/MOSI/MISO are owned
+     here as plain GPIO and the protocol is driven entirely in software. */
+  GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* SCK idle low (mode 0) */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_RESET); /* MOSI idle low */
+
+  NRF24_SetCE(0U);
+  NRF24_SetCSN(1U);
+  NRF24_Settle();
 }
 
-static void nrf24_csn_high(void)
+void NRF24_SetCE(uint8_t high)
 {
-  HAL_GPIO_WritePin(NRF24_CS_GPIO_Port, NRF24_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(NRF24_CE_GPIO_Port, NRF24_CE_Pin, high ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
-static void nrf24_ce_low(void)
+void NRF24_SetCSN(uint8_t high)
 {
-  HAL_GPIO_WritePin(NRF24_CE_GPIO_Port, NRF24_CE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(NRF24_CS_GPIO_Port, NRF24_CS_Pin, high ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  NRF24_CsnDelay();
 }
 
-static void nrf24_ce_high(void)
+GPIO_PinState NRF24_GetIrqState(void)
 {
-  HAL_GPIO_WritePin(NRF24_CE_GPIO_Port, NRF24_CE_Pin, GPIO_PIN_SET);
+  return HAL_GPIO_ReadPin(NRF24_IRQ_GPIO_Port, NRF24_IRQ_Pin);
 }
 
-static HAL_StatusTypeDef nrf24_write_reg(uint8_t reg, uint8_t value)
+HAL_StatusTypeDef NRF24_ReadStatusNop(uint8_t *statusValue)
 {
-  uint8_t tx[2] = { (uint8_t)(NRF24_CMD_W_REGISTER | (reg & 0x1Fu)), value };
-  uint8_t rx[2] = {0u, 0u};
-  HAL_StatusTypeDef hal_status;
+  HAL_StatusTypeDef halStatus;
+  uint8_t status = 0U;
 
-  nrf24_csn_low();
-  hal_status = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 2u, 100u);
-  nrf24_csn_high();
-  return hal_status;
-}
-
-static HAL_StatusTypeDef nrf24_read_reg(uint8_t reg, uint8_t *value)
-{
-  uint8_t tx[2] = { (uint8_t)(NRF24_CMD_R_REGISTER | (reg & 0x1Fu)), NRF24_CMD_NOP };
-  uint8_t rx[2] = {0u, 0u};
-  HAL_StatusTypeDef hal_status;
-
-  if (!value) return HAL_ERROR;
-
-  nrf24_csn_low();
-  hal_status = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 2u, 100u);
-  nrf24_csn_high();
-  *value = rx[1];
-  return hal_status;
-}
-
-static void nrf24_log_probe(const char *stage)
-{
-  uint8_t cfg = 0xFFu;
-  uint8_t status = 0xFFu;
-  uint8_t rf_ch = 0xFFu;
-  uint8_t fifo = 0xFFu;
-  HAL_StatusTypeDef cfg_ok;
-  HAL_StatusTypeDef status_ok;
-  HAL_StatusTypeDef ch_ok;
-  HAL_StatusTypeDef fifo_ok;
-  GPIO_PinState irq_state = HAL_GPIO_ReadPin(NRF24_IRQ_GPIO_Port, NRF24_IRQ_Pin);
-
-  cfg_ok = nrf24_read_reg(NRF24_REG_CONFIG, &cfg);
-  status_ok = nrf24_read_reg(NRF24_REG_STATUS, &status);
-  ch_ok = nrf24_read_reg(NRF24_REG_RF_CH, &rf_ch);
-  fifo_ok = nrf24_read_reg(NRF24_REG_FIFO_STATUS, &fifo);
-
-  Diag_Log("NRF24 %s: irq=%u cfg=%02X(%u) st=%02X(%u) ch=%02X(%u) fifo=%02X(%u)",
-           stage ? stage : "probe",
-           (unsigned)((irq_state == GPIO_PIN_SET) ? 1u : 0u),
-           (unsigned)cfg, (unsigned)(cfg_ok == HAL_OK),
-           (unsigned)status, (unsigned)(status_ok == HAL_OK),
-           (unsigned)rf_ch, (unsigned)(ch_ok == HAL_OK),
-           (unsigned)fifo, (unsigned)(fifo_ok == HAL_OK));
-}
-
-static HAL_StatusTypeDef nrf24_write_buf(uint8_t reg, const uint8_t *data, uint8_t len)
-{
-  uint8_t cmd = (uint8_t)(NRF24_CMD_W_REGISTER | (reg & 0x1Fu));
-  HAL_StatusTypeDef hal_status = HAL_OK;
-
-  if (!data || len == 0u) return HAL_ERROR;
-
-  nrf24_csn_low();
-  hal_status = HAL_SPI_Transmit(&hspi1, &cmd, 1u, 100u);
-  if (hal_status == HAL_OK)
+  if (statusValue == NULL)
   {
-    hal_status = HAL_SPI_Transmit(&hspi1, (uint8_t *)data, len, 100u);
+    return HAL_ERROR;
   }
-  nrf24_csn_high();
-  return hal_status;
+
+  NRF24_SetCSN(0U);
+  halStatus = NRF24_SpiTransfer(0xFFU, &status);
+  NRF24_SetCSN(1U);
+
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  *statusValue = status;
+  return HAL_OK;
 }
 
-static HAL_StatusTypeDef nrf24_flush_tx(void)
+HAL_StatusTypeDef NRF24_ReadRawNop4(uint8_t raw[4])
 {
-  uint8_t cmd = NRF24_CMD_FLUSH_TX;
-  HAL_StatusTypeDef hal_status;
+  const uint8_t tx[4] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU };
 
-  nrf24_csn_low();
-  hal_status = HAL_SPI_Transmit(&hspi1, &cmd, 1u, 100u);
-  nrf24_csn_high();
-  return hal_status;
+  if (raw == NULL)
+  {
+    return HAL_ERROR;
+  }
+
+  NRF24_SetCSN(0U);
+  HAL_StatusTypeDef halStatus = NRF24_BitBangTransfer(tx, raw, 4U);
+  NRF24_SetCSN(1U);
+  return halStatus;
 }
 
-static HAL_StatusTypeDef nrf24_wait_tx_complete(uint32_t timeout_ms, uint8_t *status_out)
+HAL_StatusTypeDef NRF24_ReadRegister(uint8_t reg, uint8_t *value, uint8_t *statusValue)
 {
-  uint32_t start_tick = HAL_GetTick();
-  uint8_t status = 0u;
+  return NRF24_ReadRegisterMulti(reg, value, 1U, statusValue);
+}
+
+HAL_StatusTypeDef NRF24_ReadRegisterMulti(uint8_t reg, uint8_t *values, uint8_t length, uint8_t *statusValue)
+{
+  HAL_StatusTypeDef halStatus;
+  uint8_t status = 0U;
+
+  if ((values == NULL) || (length == 0U))
+  {
+    return HAL_ERROR;
+  }
+
+  halStatus = NRF24_ExecuteCommand((uint8_t)(reg & 0x1FU), NULL, values, length, &status);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  if (statusValue != NULL)
+  {
+    *statusValue = status;
+  }
+
+  return HAL_OK;
+}
+
+HAL_StatusTypeDef NRF24_WriteRegister(uint8_t reg, uint8_t value, uint8_t *statusValue)
+{
+  return NRF24_WriteRegisterMulti(reg, &value, 1U, statusValue);
+}
+
+HAL_StatusTypeDef NRF24_WriteRegisterMulti(uint8_t reg, const uint8_t *values, uint8_t length, uint8_t *statusValue)
+{
+  HAL_StatusTypeDef halStatus;
+  uint8_t status = 0U;
+
+  if ((values == NULL) || (length == 0U))
+  {
+    return HAL_ERROR;
+  }
+
+  halStatus = NRF24_ExecuteCommand((uint8_t)(0x20U | (reg & 0x1FU)), values, NULL, length, &status);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  if (statusValue != NULL)
+  {
+    *statusValue = status;
+  }
+
+  return HAL_OK;
+}
+
+static uint8_t s_current_config = 0xFFU;
+
+HAL_StatusTypeDef NRF24_ApplyDefaultConfig(void)
+{
+  HAL_StatusTypeDef halStatus;
+  uint8_t payloadWidth = NRF24_MAX_PAYLOAD_SIZE;
+
+  /* Reset cached config to force full write-and-delay during default initialization. */
+  s_current_config = 0xFFU;
+
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_EN_AA, 0x00U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_EN_RXADDR, 0x01U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_SETUP_AW, 0x03U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_SETUP_RETR, 0x00U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_RF_CH, 76U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_RF_SETUP, 0x06U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegisterMulti(NRF24_REG_RX_ADDR_P0, g_nrf24Address, sizeof(g_nrf24Address), NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegisterMulti(NRF24_REG_TX_ADDR, g_nrf24Address, sizeof(g_nrf24Address), NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_RX_PW_P0, payloadWidth, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_DYNPD, 0x00U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_WriteRegister(NRF24_REG_FEATURE, 0x00U, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_FlushRx();
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_FlushTx();
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_ClearIrqFlags((uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT));
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  return NRF24_SetConfigRegister((uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP));
+}
+
+HAL_StatusTypeDef NRF24_RunSelfTest(NRF24_TestResult *result)
+{
+  HAL_StatusTypeDef halStatus;
+  NRF24_TestResult localResult = {0};
+
+  NRF24_BusInit();
+
+  localResult.irqState = NRF24_GetIrqState();
+
+  halStatus = NRF24_ReadStatusNop(&localResult.nopStatus);
+  if (halStatus != HAL_OK)
+  {
+    localResult.halStatus = halStatus;
+    goto done;
+  }
+
+  halStatus = NRF24_ReadRegister(0x00U, &localResult.config, &localResult.status);
+  if (halStatus != HAL_OK)
+  {
+    localResult.halStatus = halStatus;
+    goto done;
+  }
+
+  halStatus = NRF24_ReadRegister(0x05U, &localResult.rfChannelBefore, NULL);
+  if (halStatus != HAL_OK)
+  {
+    localResult.halStatus = halStatus;
+    goto done;
+  }
+
+  halStatus = NRF24_WriteRegister(0x05U, 0x2AU, &localResult.writeStatus);
+  if (halStatus != HAL_OK)
+  {
+    localResult.halStatus = halStatus;
+    goto done;
+  }
+
+  halStatus = NRF24_ReadRegister(0x05U, &localResult.rfChannelAfter, NULL);
+  if (halStatus != HAL_OK)
+  {
+    localResult.halStatus = halStatus;
+    goto done;
+  }
+
+  localResult.halStatus = HAL_OK;
+
+done:
+  if (result != NULL)
+  {
+    *result = localResult;
+  }
+  return localResult.halStatus;
+}
+
+static HAL_StatusTypeDef NRF24_SpiTransfer(uint8_t value, uint8_t *rxValue)
+{
+  return NRF24_BitBangTransfer(&value, rxValue, 1U);
+}
+
+/* ---- Software (bit-banged) SPI transport -----------------------------------
+   Bench-confirmed: the SPI1 hardware peripheral reads MISO as stuck-high
+   (0xFF) on this board regardless of baud rate (tried /64 and /256), while
+   this plain-GPIO bit-bang on the exact same wiring reliably reads the
+   nRF24's real STATUS byte. Module and wiring are proven good; the fault is
+   isolated to the SPI1 peripheral's capture path. This is now the sole
+   transport for all nRF24 traffic -- SCK/MOSI/MISO are configured as plain
+   GPIO once in NRF24_BusInit() and stay that way; CSN is handled by the
+   caller (NRF24_SetCSN), exactly like the old SPI1_Transfer call sites did. */
+static void NRF24_BitBangDelay(void)
+{
+  for (volatile uint32_t i = 0U; i < 400U; ++i)
+  {
+    __NOP();
+  }
+}
+
+static HAL_StatusTypeDef NRF24_BitBangTransfer(const uint8_t *tx, uint8_t *rx, uint8_t length)
+{
+  if ((tx == NULL) || (length == 0U))
+  {
+    return HAL_ERROR;
+  }
+
+  for (uint8_t i = 0U; i < length; ++i)
+  {
+    uint8_t txByte = tx[i];
+    uint8_t rxByte = 0U;
+
+    for (uint8_t bit = 0U; bit < 8U; ++bit)
+    {
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, ((txByte & 0x80U) != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      txByte = (uint8_t)(txByte << 1);
+      NRF24_BitBangDelay();
+
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* rising edge: slave presents data (mode 0) */
+      NRF24_BitBangDelay();
+      const uint8_t sampled = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET) ? 1U : 0U;
+      rxByte = (uint8_t)((rxByte << 1) | sampled);
+
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* falling edge */
+      NRF24_BitBangDelay();
+    }
+
+    if (rx != NULL)
+    {
+      rx[i] = rxByte;
+    }
+  }
+
+  return HAL_OK;
+}
+
+/* ---- Serial bench diagnosis (USART10, plain text) ------------------------ */
+
+static void DiagAppendStr(char **out, char *end, const char *s)
+{
+  while ((*s != '\0') && (*out < end))
+  {
+    *(*out)++ = *s++;
+  }
+}
+
+static void DiagAppendDec(char **out, char *end, uint32_t v)
+{
+  char tmp[10];
+  uint8_t n = 0U;
+  do
+  {
+    tmp[n++] = (char)('0' + (v % 10U));
+    v /= 10U;
+  } while (v != 0U);
+  while ((n != 0U) && (*out < end))
+  {
+    *(*out)++ = tmp[--n];
+  }
+}
+
+static void DiagAppendHex8(char **out, char *end, uint8_t v)
+{
+  static const char hex[] = "0123456789ABCDEF";
+  DiagAppendStr(out, end, "0x");
+  if (*out < end) { *(*out)++ = hex[(v >> 4) & 0x0FU]; }
+  if (*out < end) { *(*out)++ = hex[v & 0x0FU]; }
+}
+
+/* Runs a full SPI/nRF24 probe and prints a human-readable verdict over UART.
+   MUST run from the SPI-owning task (radio TX), never pre-scheduler: the ~43 ms
+   blocking UART TX would push boot past the 500 ms IWDG and reset-loop. The line
+   buffer is static (single caller, single thread) to keep it off the task stack.
+   Restores RF_CH to the operational channel (76) before returning. */
+void NRF24_DiagnoseSerial(UART_HandleTypeDef *huart)
+{
+  static char line[640];
+  char *out = line;
+  char *const end = &line[sizeof(line) - 1U];
+
+  uint8_t nop = 0xFFU;
+  uint8_t raw[4] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU };
+  uint8_t config = 0xFFU;
+  uint8_t rfch = 0xFFU;
+  uint8_t fifo = 0xFFU;
+  uint8_t rb2A = 0xFFU;   /* readback of RF_CH after writing 0x2A */
+  uint8_t rb15 = 0xFFU;   /* readback of RF_CH after writing 0x15 */
+
+  if (huart == NULL)
+  {
+    return;
+  }
+
+  /* Known idle state: CE low, CSN high, let the module settle. */
+  NRF24_BusInit();
+
+  const uint8_t irq = (uint8_t)NRF24_GetIrqState();
+  const uint8_t ce = (uint8_t)HAL_GPIO_ReadPin(NRF24_CE_GPIO_Port, NRF24_CE_Pin);
+  const uint8_t csn = (uint8_t)HAL_GPIO_ReadPin(NRF24_CS_GPIO_Port, NRF24_CS_Pin);
+
+  /* NOP-based reads bypass the 0xFF error gate, so they always show the raw
+     MISO byte -- the reliable "stuck high" detector. */
+  (void)NRF24_ReadStatusNop(&nop);
+  (void)NRF24_ReadRawNop4(raw);
+
+  /* Register reads (positive confirmation). These bail on 0xFF, so the vars
+     stay 0xFF if MISO is dead. */
+  (void)NRF24_ReadRegister(NRF24_REG_CONFIG, &config, NULL);
+  (void)NRF24_ReadRegister(NRF24_REG_RF_CH, &rfch, NULL);
+  (void)NRF24_ReadRegister(NRF24_REG_FIFO_STATUS, &fifo, NULL);
+
+  /* Write-readback with two distinct patterns: the definitive SPI-alive test.
+     Only a real nRF24 driving MISO can echo both values back. */
+  (void)NRF24_WriteRegister(NRF24_REG_RF_CH, 0x2AU, NULL);
+  (void)NRF24_ReadRegister(NRF24_REG_RF_CH, &rb2A, NULL);
+  (void)NRF24_WriteRegister(NRF24_REG_RF_CH, 0x15U, NULL);
+  (void)NRF24_ReadRegister(NRF24_REG_RF_CH, &rb15, NULL);
+  (void)NRF24_WriteRegister(NRF24_REG_RF_CH, 76U, NULL);   /* restore operational channel */
+
+  const uint8_t readbackOk = (uint8_t)((rb2A == 0x2AU) && (rb15 == 0x15U));
+  const uint8_t stuckHigh = (uint8_t)((nop == 0xFFU) && (config == 0xFFU) &&
+                                      (raw[0] == 0xFFU) && (raw[1] == 0xFFU) &&
+                                      (raw[2] == 0xFFU) && (raw[3] == 0xFFU) &&
+                                      (rb2A == 0xFFU) && (rb15 == 0xFFU));
+  const uint8_t stuckLow = (uint8_t)((nop == 0x00U) && (raw[0] == 0x00U) &&
+                                     (raw[1] == 0x00U) && (raw[2] == 0x00U) &&
+                                     (raw[3] == 0x00U) && (rb2A == 0x00U) && (rb15 == 0x00U));
+
+  DiagAppendStr(&out, end, "\r\n===== NRF24 DIAG (bit-bang SPI por software) =====\r\n");
+  DiagAppendStr(&out, end, "PINS  SCK=PA5 MISO=PA6 MOSI=PA7 CSN=PB0 CE=PC5 IRQ=PC4\r\n");
+  DiagAppendStr(&out, end, "SPI1 hardware DESACTIVADO: SCK/MOSI/MISO son GPIO puro (ver NRF24_BusInit)\r\n");
+  DiagAppendStr(&out, end, "GPIO  IRQ=");
+  DiagAppendDec(&out, end, irq);
+  DiagAppendStr(&out, end, " CE=");
+  DiagAppendDec(&out, end, ce);
+  DiagAppendStr(&out, end, " CSN=");
+  DiagAppendDec(&out, end, csn);
+  DiagAppendStr(&out, end, "\r\nNOP   status=");
+  DiagAppendHex8(&out, end, nop);
+  DiagAppendStr(&out, end, "  raw=");
+  DiagAppendHex8(&out, end, raw[0]);
+  DiagAppendStr(&out, end, ",");
+  DiagAppendHex8(&out, end, raw[1]);
+  DiagAppendStr(&out, end, ",");
+  DiagAppendHex8(&out, end, raw[2]);
+  DiagAppendStr(&out, end, ",");
+  DiagAppendHex8(&out, end, raw[3]);
+  DiagAppendStr(&out, end, "\r\nREG   CONFIG(0x00)=");
+  DiagAppendHex8(&out, end, config);
+  DiagAppendStr(&out, end, " RF_CH(0x05)=");
+  DiagAppendDec(&out, end, rfch);
+  DiagAppendStr(&out, end, " FIFO(0x17)=");
+  DiagAppendHex8(&out, end, fifo);
+  DiagAppendStr(&out, end, "\r\nRDBK  wrote 0x2A->");
+  DiagAppendHex8(&out, end, rb2A);
+  DiagAppendStr(&out, end, "  wrote 0x15->");
+  DiagAppendHex8(&out, end, rb15);
+  DiagAppendStr(&out, end, "\r\nVERDICT: ");
+
+  if (readbackOk)
+  {
+    DiagAppendStr(&out, end, "OK - nRF24 responde correctamente por bit-bang (readback OK)");
+  }
+  else if (stuckHigh)
+  {
+    DiagAppendStr(&out, end, "FALLO: MISO SIEMPRE ALTO (0xFF) incluso por bit-bang.");
+    DiagAppendStr(&out, end, "\r\n         Esto SI es electrico: revisa 3V3 + cap 10uF en VCC del modulo,");
+    DiagAppendStr(&out, end, "\r\n         cable MISO(PA6), CSN(PB0) y masa comun.");
+  }
+  else if (stuckLow)
+  {
+    DiagAppendStr(&out, end, "FALLO: MISO SIEMPRE BAJO (0x00) - MISO a masa o modulo sin alimentar.");
+  }
+  else
+  {
+    DiagAppendStr(&out, end, "INESTABLE: readback no coincide - revisa alimentacion o soldaduras.");
+  }
+  DiagAppendStr(&out, end, "\r\n=========================\r\n");
+
+  (void)HAL_UART_Transmit(huart, (uint8_t *)line, (uint16_t)(out - line), 200U);
+}
+
+HAL_StatusTypeDef NRF24_ClearIrqFlags(uint8_t irqMask)
+{
+  return NRF24_WriteRegister(NRF24_REG_STATUS, (uint8_t)(irqMask & (NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT)), NULL);
+}
+
+HAL_StatusTypeDef NRF24_FlushRx(void)
+{
+  return NRF24_ExecuteCommand(NRF24_CMD_FLUSH_RX, NULL, NULL, 0U, NULL);
+}
+
+HAL_StatusTypeDef NRF24_FlushTx(void)
+{
+  return NRF24_ExecuteCommand(NRF24_CMD_FLUSH_TX, NULL, NULL, 0U, NULL);
+}
+
+HAL_StatusTypeDef NRF24_EnterRxMode(void)
+{
+  HAL_StatusTypeDef halStatus = NRF24_SetConfigRegister((uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_CRCO | NRF24_CONFIG_PWR_UP | NRF24_CONFIG_PRIM_RX));
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  NRF24_SetCE(1U);
+  return HAL_OK;
+}
+
+HAL_StatusTypeDef NRF24_SendPayload(const uint8_t *payload, uint8_t length, uint32_t timeoutMs)
+{
+  HAL_StatusTypeDef halStatus;
+  uint8_t txBuffer[NRF24_MAX_PAYLOAD_SIZE] = {0};
+  uint8_t status = 0U;
+
+  if ((payload == NULL) || (length == 0U) || (length > NRF24_MAX_PAYLOAD_SIZE))
+  {
+    return HAL_ERROR;
+  }
+
+  (void)memcpy(txBuffer, payload, length);
+
+  NRF24_SetCE(0U);
+  halStatus = NRF24_SetConfigRegister((uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP));
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_ClearIrqFlags((uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT));
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_FlushTx();
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  halStatus = NRF24_ExecuteCommand(NRF24_CMD_W_TX_PAYLOAD, txBuffer, NULL, NRF24_MAX_PAYLOAD_SIZE, &status);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  NRF24_SetCE(1U);
+  for (volatile uint32_t i = 0U; i < 800U; ++i)
+  {
+    __NOP();
+  }
+  NRF24_SetCE(0U);
+
+  halStatus = NRF24_WaitIrqAssert(timeoutMs, &status);
+  (void)NRF24_ClearIrqFlags((uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT));
+  (void)NRF24_SetConfigRegister((uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP));
+
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  if ((status & NRF24_STATUS_TX_DS) != 0U)
+  {
+    return HAL_OK;
+  }
+
+  if ((status & NRF24_STATUS_MAX_RT) != 0U)
+  {
+    (void)NRF24_FlushTx();
+    return HAL_TIMEOUT;
+  }
+
+  return HAL_ERROR;
+}
+
+HAL_StatusTypeDef NRF24_ReadRxPayload(uint8_t *payload, uint8_t length)
+{
+  if ((payload == NULL) || (length == 0U) || (length > NRF24_MAX_PAYLOAD_SIZE))
+  {
+    return HAL_ERROR;
+  }
+
+  return NRF24_ExecuteCommand(NRF24_CMD_R_RX_PAYLOAD, NULL, payload, length, NULL);
+}
+
+static HAL_StatusTypeDef NRF24_ExecuteCommand(uint8_t command, const uint8_t *txData, uint8_t *rxData, uint8_t length, uint8_t *statusValue)
+{
+  HAL_StatusTypeDef halStatus;
+  uint8_t tx[NRF24_MAX_PAYLOAD_SIZE + 1U] = {0U};
+  uint8_t rx[NRF24_MAX_PAYLOAD_SIZE + 1U] = {0U};
+  uint8_t status = 0U;
+
+  if (length > NRF24_MAX_PAYLOAD_SIZE)
+  {
+    return HAL_ERROR;
+  }
+
+  tx[0] = command;
+  for (uint8_t index = 0U; index < length; index++)
+  {
+    tx[index + 1U] = (txData != NULL) ? txData[index] : 0xFFU;
+  }
+
+  NRF24_SetCSN(0U);
+  halStatus = NRF24_BitBangTransfer(tx, rx, (uint8_t)(length + 1U));
+  NRF24_SetCSN(1U);
+
+  status = rx[0];
+
+  if ((halStatus == HAL_OK) && (status == 0xFFU))
+  {
+    return HAL_ERROR;
+  }
+
+  if ((halStatus == HAL_OK) && (rxData != NULL))
+  {
+    for (uint8_t index = 0U; index < length; index++)
+    {
+      rxData[index] = rx[index + 1U];
+    }
+  }
+
+  if (statusValue != NULL)
+  {
+    *statusValue = status;
+  }
+
+  return halStatus;
+}
+
+static HAL_StatusTypeDef NRF24_SetConfigRegister(uint8_t configValue)
+{
+  if (configValue == s_current_config)
+  {
+    return HAL_OK;
+  }
+
+  HAL_StatusTypeDef halStatus = NRF24_WriteRegister(NRF24_REG_CONFIG, configValue, NULL);
+  if (halStatus != HAL_OK)
+  {
+    return halStatus;
+  }
+
+  /* nRF24 datasheet Tpd2stby: >=1.5 ms delay only needed when transitioning 
+   * PWR_UP from 0 to 1. Skip delay if PWR_UP was already high.
+   * Under -O0 (Debug), a 100,000 loop takes ~1.5 million cycles (approx 3 ms at 480 MHz). */
+  if (((s_current_config & NRF24_CONFIG_PWR_UP) == 0U) && ((configValue & NRF24_CONFIG_PWR_UP) != 0U))
+  {
+    for (volatile uint32_t nop_i = 0U; nop_i < 100000U; ++nop_i) { __NOP(); }
+  }
+
+  s_current_config = configValue;
+  return HAL_OK;
+}
+
+static HAL_StatusTypeDef NRF24_WaitIrqAssert(uint32_t timeoutMs, uint8_t *statusValue)
+{
+  uint32_t startTick = HAL_GetTick();
+  uint8_t status = 0U;
 
   do
   {
-    if (nrf24_read_reg(NRF24_REG_STATUS, &status) != HAL_OK)
+    if (NRF24_ReadStatusNop(&status) != HAL_OK)
+    {
+      return HAL_ERROR;
+    }
+    if (status == 0xFFU)
     {
       return HAL_ERROR;
     }
 
-    if ((status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT)) != 0u)
+    if ((status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT | NRF24_STATUS_RX_DR)) != 0U)
     {
-      if (status_out)
+      if (statusValue != NULL)
       {
-        *status_out = status;
+        *statusValue = status;
       }
+
       return HAL_OK;
     }
 
-    if (HAL_GPIO_ReadPin(NRF24_IRQ_GPIO_Port, NRF24_IRQ_Pin) == GPIO_PIN_RESET)
+    if (NRF24_GetIrqState() == GPIO_PIN_RESET)
     {
-      if (nrf24_read_reg(NRF24_REG_STATUS, &status) != HAL_OK)
+      /* IRQ should go low when any event bit is set. Read STATUS again so we
+         can trust the latched flags even if the IRQ pulse is short or noisy. */
+      if (NRF24_ReadStatusNop(&status) != HAL_OK)
+      {
+        return HAL_ERROR;
+      }
+      if (status == 0xFFU)
       {
         return HAL_ERROR;
       }
 
-      if (status_out)
+      if (statusValue != NULL)
       {
-        *status_out = status;
+        *statusValue = status;
       }
 
-      if ((status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT)) != 0u)
+      if ((status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT | NRF24_STATUS_RX_DR)) != 0U)
       {
         return HAL_OK;
       }
     }
-  } while ((HAL_GetTick() - start_tick) < timeout_ms);
+  } while ((HAL_GetTick() - startTick) < timeoutMs);
 
-  if (status_out)
+  if (NRF24_ReadStatusNop(&status) != HAL_OK)
   {
-    *status_out = status;
+    return HAL_ERROR;
+  }
+  if (status == 0xFFU)
+  {
+    return HAL_ERROR;
   }
 
-  return HAL_TIMEOUT;
+  if (statusValue != NULL)
+  {
+    *statusValue = status;
+  }
+
+  if ((status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT | NRF24_STATUS_RX_DR)) == 0U)
+  {
+    return HAL_TIMEOUT;
+  }
+
+  return HAL_OK;
 }
 
-static void nrf24_init_once(void)
+static void NRF24_Settle(void)
 {
-  uint8_t cfg = 0u;
-  uint8_t status = 0u;
-
-  if (s_nrf24_ready) return;
-
-  nrf24_ce_low();
-  nrf24_csn_high();
-  HAL_Delay(5u);
-
-  if (nrf24_write_reg(NRF24_REG_CONFIG, (uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP)) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at CONFIG");
-      nrf24_log_probe("init-fail-config");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_EN_AA, 0x00u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at EN_AA");
-      nrf24_log_probe("init-fail-en_aa");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_EN_RXADDR, 0x01u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at EN_RXADDR");
-      nrf24_log_probe("init-fail-en_rxaddr");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_SETUP_AW, 0x03u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at SETUP_AW");
-      nrf24_log_probe("init-fail-setup_aw");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_SETUP_RETR, 0x00u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at SETUP_RETR");
-      nrf24_log_probe("init-fail-setup_retr");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_RF_CH, APP_NRF24_ECU_CHANNEL) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at RF_CH");
-      nrf24_log_probe("init-fail-rf_ch");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_RF_SETUP, 0x06u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at RF_SETUP");
-      nrf24_log_probe("init-fail-rf_setup");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_DYNPD, 0x00u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at DYNPD");
-      nrf24_log_probe("init-fail-dynpd");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_FEATURE, 0x00u) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at FEATURE");
-      nrf24_log_probe("init-fail-feature");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_RX_PW_P0, APP_NRF24_ECU_PAYLOAD_SIZE) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at RX_PW_P0");
-      nrf24_log_probe("init-fail-rx_pw_p0");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_buf(NRF24_REG_TX_ADDR, s_nrf24_addr, sizeof(s_nrf24_addr)) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at TX_ADDR");
-      nrf24_log_probe("init-fail-tx_addr");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_buf(NRF24_REG_RX_ADDR_P0, s_nrf24_addr, sizeof(s_nrf24_addr)) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at RX_ADDR_P0");
-      nrf24_log_probe("init-fail-rx_addr_p0");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_write_reg(NRF24_REG_STATUS, (uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT)) != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at STATUS");
-      nrf24_log_probe("init-fail-status");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  if (nrf24_flush_tx() != HAL_OK)
-  {
-    if (!s_nrf24_diag_reported)
-    {
-      Diag_Log("NRF24 init SPI write failed at FLUSH_TX");
-      nrf24_log_probe("init-fail-flush_tx");
-      s_nrf24_diag_reported = 1u;
-    }
-    return;
-  }
-  HAL_Delay(5u);
-
-  if (nrf24_read_reg(NRF24_REG_CONFIG, &cfg) == HAL_OK &&
-      nrf24_read_reg(NRF24_REG_STATUS, &status) == HAL_OK &&
-      (cfg & (NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP | NRF24_CONFIG_PRIM_RX)) ==
-      (NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP))
-  {
-    s_nrf24_ready = 1u;
-    Diag_Log("NRF24 init OK: cfg=%02X status=%02X ch=%02X addr=ECU01",
-             (unsigned)cfg, (unsigned)status, (unsigned)APP_NRF24_ECU_CHANNEL);
-  }
-  else if (!s_nrf24_diag_reported)
-  {
-    Diag_Log("NRF24 init verify failed: cfg=%02X expected_mask=%02X",
-             (unsigned)cfg,
-             (unsigned)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP));
-    nrf24_log_probe("init-verify-fail");
-    s_nrf24_diag_reported = 1u;
-  }
-}
-
-static uint8_t nrf24_tx32(const uint8_t payload[32])
-{
-  uint8_t cmd = NRF24_CMD_W_TX_PAYLOAD;
-  uint8_t status = 0u;
-  uint8_t fifo_status = 0u;
-  HAL_StatusTypeDef hal_status;
-
-  if (!payload) return 0u;
-
-  if (nrf24_write_reg(NRF24_REG_STATUS,
-                      (uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT)) != HAL_OK ||
-      nrf24_flush_tx() != HAL_OK ||
-      nrf24_read_reg(NRF24_REG_FIFO_STATUS, &fifo_status) != HAL_OK)
-  {
-    return 0u;
-  }
-
-  if ((fifo_status & NRF24_FIFO_TX_FULL) != 0u)
-  {
-    return 0u;
-  }
-
-  nrf24_csn_low();
-  hal_status = HAL_SPI_Transmit(&hspi1, &cmd, 1u, 100u);
-  if (hal_status == HAL_OK)
-  {
-    hal_status = HAL_SPI_Transmit(&hspi1, (uint8_t *)payload, APP_NRF24_ECU_PAYLOAD_SIZE, 100u);
-  }
-  nrf24_csn_high();
-  if (hal_status != HAL_OK)
-  {
-    return 0u;
-  }
-
-  nrf24_ce_high();
-  for (volatile uint32_t i = 0u; i < 800u; ++i)
+  for (volatile uint32_t i = 0U; i < 200000U; ++i)
   {
     __NOP();
   }
-  nrf24_ce_low();
-
-  hal_status = nrf24_wait_tx_complete(APP_NRF24_ECU_TX_TIMEOUT_MS, &status);
-  (void)nrf24_write_reg(NRF24_REG_STATUS,
-                        (uint8_t)(NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT));
-
-  if (hal_status != HAL_OK)
-  {
-    (void)nrf24_flush_tx();
-    return 0u;
-  }
-
-  if ((status & NRF24_STATUS_TX_DS) != 0u)
-  {
-    return 1u;
-  }
-
-  if ((status & NRF24_STATUS_MAX_RT) != 0u)
-  {
-    (void)nrf24_flush_tx();
-    return 0u;
-  }
-
-  return 0u;
 }
 
-#if APP_SD_USE_FATFS
-#include "ff.h"
-
-static FATFS s_sd_fs;
-static uint8_t s_sd_mounted;
-
-static uint8_t sd_mount_once(void)
+static void NRF24_CsnDelay(void)
 {
-  FRESULT fr;
-
-  if (s_sd_mounted) return 1u;
-
-  fr = f_mount(&s_sd_fs, "", 1u);
-  if (fr == FR_OK)
+  for (volatile uint32_t i = 0U; i < 200U; ++i)
   {
-    s_sd_mounted = 1u;
-    return 1u;
-  }
-
-  if (!s_sd_diag_reported)
-  {
-    Diag_Log("SD FatFs mount failed\n");
-    s_sd_diag_reported = 1u;
-  }
-
-  return 0u;
-}
-#endif
-
-void Telemetry_Send32(const uint8_t payload[32])
-{
-  uint16_t seq;
-
-  nrf24_init_once();
-  if (!s_nrf24_ready) return;
-
-  seq = (uint16_t)payload[4] | ((uint16_t)payload[5] << 8);
-
-  if (nrf24_tx32(payload))
-  {
-    s_nrf24_tx_ok_count++;
-    s_nrf24_uart_trace_count++;
-    if ((s_nrf24_uart_trace_count <= 40u) || ((s_nrf24_uart_trace_count % 40u) == 0u))
-    {
-      Diag_Log("BOT UART NRF TX #%lu magic=%02X ver=%02X frag=%u/%u seq=%u kind=%u p8=%02X p9=%02X p10=%02X p11=%02X",
-               (unsigned long)s_nrf24_uart_trace_count,
-               (unsigned)payload[0],
-               (unsigned)payload[1],
-               (unsigned)payload[2],
-               (unsigned)payload[3],
-               (unsigned)seq,
-               (unsigned)payload[6],
-               (unsigned)payload[8],
-               (unsigned)payload[9],
-               (unsigned)payload[10],
-               (unsigned)payload[11]);
-    }
-    if ((s_nrf24_tx_ok_count <= 3u) || ((s_nrf24_tx_ok_count % 10u) == 0u))
-    {
-      Diag_Log("BOT NRF24 TX ok #%lu magic=%02X frag=%u/%u seq=%u kind=%u",
-               (unsigned long)s_nrf24_tx_ok_count,
-               (unsigned)payload[0],
-               (unsigned)payload[2],
-               (unsigned)payload[3],
-               (unsigned)((uint16_t)payload[4] | ((uint16_t)payload[5] << 8)),
-               (unsigned)payload[6]);
-    }
-    return;
-  }
-
-  if (!s_nrf24_diag_reported)
-  {
-    uint8_t status = 0xFFu;
-    uint8_t fifo = 0xFFu;
-    (void)nrf24_read_reg(NRF24_REG_STATUS, &status);
-    (void)nrf24_read_reg(NRF24_REG_FIFO_STATUS, &fifo);
-    Diag_Log("BOT NRF24 telemetry TX failed status=%02X fifo=%02X frag=%u/%u seq=%u kind=%u",
-             (unsigned)status,
-             (unsigned)fifo,
-             (unsigned)payload[2],
-             (unsigned)payload[3],
-             (unsigned)((uint16_t)payload[4] | ((uint16_t)payload[5] << 8)),
-             (unsigned)payload[6]);
-    s_nrf24_diag_reported = 1u;
+    __NOP();
   }
 }
-
-void Telemetry_SdStore32(const uint8_t payload[32])
-{
-  if (!payload) return;
-
-#if APP_SD_USE_FATFS
-  {
-    FIL file;
-    FRESULT fr;
-    UINT written = 0u;
-
-    if (!sd_mount_once()) return;
-
-    fr = f_open(&file, "telemetry.bin", FA_OPEN_APPEND | FA_WRITE);
-    if (fr != FR_OK)
-    {
-      if (!s_sd_diag_reported)
-      {
-        Diag_Log("SD open telemetry.bin failed\n");
-        s_sd_diag_reported = 1u;
-      }
-      return;
-    }
-
-    fr = f_write(&file, payload, 32u, &written);
-    (void)f_close(&file);
-
-    if (fr != FR_OK || written != 32u)
-    {
-      if (!s_sd_diag_reported)
-      {
-        Diag_Log("SD write telemetry.bin failed\n");
-        s_sd_diag_reported = 1u;
-      }
-    }
-  }
-#else
-  if (!s_sd_diag_reported)
-  {
-    Diag_Log("SD backend pending FatFs integration\n");
-    s_sd_diag_reported = 1u;
-  }
-#endif
-}
-
-#endif
