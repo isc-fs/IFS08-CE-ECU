@@ -19,8 +19,9 @@ enum {
     ECU_TASK_CONTROL = 0,
     ECU_TASK_CAN_RX  = 1,
     ECU_TASK_CAN_TX  = 2,
-    ECU_TASK_DIAG    = 3,
-    ECU_TASK_COUNT   = 4,
+    ECU_TASK_TELEMETRY = 3,
+    ECU_TASK_DIAG    = 4,
+    ECU_TASK_COUNT   = 5,
 };
 
 /* Free-running per-task step counters: each task bumps its own every loop.
@@ -33,6 +34,20 @@ extern volatile uint32_t g_task_step[ECU_TASK_COUNT];
  * enable command (magic 0xDEADBEEF), read by ControlTask. The 0x704 health
  * frame is deliberately ALWAYS-ON (ungated) -- it's the diagnostic lifeline. */
 extern volatile uint8_t g_pit_diag_enabled;
+extern uint32_t g_last_torque_pct;
+extern uint8_t  g_last_ctrl_state;
+
+/* Pedals/plausibility, mirrored from ControlTask's realtime-local IoInputs +
+ * CtrlOutput so TelemetryTask (200 ms, non-realtime) can publish them on
+ * FDCAN3 (0x511, 0x510 flags) without pulling the pedal path off its inline
+ * read-once-per-10ms-cycle design (see io_signals.hpp). Display-only: the
+ * safety decision is made in ControlTask itself, this is just a mirror. */
+extern uint16_t g_last_apps1_raw;
+extern uint16_t g_last_apps2_raw;
+extern uint16_t g_last_brake_raw;
+extern uint8_t  g_last_start_button;
+extern uint8_t  g_last_ev_2_3;
+extern uint8_t  g_last_t11_8_9;
 
 /* Count of frames dropped by can_tx_post() because the TX queue was full (its
  * osMessageQueuePut timed out at 0). Free-running, never reset. 0 on a healthy

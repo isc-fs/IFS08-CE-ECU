@@ -25,7 +25,7 @@ typedef struct {
     uint8_t  dlc;
     uint8_t  extended;       /* bool: 1 if 29-bit id (the ECU contract is all 11-bit) */
     uint8_t  fd;             /* reserved, always 0 (classic CAN) */
-    uint8_t  bus;            /* CanBus: 0 = INV (FDCAN1), 1 = ACU (FDCAN2) */
+    uint8_t  bus;            /* CanBus: 0 = INV (FDCAN1), 1 = ACU (FDCAN2), 2 = DASH (FDCAN3) */
     uint32_t timestamp_ms;
     uint8_t  data[ECU_CAN_FRAME_MAX_DATA];
 } CanFrame;

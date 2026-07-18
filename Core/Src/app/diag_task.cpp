@@ -32,7 +32,7 @@ extern "C" void ecu_diag_task_run(void *argument) {
     const uint32_t   boot_tick  = osKernelGetTickCount();
 
     uint32_t min_heap            = 0xFFFFFFFFu;
-    uint32_t prev_step[ECU_TASK_COUNT] = { 0, 0, 0, 0 };
+    uint32_t prev_step[ECU_TASK_COUNT] = {};
     uint32_t tick                = osKernelGetTickCount();
 
     for (;;) {

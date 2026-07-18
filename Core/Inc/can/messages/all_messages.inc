@@ -33,6 +33,13 @@
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */
 #include "acu_v_cell_min.def"       /* 0x12C  AMS min cell voltage            */
+#include "acu_vmin_module_a.def"    /* 0x131  AMS per-module vmin 0..2        */
+#include "acu_vmin_module_b.def"    /* 0x132  AMS per-module vmin 3..4        */
+#include "acu_vmax_module_a.def"    /* 0x133  AMS per-module vmax 0..2        */
+#include "acu_vmax_module_b.def"    /* 0x134  AMS per-module vmax 3..4        */
+#include "acu_currents.def"         /* 0x135  AMS accu/dcdc currents          */
+#include "acu_tmax_module_a.def"    /* 0x136  AMS per-module tmax 0..2        */
+#include "acu_tmax_module_b.def"    /* 0x137  AMS per-module tmax 3..4 + dcdc */
 #include "ams_status.def"           /* 0x4A0  AMS FSM state / ams_ok          */
 #include "udv_torque_cmd.def"       /* 0x507  uDV torque command (s32 LE, %)  */
 #include "udv_r2d_request.def"      /* 0x510  uDV DV ready-to-drive request   */
