@@ -599,6 +599,8 @@ static void test_udv_tx() {
     CHECK(rn.data[0]==0xFF && rn.data[1]==0xFF && rn.data[2]==0xFF && rn.data[3]==0xFF,
           "-15 erpm -> -1 mechanical (sign-preserving s32 LE)");
     CHECK(UdvTx::build_motor_rpm(-1).data[0] == 0x00, "-1 erpm -> 0 (truncates toward zero)");
+}
+
 // v2 radio snapshot -- byte layout MUST match the live ground-station parser
 // (IFS08-TE feat/receptor_08 ISC_RTT_serial.py _decode_snapshot). Distinct
 // value per field so any mis-offset is caught; a Python round-trip against the
