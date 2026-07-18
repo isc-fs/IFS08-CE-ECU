@@ -52,37 +52,38 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.apps2_raw         = in.apps2_raw;
         ci.brake_raw         = in.brake_raw;
         ci.start_button      = in.start_button;
-#if defined(ECU_STUB_NO_INVERTER)
-        // Calibration / bring-up: no inverter on FDCAN1 -- bypass BOTH inverter gates
-        // (0x466 vconfig + Ready state) so the FSM walks to Active on its own for the
-        // R2D/RTDS sequence + APPS pedal sweep. Ready(4) < fault(10) -> stays in
-        // TorqueEnable. DISABLES the inverter handshake -- NEVER a flight default.
-        ci.inv_present       = true;
-        ci.inv_vconfig_ready = true;
-        ci.inv_state         = config::InvReadyState;
-        ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
-#else
-        ci.inv_present       = VehicleService::is_fresh(now, veh.last_inv_tick, config::InvStaleMs);
-        ci.inv_vconfig_ready = (veh.last_vconfig_tick != 0u);
-        ci.inv_state         = veh.inv_state;
-        ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
-#endif
-#if defined(ECU_STUB_NO_AMS)
-        // Bring-up with NO AMS on the bus (inverter on bench PSUs): assume precharge
-        // complete + AMS healthy so the FSM can reach Active. WaitInvVdcConfig still
-        // gates on the inverter's 0x466 DC-bus report, so it won't arm into a dead bus.
-        // DISABLES the AMS safety gate -- NEVER a flight default.
-        ci.ams_fresh         = true;
-        ci.ok_precharge      = true;
-        ci.ams_error         = false;
-        ci.v_cell_min_mV     = config::CellVDefaultMv;   // healthy default -> no low-cell derate
-#else
-        const bool ams_fresh = VehicleService::is_fresh(now, veh.last_ams_tick, config::AmsStaleMs);
-        ci.ams_fresh         = ams_fresh;
-        ci.ok_precharge      = veh.ok_precharge && ams_fresh;   // stale AMS -> not ok (fail-safe)
-        ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
-        ci.v_cell_min_mV     = veh.v_cell_min_mV;
-#endif
+        // Bench stub (config::StubNoInverter, ecu_config.hpp — folds away when false):
+        // no inverter on FDCAN1, so bypass BOTH inverter gates (0x466 vconfig + Ready
+        // state) and the FSM walks to Active on its own for the R2D/RTDS sequence +
+        // APPS sweep. Ready(4) < fault(10) -> stays in TorqueEnable. DISABLES the
+        // inverter handshake -- NEVER true for flight.
+        if constexpr (config::StubNoInverter) {
+            ci.inv_present       = true;
+            ci.inv_vconfig_ready = true;
+            ci.inv_state         = config::InvReadyState;
+            ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
+        } else {
+            ci.inv_present       = VehicleService::is_fresh(now, veh.last_inv_tick, config::InvStaleMs);
+            ci.inv_vconfig_ready = (veh.last_vconfig_tick != 0u);
+            ci.inv_state         = veh.inv_state;
+            ci.inv_dc_bus_V      = veh.inv_dc_bus_V;
+        }
+        // Bench stub (config::StubNoAms): no AMS on the bus (inverter on bench PSUs)
+        // -> assume precharge complete + AMS healthy so the FSM can reach Active.
+        // WaitInvVdcConfig still gates on the inverter's 0x466 DC-bus report, so it
+        // won't arm into a dead bus. DISABLES the AMS safety gate -- NEVER for flight.
+        if constexpr (config::StubNoAms) {
+            ci.ams_fresh         = true;
+            ci.ok_precharge      = true;
+            ci.ams_error         = false;
+            ci.v_cell_min_mV     = config::CellVDefaultMv;   // healthy default -> no low-cell derate
+        } else {
+            const bool ams_fresh = VehicleService::is_fresh(now, veh.last_ams_tick, config::AmsStaleMs);
+            ci.ams_fresh         = ams_fresh;
+            ci.ok_precharge      = veh.ok_precharge && ams_fresh;   // stale AMS -> not ok (fail-safe)
+            ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
+            ci.v_cell_min_mV     = veh.v_cell_min_mV;
+        }
         // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
         // and the conditioned 0x507 accel command with its own freshness --
         // stale command => the core commands torque 0 (never APPS fallback).
@@ -98,6 +99,14 @@ extern "C" void ecu_control_task_run(void *argument) {
         if (out.torque_pct > config::TorqueCap) {
             out.torque_pct = config::TorqueCap;
         }
+        g_last_torque_pct = out.torque_pct;
+        g_last_ctrl_state = static_cast<std::uint8_t>(out.state);
+        g_last_apps1_raw     = in.apps1_raw;
+        g_last_apps2_raw     = in.apps2_raw;
+        g_last_brake_raw     = in.brake_raw;
+        g_last_start_button  = in.start_button ? 1u : 0u;
+        g_last_ev_2_3        = out.ev_2_3   ? 1u : 0u;
+        g_last_t11_8_9       = out.t11_8_9  ? 1u : 0u;
 
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
@@ -119,7 +128,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         // FSM's own ok_precharge view (stub-consistent); the brake verdict uses
         // the SAME threshold that will gate the DV R2D entry.
         can_tx_post(UdvTx::build_motor_rpm(veh.inv_rpm));
-        if (static_cast<uint32_t>(now - last_udv) >= 100u) {
+        if (static_cast<uint32_t>(now - last_udv) >= config::UdvTxPeriodMs) {
             last_udv = now;
             can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
             can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
@@ -157,6 +166,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             static_cast<uint32_t>(now - last_pit) >= config::PitDiagStreamMs) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
+            can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
             can_tx_post(PitDiag::build_pedals(in));
             can_tx_post(PitDiag::build_inverter(veh));
             can_tx_post(PitDiag::build_inverter_temps(veh));

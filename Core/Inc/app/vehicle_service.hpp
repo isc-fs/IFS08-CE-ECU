@@ -28,6 +28,7 @@ struct VehicleState {
     // --- inverter (FDCAN1 / EMC) ---
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
+    bool          inv_dem_present   = false;  // 0x461 byte3 bit7: DEM active NOW vs latched history
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
@@ -47,6 +48,14 @@ struct VehicleState {
     std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
     std::uint32_t last_udv_cmd_tick = 0;      // 0x507 seen
     std::uint32_t last_udv_r2d_tick = 0;      // 0x510 seen
+
+    // --- AMS per-module telemetry (FDCAN2, 0x131-0x137) for the radio/dash ---
+    std::uint16_t vmin_module[5]    = {};     // 0x131/0x132, mV, per module
+    std::uint16_t vmax_module[5]    = {};     // 0x133/0x134, mV, per module
+    std::int16_t  current_accu_dA   = 0;      // 0x135, deciamps (+ = discharge)
+    std::int16_t  current_dcdc_dA   = 0;      // 0x135, deciamps
+    std::int16_t  tmax_module[5]    = {};     // 0x136/0x137, degC, per module
+    std::int16_t  tmax_dcdc         = 0;      // 0x137, degC (AMS-side stub until a real sensor exists)
 };
 
 class VehicleService {

@@ -23,6 +23,7 @@ add_executable(ecu08_sil
     ${REPO}/Core/Src/app/control.cpp
     ${REPO}/Core/Src/app/inverter.cpp
     ${REPO}/Core/Src/app/udv_tx.cpp
+    ${REPO}/Core/Src/app/radio_snapshot.cpp
     ${REPO}/Core/Src/app/vehicle_service.cpp
 )
 

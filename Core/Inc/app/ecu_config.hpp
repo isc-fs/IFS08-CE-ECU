@@ -23,6 +23,11 @@ inline constexpr uint32_t ControlPeriodMs      = 10;    // the realtime ControlT
 inline constexpr uint32_t DiagPeriodMs         = 1000;  // DiagTask (0x704 health)
 inline constexpr uint32_t PitDiagStreamMs      = 100;   // 0x700-0x705 cadence while enabled
 inline constexpr uint32_t CanRxWaitMs          = 100;   // CanRxTask queue wait -> 0x704 liveness wake on a quiescent bus (< DiagPeriodMs)
+// uDV contract (#17/#127) cyclic: 0x504 ts_active / 0x505 brake_over_limit /
+// 0x511 r2d_confirm. CONTRACT with the uDV -- their AS state machine times out
+// TS-active at 400 ms (4 missed) and FS-Rules T11.9.4 caps detection at 500 ms,
+// so do NOT raise this above ~125 ms without agreeing it on #127 first.
+inline constexpr uint32_t UdvTxPeriodMs        = 100;
 
 // ---- Start / ready-to-drive FSM -------------------------------------------
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
@@ -45,16 +50,39 @@ inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 
 inline constexpr uint16_t Apps2AdcMin          = 2345;  // bench-cal (rest 2332 + margin)
 inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 - headroom)
 
-inline constexpr uint16_t BrakeArmRaw          = 900;   // COMMISSION: brake-to-arm (R2D)
+inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
 // a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
 inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
-// BRING-UP: brake reading injected when ECU_STUB_BRAKE is compiled in (used only then,
-// in io_signals). 0 = released; set ABOVE BrakeArmRaw to arm R2D, BELOW BrakePressedRaw
-// to dodge the EV.2.3 cut (e.g. 1500). Irrelevant to a flight build (stub not compiled).
+// BRING-UP brake stub, controlled by THIS value (no build flag): != 0 makes
+// io_signals inject it as brake_raw instead of reading the ADC; 0 = real ADC
+// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW
+// BrakePressedRaw (3000) to dodge the EV.2.3 cut (bench: 2700). MUST be 0 for
+// flight — folds away at compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
+
+// ---- BENCH STUBS (bring-up only) — config toggles, NOT build flags ----------
+// All OFF on dev. Each is consumed as `if constexpr (config::StubX)`, so a false
+// toggle DISCARDS the stub code at compile time — a flight build (all false)
+// carries none of it, same guarantee the old -D flags gave. The bench/car-stubs
+// branch flips the ones a bench needs. ⚠ NEVER true for a flight/drive build —
+// StubNoAms / StubNoInverter DISABLE safety gates.
+inline constexpr bool StubNoAms      = false;  // assume precharge-OK + AMS-healthy (no AMS on the bus). DISABLES the AMS gate.
+inline constexpr bool StubNoInverter = false;  // fake inverter present/vconfig/Ready (no inverter). DISABLES the inverter handshake.
+inline constexpr bool StubStart      = false;  // assume start button pressed (PB5 unwired). MANUAL R2D only — keep false for a DV/uDV R2D test (else it preempts the 0x510 path).
+
+// ---- BENCH TELEMETRY stub (bring-up only) — config toggle, NOT a build flag -
+// When true, TelemetryTask fills the VehicleState with a deterministic synthetic
+// SWEEP (keyed on the frame seq) instead of the live snapshot, so the nRF24 radio
+// snapshot AND the FDCAN3 dashboard carry MOVING values with no live AMS/inverter
+// on the bus -- lets you validate the ground station / dash decode + display on a
+// bare bench. Consumed as `if constexpr (config::StubTelemetryDummy)`, so false
+// discards it at compile time. ⚠ NEVER true for a flight/drive build (it would
+// broadcast fake pack/inverter telemetry). Covers the CAN-sourced fields; the
+// pedals/torque/flags still come from ControlTask's g_last_* mirrors.
+inline constexpr bool     StubTelemetryDummy   = false;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
 inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
@@ -105,8 +133,10 @@ inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request con
 // Non-overlapping MessageRAM offset for FDCAN2, in words. FDCAN1 keeps offset 0
 // and occupies 1 std + 2 ext + 32*4*3 = 387 words of the shared 10 KB SRAMCAN;
 // FDCAN2 starts right after so the two instances DON'T overlap -- overlap was
-// the #48 TX-dead root cause. CubeMX assigns 0 to every instance and reverts it
-// on regen, so App_InitTask re-applies it (regen-stable).
+// the #48 TX-dead root cause. CubeMX resets it to 0 on EVERY regen, so it MUST be
+// re-applied by hand in MX_FDCAN2_Init (fdcan.c) each time -- NOT regen-stable, and
+// App_InitTask does NOT re-apply it. (2026-07-01: a regen silently reset this + the
+// FDCAN2 AutoRetransmission=ENABLE; both had to be restored in fdcan.c.)
 inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 
 // ---- CAN IDs the ECU CONSUMES (RX) -----------------------------------------
@@ -114,6 +144,13 @@ inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 // DSL-generated <Msg>_ID so these can't silently drift.
 inline constexpr uint32_t AcuOkPrechargeId     = 0x020u;     // AMS precharge-OK
 inline constexpr uint32_t AcuVCellMinId        = 0x12Cu;     // AMS min cell voltage
+inline constexpr uint32_t AcuVminModuleAId     = 0x131u;     // AMS per-module vmin, modules 0..2
+inline constexpr uint32_t AcuVminModuleBId     = 0x132u;     // AMS per-module vmin, modules 3..4
+inline constexpr uint32_t AcuVmaxModuleAId     = 0x133u;     // AMS per-module vmax, modules 0..2
+inline constexpr uint32_t AcuVmaxModuleBId     = 0x134u;     // AMS per-module vmax, modules 3..4
+inline constexpr uint32_t AcuCurrentsId        = 0x135u;     // AMS accu/dcdc currents (deciamps)
+inline constexpr uint32_t AcuTmaxModuleAId     = 0x136u;     // AMS per-module tmax, modules 0..2
+inline constexpr uint32_t AcuTmaxModuleBId     = 0x137u;     // AMS per-module tmax, modules 3..4 + dcdc stub
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t UdvTorqueCmdId       = 0x507u;     // uDV torque command (s32 LE, integer %)
 inline constexpr uint32_t UdvR2dRequestId      = 0x510u;     // uDV DV ready-to-drive request

@@ -24,6 +24,7 @@ namespace ecu {
 enum class CanBus : std::uint8_t {
     Inv = 0,  // FDCAN1 -- inverter
     Acu = 1,  // FDCAN2 -- AMS / vehicle / autonomous
+    Dash = 2, // FDCAN3 -- dashboard / telemetry
 };
 
 inline constexpr std::uint8_t CanFrameMaxData = ECU_CAN_FRAME_MAX_DATA;

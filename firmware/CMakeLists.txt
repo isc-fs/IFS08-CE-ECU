@@ -46,7 +46,7 @@ string(TIMESTAMP ECU_BUILD_TS "%s" UTC)
 
 add_compile_definitions(
   USE_HAL_DRIVER STM32H733xx USE_PWR_LDO_SUPPLY
-  ECU_FW_VERSION_MAJOR=0 ECU_FW_VERSION_MINOR=2 ECU_FW_VERSION_PATCH=0
+  ECU_FW_VERSION_MAJOR=1 ECU_FW_VERSION_MINOR=0 ECU_FW_VERSION_PATCH=0
   ECU_GIT_HASH_0=0x${H0} ECU_GIT_HASH_1=0x${H1}
   ECU_GIT_HASH_2=0x${H2} ECU_GIT_HASH_3=0x${H3}
   ECU_BUILD_TIMESTAMP=${ECU_BUILD_TS}ULL
@@ -58,38 +58,10 @@ if(ECU_HIL_CLEAR_ERROR_LATCH)
   add_compile_definitions(ECU_HIL_CLEAR_ERROR_LATCH)
 endif()
 
-# Bring-up image only -- assume the brake is pressed (the brake line may be
-# unpressurized), so R2D/RTDS can run without brake pressure. NEVER a flight default.
-option(ECU_STUB_BRAKE "Assume the brake is pressed (bring-up only)" OFF)
-if(ECU_STUB_BRAKE)
-  add_compile_definitions(ECU_STUB_BRAKE)
-endif()
-
-# Bring-up image only -- assume the start button is pressed (it may not be wired).
-# Independent of the brake stub. NEVER a flight default.
-option(ECU_STUB_START "Assume the start button is pressed (bring-up only)" OFF)
-if(ECU_STUB_START)
-  add_compile_definitions(ECU_STUB_START)
-endif()
-
-# Bring-up image only -- NO AMS on the bus (inverter on bench PSUs): assume precharge
-# complete + AMS healthy so the FSM reaches Active. The FSM still gates on the
-# inverter's 0x466 DC-bus report first. DISABLES the AMS safety gate -- NEVER a flight default.
-option(ECU_STUB_NO_AMS "Assume precharge OK with no AMS on the bus (bring-up only)" OFF)
-if(ECU_STUB_NO_AMS)
-  add_compile_definitions(ECU_STUB_NO_AMS)
-endif()
-
-# Calibration image only -- NO inverter on FDCAN1: bypass both inverter gates so the
-# FSM reaches RTDS/Active on its own (read APPS raw + sweep the pedal, watch torque,
-# without a live inverter). DISABLES the inverter handshake -- NEVER a flight default.
-option(ECU_STUB_NO_INVERTER "Bypass the inverter gates to reach Active (calibration only)" OFF)
-if(ECU_STUB_NO_INVERTER)
-  add_compile_definitions(ECU_STUB_NO_INVERTER)
-endif()
-
-# (Torque cap is now a source constant -- ecu_config.hpp TorqueCap, applied
-# in control_task.cpp -- not a build flag.)
+# The bench/bring-up stubs (brake, start button, no-AMS, no-inverter) and the torque
+# cap are now SOURCE CONSTANTS in ecu_config.hpp (config::StubBrakeRaw / StubStart /
+# StubNoAms / StubNoInverter / TorqueCap), consumed via `if constexpr` / `!= 0` so a
+# false toggle folds away at compile time -- not build flags. See docs/commissioning.md.
 
 # Debug image only -- mirror every FDCAN1 (inverter) frame onto FDCAN2 so a pit tool on
 # the ACU bus can sniff the raw inverter traffic (E2E CRC/counter intact). NEVER a flight default.
