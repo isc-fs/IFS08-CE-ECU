@@ -3,9 +3,17 @@
 #include "app/app_globals.h"
 
 extern "C" {
-volatile uint32_t g_task_step[ECU_TASK_COUNT] = { 0, 0, 0, 0 };
+volatile uint32_t g_task_step[ECU_TASK_COUNT] = {};
 volatile uint8_t  g_pit_diag_enabled = 0;
 volatile uint32_t g_can_tx_dropped = 0u;
+uint32_t g_last_torque_pct = 0;
+uint8_t  g_last_ctrl_state = 0;
+uint16_t g_last_apps1_raw = 0;
+uint16_t g_last_apps2_raw = 0;
+uint16_t g_last_brake_raw = 0;
+uint8_t  g_last_start_button = 0;
+uint8_t  g_last_ev_2_3 = 0;
+uint8_t  g_last_t11_8_9 = 0;
 }
 
 extern "C" void ecu_app_globals_init(void) {

@@ -48,6 +48,14 @@ struct VehicleState {
     std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
     std::uint32_t last_udv_cmd_tick = 0;      // 0x507 seen
     std::uint32_t last_udv_r2d_tick = 0;      // 0x510 seen
+
+    // --- AMS per-module telemetry (FDCAN2, 0x131-0x137) for the radio/dash ---
+    std::uint16_t vmin_module[5]    = {};     // 0x131/0x132, mV, per module
+    std::uint16_t vmax_module[5]    = {};     // 0x133/0x134, mV, per module
+    std::int16_t  current_accu_dA   = 0;      // 0x135, deciamps (+ = discharge)
+    std::int16_t  current_dcdc_dA   = 0;      // 0x135, deciamps
+    std::int16_t  tmax_module[5]    = {};     // 0x136/0x137, degC, per module
+    std::int16_t  tmax_dcdc         = 0;      // 0x137, degC (AMS-side stub until a real sensor exists)
 };
 
 class VehicleService {

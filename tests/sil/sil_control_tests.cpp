@@ -23,6 +23,7 @@
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
 #include "app/udv_tx.hpp"        // uDV autonomous-contract TX builders (#17)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
+#include "app/radio_snapshot.hpp"  // v2 fragmented-snapshot radio serializer
 
 using namespace ecu;
 using namespace ecu::config;
@@ -598,6 +599,96 @@ static void test_udv_tx() {
     CHECK(rn.data[0]==0xFF && rn.data[1]==0xFF && rn.data[2]==0xFF && rn.data[3]==0xFF,
           "-15 erpm -> -1 mechanical (sign-preserving s32 LE)");
     CHECK(UdvTx::build_motor_rpm(-1).data[0] == 0x00, "-1 erpm -> 0 (truncates toward zero)");
+// v2 radio snapshot -- byte layout MUST match the live ground-station parser
+// (IFS08-TE feat/receptor_08 ISC_RTT_serial.py _decode_snapshot). Distinct
+// value per field so any mis-offset is caught; a Python round-trip against the
+// real parser (tests/sil/radio_snapshot_roundtrip.py) is the belt-and-braces.
+static uint16_t rd16(const uint8_t* d, int o) {
+    return static_cast<uint16_t>(d[o] | (d[o + 1] << 8));
+}
+static uint32_t rd32(const uint8_t* d, int o) {
+    return static_cast<uint32_t>(d[o]) | (static_cast<uint32_t>(d[o + 1]) << 8) |
+           (static_cast<uint32_t>(d[o + 2]) << 16) | (static_cast<uint32_t>(d[o + 3]) << 24);
+}
+// Shared known-value snapshot inputs (distinct per field). Used by the offset
+// test and the --dump-radio round-trip against the real ground-station parser.
+static RadioSnapshotInputs radio_test_inputs() {
+    RadioSnapshotInputs in{};
+    in.tick_ms = 0x11223344u; in.seq = 0xABCD;
+    in.start_button = 1; in.apps1_raw = 2500; in.apps2_raw = 2400; in.brake_raw = 1234;
+    in.torque_pct = 77; in.ev_2_3 = 1; in.t11_8_9 = 1;
+    in.state = 5; in.ok_precharge = 1; in.ams_fsm_state = 3;
+    in.v_cell_min_mV = 3650; in.soc = 87;
+    for (int i = 0; i < 5; ++i) {
+        in.vmin_module[i] = static_cast<uint16_t>(3600 + i);
+        in.vmax_module[i] = static_cast<uint16_t>(3700 + i);
+        in.tmax_module[i] = static_cast<int16_t>(30 + i);
+    }
+    in.current_accu_dA = -421; in.current_dcdc_dA = 55; in.tmax_dcdc = 38;
+    in.inv_state = 6; in.inv_vconfig_active = 1; in.inv_error = 0;
+    in.inv_dc_bus_V = 550; in.inv_temp_motor1 = 72; in.inv_temp_pwrstg = 68; in.inv_temp_board = 55;
+    in.inv_rpm = -12345;
+    return in;
+}
+
+// Print the serialized 102-byte snapshot as one hex line (for the Python
+// round-trip against the real parser). Header/footer suppressed by main.
+static void dump_radio_snapshot() {
+    uint8_t s[kRadioSnapshotWireSize];
+    serialize_radio_snapshot(s, radio_test_inputs());
+    for (unsigned i = 0; i < kRadioSnapshotWireSize; ++i) std::printf("%02x", s[i]);
+    std::printf("\n");
+}
+
+static void test_radio_snapshot() {
+    std::printf("[radio_snapshot]\n");
+    const RadioSnapshotInputs in = radio_test_inputs();
+
+    uint8_t s[kRadioSnapshotWireSize];
+    serialize_radio_snapshot(s, in);
+
+    CHECK(rd32(s, 0) == 0x11223344u, "tick_ms @0");
+    CHECK(rd16(s, 4) == 0xABCD,      "seq @4");
+    CHECK(s[6] == 1,                 "start_button @6");
+    CHECK(rd16(s, 7) == 2500 && rd16(s, 9) == 2400 && rd16(s, 11) == 1234, "pedals @7/9/11");
+    CHECK(rd16(s, 13) == 77,         "torque_pct @13 (u8 zero-extended)");
+    CHECK(s[15] == 1 && s[16] == 1,  "ev_2_3/t11_8_9 @15/16");
+    CHECK(s[17] == 5 && s[18] == 1 && s[19] == 3, "state/ok_precharge/ams_fsm @17-19");
+    CHECK(rd16(s, 20) == 3650,       "v_cell_min_mV @20");
+    CHECK(s[22] == 87,               "soc @22");
+    bool mods_ok = true;
+    for (int i = 0; i < 5; ++i) {
+        if (rd16(s, 23 + 2 * i) != static_cast<uint16_t>(3600 + i)) mods_ok = false;
+        if (rd16(s, 33 + 2 * i) != static_cast<uint16_t>(3700 + i)) mods_ok = false;
+        if (static_cast<int16_t>(rd16(s, 49 + 2 * i)) != static_cast<int16_t>(30 + i)) mods_ok = false;
+    }
+    CHECK(mods_ok, "per-module vmin@23 / vmax@33 / tmax@49 (5 each)");
+    CHECK(static_cast<int16_t>(rd16(s, 43)) == -421, "current_accu @43 (signed)");
+    CHECK(static_cast<int16_t>(rd16(s, 45)) == 55,   "current_dcdc @45");
+    CHECK(static_cast<int16_t>(rd16(s, 47)) == 38,   "temp_dcdc @47");
+    CHECK(s[59] == 6 && s[60] == 1 && s[61] == 0, "inv_state/vconfig/error @59-61");
+    CHECK(rd16(s, 62) == 550, "inv_dc_bus_V @62");
+    CHECK(rd16(s, 64) == 72 && rd16(s, 66) == 68 && rd16(s, 68) == 55, "inv temps @64/66/68");
+    CHECK(static_cast<int32_t>(rd32(s, 70)) == -12345, "inv_rpm @70 (signed)");
+    CHECK(rd32(s, 74) == 0 && rd32(s, 78) == 0, "inv_speed/current_actual @74/78 (placeholder)");
+    bool tail_zero = true;
+    for (int i = 82; i < 102; ++i) if (s[i] != 0) tail_zero = false;
+    CHECK(tail_zero, "reserved [82..101] zero");
+
+    // Fragmentation: 5 fragments, v2 header, data slices reassemble the snapshot.
+    uint8_t reasm[kRadioSnapshotFragments * kRadioFragPayloadSize] = {};
+    bool hdr_ok = true;
+    for (uint8_t f = 0; f < kRadioSnapshotFragments; ++f) {
+        uint8_t p[kRadioFragmentSize];
+        build_radio_fragment(p, s, in.seq, f);
+        if (!(p[0] == kRadioMagic && p[1] == kRadioVersionSnapshot && p[2] == f &&
+              p[3] == kRadioSnapshotFragments && rd16(p, 4) == in.seq && p[6] == kRadioKindSnapshot))
+            hdr_ok = false;
+        std::memcpy(&reasm[f * kRadioFragPayloadSize], &p[8], kRadioFragPayloadSize);
+    }
+    CHECK(hdr_ok, "all 5 fragment headers (magic/ver/idx/tot/seq/kind)");
+    CHECK(std::memcmp(reasm, s, kRadioSnapshotWireSize) == 0,
+          "5 fragments reassemble to the 102-byte snapshot");
 }
 
 // ----- dispatch -------------------------------------------------------------
@@ -621,10 +712,12 @@ static void run_all() {
     test_dv_mode();
     test_udv_rx();
     test_udv_tx();
+    test_radio_snapshot();
 }
 
 int main(int argc, char** argv) {
     const char* m = (argc > 1) ? argv[1] : "--test-all";
+    if (!std::strcmp(m, "--dump-radio")) { dump_radio_snapshot(); return 0; }
     std::printf("=== ECU SIL (control core) : %s ===\n", m);
 
     if      (!std::strcmp(m, "--test-apps"))               test_apps_pct();
@@ -645,6 +738,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
+    else if (!std::strcmp(m, "--test-radio"))              test_radio_snapshot();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);
