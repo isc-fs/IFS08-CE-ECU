@@ -1,10 +1,18 @@
 name: Build and tests
 
 # Two jobs:
-#   sil-tests       — host SIL suite: self-contained (no hardware, no FreeRTOS
-#                     port, no network/Unity), compiles the real control logic +
-#                     freertos.c task bodies against mocks and exercises boot/
-#                     precharge/torque/telemetry. Regression gate for Core/Src.
+#   sil-tests       — host SIL suite: self-contained (no hardware, no network/Unity).
+#                     Compiles the PURE control core -- sil_control_tests.cpp plus
+#                     Core/Src/app/{control,inverter,vehicle_service,udv_tx,
+#                     radio_snapshot}.cpp -- and nothing else. There are NO mocks and
+#                     NO freertos.c/HAL sources in this target: those files are
+#                     HAL-free and RTOS-free by design, and Controller::step() takes
+#                     now_ms as an argument, so the suite is deterministic host code.
+#                     Covers the start/R2D FSM, torque path, the FSAE plausibility
+#                     cuts, the inverter ladder, CAN decode and the radio wire format.
+#                     Does NOT cover: the task layer, HAL/peripherals, io_signals,
+#                     pit_diag (#9) or the nRF24 transport -- those are bench/HIL.
+#                     Regression gate for the control core.
 #   firmware-build  — arm-none-eabi cross-compile for STM32H733 (firmware/),
 #                     then check_flash_layout.py enforces the image is
 #                     bootloader-compatible (app at 0x08020000, sectors 0 & 7

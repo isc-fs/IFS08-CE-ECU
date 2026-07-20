@@ -45,6 +45,8 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 | `CanRxTask`    | AboveNormal   | ~RX     | Drena `can_rx_queue`. Despacha: trigger BL → cmd pit-diag → VehicleService. |
 | `CanTxTask`    | AboveNormal   | ~TX     | Drena `can_tx_queue` → `HAL_FDCAN_AddMessageToTxFifoQ`. |
 | `DiagTask`     | Low           | 1000 ms | Emite `0x704` (health) **aparte de ControlTask**, para sobrevivir a un cuelgue de éste. |
+| `TelemetryTask`| BelowNormal   | 200 ms  | Snapshot → **dashboard por FDCAN3** (18 tramas, ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md)) + **snapshot de radio nRF24** (102 B en 5 fragmentos, ver [`docs/RADIO_SNAPSHOT_MAP.md`](docs/RADIO_SNAPSHOT_MAP.md)). |
+| `defaultTask`  | Low           | idle    | Task de CubeMX; no hace trabajo de aplicación. |
 
 ---
 
@@ -53,13 +55,25 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 ```
 WaitInvVdcConfig  →  (inv_vconfig_ready, 0x466)
 Precharge         →  stream 0x100; espera AMS ok_precharge (0x020); timeout 10 s → reintenta
-WaitStartBrake    →  (start_button && brake_raw > BrakeArmRaw)
+WaitStartBrake    →  MANUAL: (start_button && brake_raw > BrakeArmRaw)
+                  →  DV:     (dv_r2d_req 0x510 fresco && brake_raw > BrakeDvHardRaw)
+                     El trigger ES la decisión de modo (#17): el que dispare latchea
+                     el modo para todo el ciclo de marcha. Manual tiene precedencia.
 R2dDelay          →  (RTDS R2dSoundMs = 2000 ms)
 WaitInvStandby    →  (inv_state == InvReadyState=4)
+                     Sube el inversor de forma REACTIVA: OFF(0)/SHUTDOWN(13) → Off(0x01)
+                     ("on"), si no → Ready(0x04). Sin esto, tras un TS-off el inversor
+                     se queda en off y la FSM espera para siempre (hacía falta power cycle).
 Active            →  torque runtime; si !ok_precharge → vuelve a Precharge
+                     En DV el torque viene del 0x507 (NUNCA fallback a APPS; stale → 0).
 AmsError          →  entrada desde CUALQUIER estado si in.ams_error (latcheado);
                      sale a WaitInvVdcConfig cuando !ams_error
 ```
+
+**Recuperación de fallo del inversor — reactiva, en cualquier estado de marcha:**
+`inv_state` 11 (hard fault) → `0x0D`, 10 (soft fault) → `0x13`; suprimida en `AmsError`.
+El inversor puede arrancar **latcheado** en hard fault, así que esto corre también antes
+de `Active` o la FSM se atasca en `WaitInvStandby`.
 
 `AmsError` distingue el **Start re-armable** de la AMS del **Error latcheado**
 (`AMS_status` 0x4A0 byte0 == 5): en Error la ECU **inhibe** en vez de reintentar
@@ -71,13 +85,26 @@ precarga.
 
 | Bus       | FDCAN  | Rol |
 |-----------|--------|-----|
-| **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x466 · TX 0x360/0x362. |
-| **ACU**   | FDCAN2 | AMS + Pit-Tool (compartido). RX 0x020/0x12C/0x4A0/0x002/0x7E0 · TX 0x100 + stream pit-diag. |
+| **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x464/0x466 · TX 0x360/0x362. |
+| **ACU**   | FDCAN2 | AMS + Pit-Tool + uDV (compartido). RX 0x020/0x12C/0x4A0/0x131-0x137/0x507/0x510/0x002/0x7E0 · TX 0x100 + bloque uDV + stream pit-diag. |
+| **DASH**  | FDCAN3 | Dashboard, **sólo TX**. 18 tramas `0x510..0x521` desde `TelemetryTask` — ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md). |
 
-**No hay FDCAN3** (sólo quedan los handlers débiles del vector de arranque). El `0x600`
-está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FDCAN2 es
-**387 words** (no solapa con FDCAN1) — esto fue la raíz del TX-dead #48; se aplica en el
-`MX_FDCAN1/2_Init` de `fdcan.c`.
+El `0x600` está **retirado** (la AMS auto-dispara precarga).
+
+> ⚠️ **Offsets de MessageRAM — re-aplicar tras CADA regen de CubeMX.** Los tres FDCAN
+> comparten la SRAMCAN y **no hay campo en la GUI**, así que un regen los pone todos a 0 y
+> se solapan (ésta fue la raíz del TX-dead #48). Ventanas actuales, en `MX_FDCAN1/2/3_Init`
+> de `Core/Src/fdcan.c`:
+>
+> | Periférico | `MessageRAMOffset` | Ventana |
+> |------------|--------------------|---------|
+> | FDCAN1     | `0`                | `[0, 387)`   |
+> | FDCAN2     | `387`              | `[387, 582)` |
+> | FDCAN3     | `582`              | `[582, 710)` |
+>
+> Si sólo se restaura el 387 y se olvida el 582, FDCAN3 vuelve a solapar FDCAN1 y corrompe
+> el bus del inversor **y** el heartbeat `0x100` que la AMS vigila a 200 ms para mantener
+> los AIRs cerrados.
 
 ### Contrato de mensajes (generado del DSL)
 
@@ -102,7 +129,9 @@ está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FD
 | 0x702 | PitDiag_inverter | DC-bus V · rpm (signed) · error |
 | 0x703 | PitDiag_fwinfo   | semver + 4 bytes de git hash |
 | 0x704 | PitDiag_health   | heap · liveness por tarea (bits) · reset_cause · uptime · last_fault |
-| 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING) |
+| 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING; `brake_pressure` está **hardcodeado a 0** hoy) |
+| 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) |
+| 0x707 | PitDiag_dv       | `dv_r2d_req` · `brake_over_limit` · `r2d_confirm` · torque uDV — diagnóstico del modo driverless |
 
 > **`0x704` se emite siempre (ungated)** desde `DiagTask`, fuera del gate `0x7E0`, para que
 > `reset_cause` y la liveness por tarea sean visibles en CAN nada más arrancar y sobrevivan
@@ -113,9 +142,26 @@ está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FD
 - `0x020` ACU_ok_precharge — precarga OK / HV viva (la FSM gatea aquí).
 - `0x12C` ACU_v_cell_min — mín. tensión de celda (mV, BE) → derate de torque por celda baja.
 - `0x4A0` AMS_status — `fsm_state` (5=Error) / `ams_ok` → distingue Start vs Error latcheado.
-- `0x461`/`0x463`/`0x466` — inversor: App_State / rpm / DC-bus V.
+- `0x461`/`0x463`/`0x464`/`0x466` — inversor: App_State / rpm / temps / DC-bus V.
+- `0x131`–`0x137` — AMS por módulo (vmin/vmax/tmax, corrientes) → radio + dashboard.
 - `0x002` BL_boot_trigger — magic `0xB007AD12` → escribe magic en RTC backup + reset.
 - `0x7E0` PitDiag_cmd — magic `0xDEADBEEF` enable / `0` disable.
+
+**Contrato uDV / driverless (#17, bus ACU)** — el ECU es el que manda en el par:
+
+| ID | Dir | Contenido |
+|----|-----|-----------|
+| `0x507` | RX | `UDV_torque_cmd` — par como **entero %** (s32 LE). Se condiciona a 0..100 (negativo → 0: no hay regen en el contrato); stale → 0, **nunca** fallback a APPS. |
+| `0x510` | RX | `UDV_r2d_request` — petición R2D autónoma (sólo vale con freno EBS duro verificado en nuestro propio sensor). |
+| `0x504` | TX | `VCU_ts_active` — vista viva de `ok_precharge`, cada 100 ms (el uDV expira a 400 ms). |
+| `0x505` | TX | `VCU_brake_over_limit` — verdicto del ECU sobre el freno. |
+| `0x506` | TX | `VCU_motor_rpm` — rpm **mecánicas** = erpm / 10 (s32 LE). |
+| `0x511` | TX | `VCU_r2d_confirm` — confirmación de R2D en modo DV. |
+
+> ⚠️ `0x510`/`0x511` **se reutilizan** en FDCAN3 con otro significado (status/pedales del
+> dashboard). Los IDs son por bus: el DBC no lleva calificador de bus, así que cargar
+> `ecu.dbc` contra una captura de FDCAN3 decodifica basura. Las 18 tramas de dashboard
+> están **fuera del DSL** — ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md).
 
 ---
 
@@ -144,21 +190,21 @@ c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump
 
 ## Constantes que requieren calibración en banco
 
-Todas viven ahora en **`Core/Inc/app/ecu_config.hpp`** (HAL-free, host-testable), tagueadas
-`COMMISSION` — son placeholders heredados de la VCU legacy (placa IFS06) y **deben
-re-medirse en el coche montado con sensores reales antes de cualquier marcha**:
+Todas viven en **`Core/Inc/app/ecu_config.hpp`** (HAL-free, host-testable). Las que siguen
+tagueadas `COMMISSION` son placeholders heredados de la VCU legacy (placa IFS06) y **deben
+re-medirse en el coche montado con sensores reales antes de cualquier marcha**.
 
-```cpp
-// Core/Inc/app/ecu_config.hpp
-Apps1AdcMin = 2050;  Apps1AdcMax = 2950;   // COMMISSION (APPS1, ADC 12-bit)
-Apps2AdcMin = 1915;  Apps2AdcMax = 2570;   // COMMISSION (APPS2)
-BrakeArmRaw     = 900;    // COMMISSION: freno-para-armar (R2D)
-BrakePressedRaw = 3000;   // COMMISSION: EV.2.3 "freno pisado"
-```
+> ⚠️ **No dupliques los valores aquí.** `ecu_config.hpp` es la única fuente de verdad — este
+> archivo ya se quedó desactualizado una vez citándolos. Estado a día de hoy:
+> **APPS1/APPS2 ya calibrados** en banco (2026-06-22) y **`BrakeArmRaw` calibrado en coche**
+> (2026-06-27); **`BrakePressedRaw` (EV.2.3) y `BrakeDvHardRaw` (R2D driverless) siguen
+> `COMMISSION`** — sin calibrar. Ver [`docs/commissioning.md`](docs/commissioning.md).
 
 **Procedimiento:** leer `apps1_raw` / `apps2_raw` / `brake_raw` del stream pit-diag `0x701`
 (o por SWD) en reposo y a fondo. El umbral de armado de freno debe ser ≈10 % del recorrido.
-`pct = clamp((raw - min) * 100 / (max - min), 0, 100)`.
+`pct = clamp((raw - min) * 100 / (max - min), 0, 100)`. Procedimiento completo, y los
+**stubs de banco** (`StubBrakeRaw` / `StubStart` / `StubNoAms` / `StubNoInverter` /
+`StubTelemetryDummy` / `TorqueCap`), en [`docs/commissioning.md`](docs/commissioning.md).
 
 ---
 
@@ -191,10 +237,20 @@ ctest --test-dir build-sil --output-on-failure        # o:
 ./build-sil/tests/sil/ecu08_sil --test-all
 ```
 
-El target SIL `ecu08_sil` define `SIL_BUILD=1` y apunta directamente al núcleo
-`ecu::Controller` (FSM + cada corte de plausibilidad FSAE). El firmware ARM se compila desde
-`firmware/CMakeLists.txt` (lista las fuentes de app explícitamente; quitar un periférico de
-CubeMX exige editar ese CMakeLists a mano).
+El target SIL `ecu08_sil` define `SIL_BUILD=1` y compila **exactamente 6 unidades**:
+`sil_control_tests.cpp` + `Core/Src/app/{control,inverter,vehicle_service,udv_tx,
+radio_snapshot}.cpp`. **Sin HAL, sin FreeRTOS, sin mocks** — esos ficheros no incluyen nada
+del HAL y `Controller::step()` recibe `now_ms` como argumento, así que el test es
+determinista. No cubre: capa de tareas, HAL/periféricos, `io_signals`, `pit_diag` (#9) ni el
+transporte nRF24 — eso es banco / HIL.
+
+`-DBUILD_UNIT_TESTS=OFF` **no es opcional**: `tests/unit/` sigue listando
+`Core/Src/{can,control,telemetry,app_state}.c`, borrados en el rewrite a C++, y además
+descarga Unity por red. No compila.
+
+El firmware ARM se compila desde `firmware/CMakeLists.txt`, que hace **`file(GLOB)`** de
+`Core/Src/*.c` y `Core/Src/app/*.cpp` (sólo hay que re-lanzar el configure si un regen añade
+ficheros).
 
 ---
 
@@ -212,11 +268,26 @@ CubeMX exige editar ese CMakeLists a mano).
 | `Core/Src/app/io_signals.cpp` | ADC3 (freno, APPS1/2) + GPIO (botón, RTDS, LEDs). |
 | `Core/Src/app/inverter.cpp` | Adaptador inversor NX/EMC: setpoints 0x360/0x362, decode 0x461/63/66. |
 | `Core/Src/app/vehicle_service.cpp` | Estado RX compartido (snapshot por control). |
+| `Core/Src/app/telemetry_task.cpp` | 200 ms: dashboard por FDCAN3 (18 tramas) + snapshot de radio nRF24. |
+| `Core/Src/app/radio_snapshot.cpp` · `Core/Src/nrf24.c` | Serializado de 102 B + fragmentación · driver nRF24 (**SPI bit-bang** PA5/6/7, ver aviso abajo). |
+| `Core/Src/app/udv_tx.cpp` | Builders del contrato uDV (0x504/0x505/0x506/0x511). |
 | `Core/Src/app/{bootloader,error_latch,reset_cause,firmware_info,pit_diag,watchdog}.cpp` | Trigger BL (0x002), latch de fault en BKPxR, reset cause, fwinfo (0x703), builders pit-diag, helpers IWDG. |
 | `Core/Inc/can/messages/*.def` + `all_messages.inc` | DSL CAN (fuente de verdad). |
 | `Core/Src/{main,fdcan,freertos}.c` | Handoff BL (#48), MX FDCAN + offset 387w, attrs de tareas. |
 | `docs/dbc/ecu.dbc` | DBC generado del DSL (dbcinator lo mantiene). |
-| `docs/ECU_ACU_MENSAJES.md` · `docs/CAN_IDS_VARIABLES.md` · `docs/PINES_RUTEADOS_IOC.md` | Contrato AMS, mapa de IDs/variables, pines ruteados. |
+| `docs/commissioning.md` | **Runbook operativo**: calibración APPS/freno + stubs de banco. Léelo antes de tocar el coche. |
+| `docs/CAN3_MAP.md` · `docs/RADIO_SNAPSHOT_MAP.md` | Contrato del dashboard (FDCAN3) · contrato de radio (nRF24, 102 B). |
+| `docs/PINES_RUTEADOS_IOC.md` | Pines ruteados (⚠️ PA5/6/7 aparecen como SPI1; en realidad los usa el nRF24 por bit-bang). |
 
-> Histórico: `docs/MAIN_POLLING_MIGRATION_COMPARISON.md` documenta el firmware bloqueante
-> anterior. Es referencia histórica, **no** describe el `dev` actual.
+> ⚠️ **nRF24 = SPI bit-bang, no SPI1.** El SPI1 hardware lee MISO clavado a 0xFF en esta
+> placa, así que `nrf24.c` mueve PA5/PA6/PA7 como GPIO. `MX_SPI1_Init()` **sigue
+> ejecutándose** en `main.c` antes del kernel; la radio funciona sólo porque
+> `NRF24_BusInit()` reclama los pines después. No "arregles" esto pasando el driver a
+> `hspi1` — ya se intentó y la radio queda muda.
+
+> **Histórico — NO describen el `dev` actual:** `docs/MAIN_POLLING_MIGRATION_COMPARISON.md`,
+> `docs/ECU_LOGIC_REPORT.md`, `docs/INTEGRATION_TESTS_EXPLAINED.md`,
+> `docs/CAN_IDS_VARIABLES.md`, `docs/ECU_ACU_MENSAJES.md`, `docs/RADIO_MAP.md` y
+> `docs/RADIO_TELEMETRY_FAILURE_ANALYSIS.md` documentan el firmware en C anterior al rewrite
+> (citan `control.c` / `can.c` / `app_state.c`, que ya no existen). Para el contrato CAN
+> vigente: `Core/Inc/can/messages/*.def` → [`docs/dbc/ecu.dbc`](docs/dbc/ecu.dbc).
