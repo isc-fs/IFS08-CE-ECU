@@ -387,6 +387,96 @@ static void test_inverter_fault_recovery() {
     CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
 }
 
+// TS-off recovery WITHOUT a power cycle (the crucial IFS07 feature this ECU was
+// missing). After the tractive system is deactivated mid-drive the inverter drops
+// to OFF(0) / SHUTDOWN(13); the driver must re-do R2D (still required -- FSAE), and
+// the ECU must then climb the inverter back to torque on its own. The old code
+// commanded Ready(0x04) blindly in WaitInvStandby, which an OFF/SHUTDOWN inverter
+// ignores -> FSM stuck -> power cycle. The fix: reactively send Off(0x01) ("on")
+// until the inverter reaches standby, then Ready(0x04).
+static void test_inverter_ts_off_recovery() {
+    std::printf("[inverter_ts_off_recovery]\n");
+
+    Controller c;
+    uint32_t t = 1000;
+    drive_to_active(c, t);                       // driving, inverter Ready(4)
+
+    // --- TS deactivated mid-drive: AMS opens the AIRs (ok_precharge falls) and
+    //     the inverter collapses to OFF(0). FSM must re-arm (back to Precharge). ---
+    CtrlInputs in = good_drive_inputs();
+    in.ok_precharge = false;
+    in.inv_state    = InvOffState;               // 0 -- inverter fell to off
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Precharge, "TS-off -> re-arm Precharge");
+    CHECK(o.torque_pct == 0, "no torque after TS-off");
+    CHECK(o.inv_mode == InvMode::Off, "Precharge commands Off (0x01)");
+
+    // --- TS back on: climb Precharge -> WaitStartBrake, driver re-does R2D. ---
+    in.ok_precharge = true;                      // HV/precharge restored
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "ok_precharge -> WaitStartBrake (re-arm)");
+
+    in.start_button = true;
+    in.brake_raw    = BrakeArmRaw + 100;         // R2D re-arm STILL required (FSAE)
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay, "start+brake -> R2dDelay (re-arm)");
+
+    in.start_button = false;
+    in.brake_raw    = 0;
+    t += R2dSoundMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitInvStandby, "R2D done -> WaitInvStandby");
+
+    // --- THE FIX: inverter still at OFF(0). Old code sent Ready and stalled here
+    //     forever; now we send Off(0x01) ("on") to climb it, staying in standby. ---
+    CHECK(o.inv_mode == InvMode::Off, "OFF(0) inverter -> command Off/0x01 (climb), NOT Ready");
+    CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby while inverter off");
+
+    // SHUTDOWN(13) climbs with the same "on" word.
+    in.inv_state = InvShutdownState;             // 13
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Off, "SHUTDOWN(13) inverter -> command Off/0x01 (climb)");
+    CHECK(o.state == CtrlState::WaitInvStandby, "still climbing (not ready yet)");
+
+    // Inverter reaches Standby(3): now command Ready(0x04).
+    in.inv_state = InvStandbyState;              // 3
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Ready, "STANDBY(3) inverter -> command Ready (0x04)");
+    CHECK(o.state == CtrlState::WaitInvStandby, "waiting for ready");
+
+    // Inverter reaches Ready(4): advance to Active and drive torque again -- no
+    // power cycle anywhere in this sequence.
+    in.inv_state = InvReadyState;                // 4
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Active, "READY(4) -> Active (recovered)");
+
+    o = c.step(in, t); t += ControlPeriodMs;     // one more tick: torque flows
+    CHECK(o.state == CtrlState::Active, "stays Active");
+    CHECK(o.inv_mode == InvMode::TorqueEnable, "back to TorqueEnable");
+    CHECK(o.torque_pct == 100, "full pedal drives torque again -- no power cycle");
+
+    // A latched fault DURING the climb still wins (reactive fault block overrides
+    // the climb word): OFF-climb must not mask a hard fault that appears.
+    {
+        Controller c2;
+        uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.ok_precharge = false; in2.inv_state = InvOffState;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> Precharge
+        in2.ok_precharge = true;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> WaitStartBrake
+        in2.start_button = true; in2.brake_raw = BrakeArmRaw + 100;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> R2dDelay
+        in2.start_button = false; in2.brake_raw = 0; t2 += R2dSoundMs;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> WaitInvStandby
+        in2.inv_state = InvHardFaultState;                       // 11 appears mid-climb
+        CtrlOutput o2 = c2.step(in2, t2);
+        CHECK(o2.inv_mode == InvMode::HardFaultReset,
+              "hard fault during the climb -> HardFaultReset (0x0D) wins over the on-word");
+    }
+}
+
 // Inverter RX decode: 0x463 rpm (20-bit signed @ bit 44 -- the bit-44 fix, byte
 // patterns verified vs the NX DBC with cantools) and 0x464 temps (raw bytes pass
 // through; the DBC -50 offset turns them into degC on decode).
@@ -710,6 +800,7 @@ static void run_all() {
     test_dsl_parity();
     test_inverter();
     test_inverter_fault_recovery();
+    test_inverter_ts_off_recovery();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -737,6 +828,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
+    else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

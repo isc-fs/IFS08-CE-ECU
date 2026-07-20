@@ -35,10 +35,12 @@ inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 inline constexpr uint16_t PrechargeTargetV     = 300;   // inverter DC-bus "precharged" (V)
 
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
+inline constexpr uint8_t  InvOffState          = 0;   // off/init -- climb with InvMode::Off (0x01) to reach standby
 inline constexpr uint8_t  InvStandbyState      = 3;
 inline constexpr uint8_t  InvReadyState        = 4;
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
+inline constexpr uint8_t  InvShutdownState     = 13;  // shutdown (e.g. after TS-off) -- same "on" climb word (0x01)
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;
