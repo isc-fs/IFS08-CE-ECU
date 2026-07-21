@@ -36,7 +36,12 @@ public:
     static CanFrame build_dv(const CtrlOutput& c, const CtrlInputs& in,
                              const VehicleState& v) noexcept;   // 0x707
     static CanFrame build_pedals(const IoInputs& io) noexcept;  // 0x701
-    static CanFrame build_inverter(const VehicleState& v) noexcept; // 0x702
+    // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360
+    // this cycle (CtrlOutput::inv_mode) -- everything else in the frame is what
+    // the inverter REPORTS. Passed in rather than mirrored through a global: the
+    // caller (control_task) already has the CtrlOutput in hand at this point.
+    static CanFrame build_inverter(const VehicleState& v,
+                                   std::uint8_t inv_mode_cmd) noexcept;
     static CanFrame build_inverter_temps(const VehicleState& v) noexcept; // 0x706
     static CanFrame build_fwinfo() noexcept;                    // 0x703
     static CanFrame build_health(const HealthMetrics& m) noexcept;  // 0x704
