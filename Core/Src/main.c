@@ -124,6 +124,7 @@ int main(void)
   MX_USART10_UART_Init();
   MX_USB_OTG_HS_PCD_Init();
   MX_IWDG1_Init();
+  MX_FDCAN3_Init();
   /* USER CODE BEGIN 2 */
   /* H7: HAL_PWR_EnableBkUpAccess() unlocks backup-domain WRITES but does not
    * clock the RTC. The fault latch (error_latch) and the BL boot-magic

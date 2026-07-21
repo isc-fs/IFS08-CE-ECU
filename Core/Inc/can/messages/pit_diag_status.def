@@ -6,6 +6,8 @@
  * Byte 2's control flags are exposed as individual 1-bit DBC signals:
  *   bit0 ev_2_3   bit1 t11_8_9   bit2 rtds_active
  *   bit3 ok_precharge   bit4 start_button   bit5 dv_mode (DV drive latched, #109)
+ *   bit6 tx_dropped (sticky: >=1 CAN frame dropped by a full TX queue since boot;
+ *        g_can_tx_dropped != 0 -- a safety cyclic may have been lost, #127)
  */
 
 CAN_MSG(PitDiag_status, 0x700, 8, "VCU", 100)
@@ -19,6 +21,7 @@ CAN_MSG(PitDiag_status, 0x700, 8, "VCU", 100)
     FIELD_LE_BITS (ok_precharge, uint8_t, 19, 1, 1, 0, "bit")
     FIELD_LE_BITS (start_button, uint8_t, 20, 1, 1, 0, "bit")
     FIELD_LE_BITS (dv_mode,      uint8_t, 21, 1, 1, 0, "bit")
+    FIELD_LE_BITS (tx_dropped,   uint8_t, 22, 1, 1, 0, "bit")
     FIELD_LE   (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
     FIELD_BE   (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
     FIELD_BE_S (torque_cmd,    int16_t,  6, 16, 1, 0, "cmd")
@@ -35,6 +38,15 @@ CAN_VAL(PitDiag_status, fsm_state, 3, "R2dDelay")
 CAN_VAL(PitDiag_status, fsm_state, 4, "WaitInvStandby")
 CAN_VAL(PitDiag_status, fsm_state, 5, "Active")
 CAN_VAL(PitDiag_status, fsm_state, 6, "AmsError")
-CAN_VAL(PitDiag_status, inv_state, 3, "Standby")
-CAN_VAL(PitDiag_status, inv_state, 4, "Ready")
+/* Inverter App_State_App (0x461). Only Standby/Ready were named, so the states
+ * that matter when the drive will NOT come up -- off, shutdown, the two faults --
+ * showed as bare numbers in the pit tool. Named here so a capture is readable
+ * on sight (#148: TS-off recovery). Mirrors ecu::config::Inv*State. */
+CAN_VAL(PitDiag_status, inv_state,  0, "Off")
+CAN_VAL(PitDiag_status, inv_state,  3, "Standby")
+CAN_VAL(PitDiag_status, inv_state,  4, "Ready")
+CAN_VAL(PitDiag_status, inv_state,  6, "TorqueEnable")
+CAN_VAL(PitDiag_status, inv_state, 10, "SoftFault")
+CAN_VAL(PitDiag_status, inv_state, 11, "HardFault")
+CAN_VAL(PitDiag_status, inv_state, 13, "Shutdown")
 #endif

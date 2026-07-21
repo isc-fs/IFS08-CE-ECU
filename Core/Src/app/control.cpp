@@ -167,7 +167,22 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         rtds = true;                        // drive the RTDS buzzer
         break;
     case CtrlState::WaitInvStandby:
-        mode = InvMode::Ready;              // command standby -> ready
+        // Climb the inverter to Ready reactively, mirroring the legacy VCU's
+        // per-state inverter switch (pre-jarama main.c). After a TS-off + R2D
+        // re-arm the inverter can be sitting at OFF(0) or SHUTDOWN(13) -- and
+        // from there it will NOT accept Ready(0x04); it needs the "on" word
+        // (0x01) first to climb to Standby(3). Commanding Ready blindly (the old
+        // behaviour) left the FSM waiting forever for state 4, so a TS-off could
+        // only be recovered with a power cycle. Reactive climb:
+        //   OFF(0) / SHUTDOWN(13) -> Off (0x01)   (turn on -> standby)
+        //   otherwise (standby...) -> Ready (0x04) (standby -> ready)
+        // A latched fault (10/11) is overridden to its reset word by the reactive
+        // block below; reaching Ready(4) advances to Active (transition above).
+        if (in.inv_state == InvOffState || in.inv_state == InvShutdownState) {
+            mode = InvMode::Off;           // 0x01 -- "on": climb off/shutdown to standby
+        } else {
+            mode = InvMode::Ready;         // 0x04 -- standby -> ready
+        }
         break;
     case CtrlState::Active:
         // Healthy inverter -> drive. A faulted inverter (>= soft fault) gets its

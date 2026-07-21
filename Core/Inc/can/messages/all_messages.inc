@@ -19,6 +19,11 @@
 #include "vcu_motor_rpm.def"        /* 0x506  inverter rpm relay (SLAM)       */
 #include "vcu_r2d_confirm.def"      /* 0x511  DV ready-to-drive confirm       */
 
+/* GPS (MTK3339 on USART10). Ungated on the ACU bus: uDV localisation feed,
+ * visible to the pit tool / MingoCAN for free (same bus + generated DBC). */
+#include "vcu_gps_position.def"     /* 0x508  lat/lon, deg*1e7 s32 LE         */
+#include "vcu_gps_status.def"       /* 0x509  speed km/h, course, sats, fix   */
+
 /* pit-diag stream (gated by 0x7E0) */
 #include "pit_diag_ack.def"         /* 0x7E1                                  */
 #include "pit_diag_status.def"      /* 0x700                                  */
@@ -33,6 +38,13 @@
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */
 #include "acu_v_cell_min.def"       /* 0x12C  AMS min cell voltage            */
+#include "acu_vmin_module_a.def"    /* 0x131  AMS per-module vmin 0..2        */
+#include "acu_vmin_module_b.def"    /* 0x132  AMS per-module vmin 3..4        */
+#include "acu_vmax_module_a.def"    /* 0x133  AMS per-module vmax 0..2        */
+#include "acu_vmax_module_b.def"    /* 0x134  AMS per-module vmax 3..4        */
+#include "acu_currents.def"         /* 0x135  AMS accu/dcdc currents          */
+#include "acu_tmax_module_a.def"    /* 0x136  AMS per-module tmax 0..2        */
+#include "acu_tmax_module_b.def"    /* 0x137  AMS per-module tmax 3..4 + dcdc */
 #include "ams_status.def"           /* 0x4A0  AMS FSM state / ams_ok          */
 #include "udv_torque_cmd.def"       /* 0x507  uDV torque command (s32 LE, %)  */
 #include "udv_r2d_request.def"      /* 0x510  uDV DV ready-to-drive request   */

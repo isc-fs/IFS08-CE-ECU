@@ -83,6 +83,13 @@ jobs:
         with:
           release: '14.2.Rel1'
 
+      # Runs BEFORE the build: it is a source check, and failing fast on a
+      # regen-clobbered MessageRAM layout beats waiting on a compile that would
+      # succeed anyway (the defect is silent at build time -- it only shows up
+      # as dead CAN TX on the car).
+      - name: Verify FDCAN MessageRAM layout (no overlap -- #48 guard)
+        run: python3 scripts/check_fdcan_ram.py Core/Src/fdcan.c
+
       - name: Configure CMake (cross)
         run: cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/gcc-arm-none-eabi.cmake"
 

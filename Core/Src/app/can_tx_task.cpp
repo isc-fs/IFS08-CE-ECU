@@ -17,6 +17,7 @@
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;          // INV
 extern FDCAN_HandleTypeDef hfdcan2;          // ACU / shared
+extern FDCAN_HandleTypeDef hfdcan3;          // DASH (FDCAN3)
 extern osMessageQueueId_t  can_tx_queueHandle;
 }
 
@@ -31,8 +32,9 @@ const uint32_t kDlcCode[9] = {
 };
 
 void hal_send(const ecu::CanFrame& f) {
-    FDCAN_HandleTypeDef* h =
-        (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv)) ? &hfdcan1 : &hfdcan2;
+    FDCAN_HandleTypeDef* h = &hfdcan2;                                        // ACU (default)
+    if (f.bus == static_cast<uint8_t>(ecu::CanBus::Inv))       h = &hfdcan1;  // INV
+    else if (f.bus == static_cast<uint8_t>(ecu::CanBus::Dash)) h = &hfdcan3;  // DASH (FDCAN3)
 
     FDCAN_TxHeaderTypeDef tx = {};
     tx.Identifier          = f.id;
@@ -55,8 +57,18 @@ void hal_send(const ecu::CanFrame& f) {
 namespace ecu {
 
 bool can_tx_post(const CanFrame& f) noexcept {
-    if (can_tx_queueHandle == NULL) return false;
-    return osMessageQueuePut(can_tx_queueHandle, &f, 0u, 0u) == osOK;
+    if (can_tx_queueHandle == NULL) {
+        ++g_can_tx_dropped;
+        return false;
+    }
+    // Non-blocking (timeout 0): a full queue DROPS the frame rather than stalling
+    // the poster. Count the drop so a silently-lost safety cyclic (0x100/0x504/...)
+    // is visible (sticky tx_dropped bit on 0x700; exact count over SWD).
+    if (osMessageQueuePut(can_tx_queueHandle, &f, 0u, 0u) == osOK) {
+        return true;
+    }
+    ++g_can_tx_dropped;
+    return false;
 }
 
 }  // namespace ecu

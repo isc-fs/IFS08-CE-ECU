@@ -3,12 +3,23 @@
  * 0x704  PitDiag_health -- firmware-health telemetry, parity with the AMS
  * 0x4A2/0x4A3 diag. Emitted from DiagTask (NOT ControlTask) so it survives a
  * ControlTask stall -- the exact failure mode it exists to diagnose (an IWDG
- * reset when ControlTask stops kicking the watchdog). Gated by 0x7E0 like the
- * rest of the stream.
+ * reset when ControlTask stops kicking the watchdog). UNGATED: emitted every
+ * DiagPeriodMs regardless of the 0x7E0 arm, so reset_cause / liveness / the
+ * stub announce are on the bus from boot without arming anything.
  *
  * Per-task liveness -- set = that task's step counter advanced since the
  * previous health frame. One 1-bit signal each, in EcuTaskId order:
- *   task_control (b0)  task_can_rx (b1)  task_can_tx (b2)  task_diag (b3)
+ *   task_control (b0)  task_can_rx (b1)  task_can_tx (b2)  task_telemetry (b3)  task_diag (b4)
+ *
+ * byte4 b5-b7 -- BENCH STUB ANNOUNCE (#127). Compile-time ecu_config toggles,
+ * mirrored onto the bus so a bring-up image can't masquerade as a flight one:
+ *   stub_no_ams (b5)  stub_no_inverter (b6)  stub_start (b7)
+ * A flight build reports ALL ZERO. stub_no_ams is the load-bearing one -- it
+ * forces ok_precharge true, which is what 0x504 VCU_ts_active reports to the
+ * uDV, so a set bit means "TS-active on this ECU is FAKE, do not trust it".
+ * (stub_brake was dropped when TelemetryTask took a task-liveness bit -- it is
+ * the only stub that disables NO safety gate; StubBrakeRaw!=0 shows on 0x701.)
+ *
  * reset_cause: 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG, 5 WWDG, 6 LPWR/BOR.
  * last_fault: sticky sentinel latched in RTC backup across the reset (0 none).
  */
@@ -18,10 +29,15 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
     FIELD_BE (min_free_heap, uint16_t, 2, 16, 1, 0, "B")
     /* byte 4's per-task liveness, one 1-bit DBC signal each (no composite byte
      * signal -- cantools rejects an overlapping byte+bit view) */
-    FIELD_LE_BITS (task_control, uint8_t, 32, 1, 1, 0, "bit")
-    FIELD_LE_BITS (task_can_rx,  uint8_t, 33, 1, 1, 0, "bit")
-    FIELD_LE_BITS (task_can_tx,  uint8_t, 34, 1, 1, 0, "bit")
-    FIELD_LE_BITS (task_diag,    uint8_t, 35, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_control,   uint8_t, 32, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_can_rx,    uint8_t, 33, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_can_tx,    uint8_t, 34, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_telemetry, uint8_t, 35, 1, 1, 0, "bit")
+    FIELD_LE_BITS (task_diag,      uint8_t, 36, 1, 1, 0, "bit")
+    /* byte4 b5-b7: bench stub announce (#127) -- all zero on a flight build */
+    FIELD_LE_BITS (stub_no_ams,      uint8_t, 37, 1, 1, 0, "bit")
+    FIELD_LE_BITS (stub_no_inverter, uint8_t, 38, 1, 1, 0, "bit")
+    FIELD_LE_BITS (stub_start,       uint8_t, 39, 1, 1, 0, "bit")
     FIELD_LE (reset_cause,   uint8_t,  5, 8,  1, 0, "enum")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")

@@ -2,6 +2,7 @@
 
 #include "app/pit_diag.hpp"
 
+#include "app/app_globals.h"   // g_can_tx_dropped (tx_dropped sticky bit)
 #include "app/ecu_config.hpp"
 
 #include "can/can_codecs.hpp"
@@ -45,6 +46,7 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     s.ok_precharge = v.ok_precharge ? 1u : 0u;
     s.start_button = start_button ? 1u : 0u;
     s.dv_mode      = c.dv_mode ? 1u : 0u;   // #109: DV drive latched this cycle
+    s.tx_dropped   = (g_can_tx_dropped != 0u) ? 1u : 0u;  // #127: any TX-queue drop since boot
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
     s.torque_cmd    = 0;   // inverter unit-map deferred (task #10)
@@ -80,7 +82,8 @@ CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
     return make_acu(PitDiag_pedals_ID, b);
 }
 
-CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
+CanFrame PitDiag::build_inverter(const VehicleState& v,
+                                 std::uint8_t inv_mode_cmd) noexcept {
     PitDiag_inverter_t inv{};
     inv.dc_bus_voltage = v.inv_dc_bus_V;
     // 0x463 reports ELECTRICAL rpm; diag shows MECHANICAL shaft rpm, same
@@ -88,6 +91,9 @@ CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     inv.inv_rpm        = v.inv_rpm / config::MotorPolePairs;
     inv.inv_error      = v.inv_error;
     inv.dem_present    = v.inv_dem_present ? 1u : 0u;   // active fault vs latched history
+    // 7-bit field; every InvMode fits (max 0x13 = 19). Mask defensively so a
+    // bad value can never bleed into dem_present's bit.
+    inv.inv_mode_cmd   = static_cast<std::uint8_t>(inv_mode_cmd & 0x7Fu);
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);
     return make_acu(PitDiag_inverter_ID, b);
@@ -124,10 +130,19 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     h.free_heap     = m.free_heap;
     h.min_free_heap = m.min_free_heap;
     // split the liveness mask into 1-bit DBC signals (EcuTaskId bit order)
-    h.task_control = (m.task_ran_mask >> 0) & 1u;
-    h.task_can_rx  = (m.task_ran_mask >> 1) & 1u;
-    h.task_can_tx  = (m.task_ran_mask >> 2) & 1u;
-    h.task_diag    = (m.task_ran_mask >> 3) & 1u;
+    h.task_control   = (m.task_ran_mask >> 0) & 1u;
+    h.task_can_rx    = (m.task_ran_mask >> 1) & 1u;
+    h.task_can_tx    = (m.task_ran_mask >> 2) & 1u;
+    h.task_telemetry = (m.task_ran_mask >> 3) & 1u;   // EcuTaskId TELEMETRY=3
+    h.task_diag      = (m.task_ran_mask >> 4) & 1u;   // EcuTaskId DIAG=4
+    // Bench stub announce (#127): mirror the compile-time ecu_config toggles onto
+    // the bus so a bring-up image can't pass for a flight one. ALL ZERO on flight.
+    // stub_no_ams is the load-bearing one -- it forces ok_precharge, which is what
+    // 0x504 VCU_ts_active reports to the uDV, so set => TS-active here is FAKE.
+    // (stub_brake dropped: TelemetryTask took its byte4 bit -- see pit_diag_health.def)
+    h.stub_no_ams      = config::StubNoAms ? 1u : 0u;
+    h.stub_no_inverter = config::StubNoInverter ? 1u : 0u;
+    h.stub_start       = config::StubStart ? 1u : 0u;
     h.reset_cause   = static_cast<std::uint8_t>(m.reset_cause);
     h.uptime_s      = m.uptime_s;
     h.last_fault    = static_cast<std::uint8_t>(m.last_fault);

@@ -69,6 +69,12 @@ void Error_Handler(void);
 #define A5_GPIO_Port GPIOC
 #define A6_Pin GPIO_PIN_1
 #define A6_GPIO_Port GPIOC
+#define NRF24_IRQ_Pin GPIO_PIN_4
+#define NRF24_IRQ_GPIO_Port GPIOC
+#define NRF24_CE_Pin GPIO_PIN_5
+#define NRF24_CE_GPIO_Port GPIOC
+#define NRF24_CS_Pin GPIO_PIN_0
+#define NRF24_CS_GPIO_Port GPIOB
 #define OK_STATUS_Pin GPIO_PIN_14
 #define OK_STATUS_GPIO_Port GPIOD
 #define ERR_STATUS_Pin GPIO_PIN_15
