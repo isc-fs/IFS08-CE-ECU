@@ -39,7 +39,11 @@ void MX_USART10_UART_Init(void)
 
   /* USER CODE END USART10_Init 1 */
   huart10.Instance = USART10;
-  huart10.Init.BaudRate = 115200;
+  /* 9600 = the MTK3339 GPS module's default rate (bench-validated in
+     IFS08_PRIVATE/GPS_TEST). USART10 is the GPS port -- PG11/PG12 are routed to
+     the GPS header on the board; it is NOT a debug console. Mirrored in ECU.ioc
+     so a CubeMX regen keeps it. */
+  huart10.Init.BaudRate = 9600;
   huart10.Init.WordLength = UART_WORDLENGTH_8B;
   huart10.Init.StopBits = UART_STOPBITS_1;
   huart10.Init.Parity = UART_PARITY_NONE;

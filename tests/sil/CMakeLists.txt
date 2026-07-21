@@ -25,6 +25,8 @@ add_executable(ecu08_sil
     ${REPO}/Core/Src/app/udv_tx.cpp
     ${REPO}/Core/Src/app/radio_snapshot.cpp
     ${REPO}/Core/Src/app/vehicle_service.cpp
+    ${REPO}/Core/Src/app/gps_nmea.cpp
+    ${REPO}/Core/Src/app/gps_tx.cpp
 )
 
 target_include_directories(ecu08_sil PRIVATE ${REPO}/Core/Inc)
@@ -53,4 +55,5 @@ add_test(NAME SIL_FullCycle       COMMAND ecu08_sil --test-full-cycle)
 add_test(NAME SIL_PrechargeNoAck  COMMAND ecu08_sil --test-precharge-no-ack)
 add_test(NAME SIL_Plausibility    COMMAND ecu08_sil --test-plausibility)
 add_test(NAME SIL_InvTsOffRecovery COMMAND ecu08_sil --test-inverter-ts-off)
+add_test(NAME SIL_Gps             COMMAND ecu08_sil --test-gps)
 add_test(NAME SIL_All             COMMAND ecu08_sil --test-all)

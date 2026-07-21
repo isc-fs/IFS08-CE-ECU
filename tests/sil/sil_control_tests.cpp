@@ -24,6 +24,8 @@
 #include "app/udv_tx.hpp"        // uDV autonomous-contract TX builders (#17)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
 #include "app/radio_snapshot.hpp"  // v2 fragmented-snapshot radio serializer
+#include "app/gps_nmea.hpp"        // MTK3339 NMEA parser (USART10 GPS)
+#include "app/gps_tx.hpp"          // 0x508/0x509 GPS frame builders
 
 using namespace ecu;
 using namespace ecu::config;
@@ -720,6 +722,9 @@ static RadioSnapshotInputs radio_test_inputs() {
     in.inv_state = 6; in.inv_vconfig_active = 1; in.inv_error = 0;
     in.inv_dc_bus_V = 550; in.inv_temp_motor1 = 72; in.inv_temp_pwrstg = 68; in.inv_temp_board = 55;
     in.inv_rpm = -12345;
+    in.gps_lat_deg1e7 = 406353900; in.gps_lon_deg1e7 = -36927966;
+    in.gps_speed_kmh_x100 = 4148; in.gps_course_deg_x100 = 8440;
+    in.gps_sats = 8; in.gps_has_fix = 1;
     return in;
 }
 
@@ -763,9 +768,15 @@ static void test_radio_snapshot() {
     CHECK(rd16(s, 64) == 72 && rd16(s, 66) == 68 && rd16(s, 68) == 55, "inv temps @64/66/68");
     CHECK(static_cast<int32_t>(rd32(s, 70)) == -12345, "inv_rpm @70 (signed)");
     CHECK(rd32(s, 74) == 0 && rd32(s, 78) == 0, "inv_speed/current_actual @74/78 (placeholder)");
+    // GPS occupies what used to be the reserved tail (wire size still 102).
+    CHECK(static_cast<int32_t>(rd32(s, 82)) ==  406353900, "gps lat @82 (signed)");
+    CHECK(static_cast<int32_t>(rd32(s, 86)) ==  -36927966, "gps lon @86 (signed)");
+    CHECK(rd16(s, 90) == 4148, "gps speed km/h*100 @90");
+    CHECK(rd16(s, 92) == 8440, "gps course deg*100 @92");
+    CHECK(s[94] == 8 && s[95] == 1, "gps sats/has_fix @94/95");
     bool tail_zero = true;
-    for (int i = 82; i < 102; ++i) if (s[i] != 0) tail_zero = false;
-    CHECK(tail_zero, "reserved [82..101] zero");
+    for (int i = 96; i < 102; ++i) if (s[i] != 0) tail_zero = false;
+    CHECK(tail_zero, "reserved [96..101] zero");
 
     // Fragmentation: 5 fragments, v2 header, data slices reassemble the snapshot.
     uint8_t reasm[kRadioSnapshotFragments * kRadioFragPayloadSize] = {};
@@ -781,6 +792,122 @@ static void test_radio_snapshot() {
     CHECK(hdr_ok, "all 5 fragment headers (magic/ver/idx/tot/seq/kind)");
     CHECK(std::memcmp(reasm, s, kRadioSnapshotWireSize) == 0,
           "5 fragments reassemble to the 102-byte snapshot");
+}
+
+// GPS (MTK3339 / USART10) -- the NMEA parser ported from the bench-proven
+// GPS_TEST driver, the knots->km/h conversion, and the 0x508/0x509 wire layout.
+// The parser is the risky part (integer ddmm.mmmm -> deg*1e7), so it is driven
+// with real sentences and checked to the last digit.
+static void test_gps() {
+    std::printf("[gps]\n");
+
+    // --- knots -> km/h (x1.852, round-to-nearest) ---
+    CHECK(gps_knots_x100_to_kmh_x100(0)    == 0,     "0 kn -> 0 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(100)  == 185,   "1.00 kn -> 1.85 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(2240) == 4148,  "22.40 kn -> 41.48 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(10000)== 18520, "100.00 kn -> 185.20 km/h");
+
+    // --- a real fix: GGA (sats) + RMC (position/speed/course) ---
+    // 4038.1234,N -> 40 + 38.1234/60 = 40.6353900 deg -> 406353900
+    // 00341.5678,W -> -(3 + 41.5678/60) = -3.6927966 deg -> -36927966
+    {
+        GpsNmea g;
+        const char* stream =
+            "$GPGGA,123519,4038.1234,N,00341.5678,W,1,08,0.9,545.4,M,46.9,M,,*47\r\n"
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = stream; *p; ++p) g.feed(*p);
+
+        const GpsFix& f = g.fix();
+        CHECK(f.has_fix, "valid fix reported");
+        CHECK(f.sats == 8, "GGA satellites = 8");
+        CHECK(f.lat_deg1e7 ==  406353900, "lat 4038.1234,N -> +40.6353900 deg");
+        CHECK(f.lon_deg1e7 ==  -36927966, "lon 00341.5678,W -> -3.6927966 deg (negated)");
+        CHECK(f.speed_kmh_x100  == 4148, "22.40 kn -> 41.48 km/h");
+        CHECK(f.course_deg_x100 == 8440, "course 084.40 deg");
+        CHECK(g.sentences() == 2, "two sentences parsed");
+    }
+
+    // --- southern / eastern hemisphere signs (the other two quadrants) ---
+    {
+        GpsNmea g;
+        const char* s =
+            "$GNRMC,000000,A,3352.0000,S,15112.0000,E,000.00,000.00,010120,,,A*00\r\n";
+        for (const char* p = s; *p; ++p) g.feed(*p);
+        // 33 + 52/60 = 33.8666666 -> negated (S); 151 + 12/60 = 151.2 -> +E
+        CHECK(g.fix().lat_deg1e7 == -338666666, "S hemisphere -> negative latitude");
+        CHECK(g.fix().lon_deg1e7 == 1512000000, "E hemisphere -> positive longitude");
+        CHECK(g.fix().has_fix, "GNRMC talker ID accepted (not just GP)");
+    }
+
+    // --- no fix (RMC status 'V'): must clear has_fix and NOT clobber the last
+    //     known position with the empty lat/lon fields an unfixed RMC carries ---
+    {
+        GpsNmea g;
+        const char* fixed =
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = fixed; *p; ++p) g.feed(*p);
+        const std::int32_t lat_before = g.fix().lat_deg1e7;
+
+        const char* lost = "$GPRMC,123520,V,,,,,,,230394,,,N*00\r\n";
+        for (const char* p = lost; *p; ++p) g.feed(*p);
+        CHECK(!g.fix().has_fix, "status 'V' -> has_fix false");
+        CHECK(g.fix().lat_deg1e7 == lat_before, "lost fix keeps the last valid position");
+    }
+
+    // --- robustness: junk, empty lines, and an over-long line must not corrupt
+    //     a good solution (the module emits garbage while it boots) ---
+    {
+        GpsNmea g;
+        const char* good =
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = good; *p; ++p) g.feed(*p);
+        const GpsFix saved = g.fix();
+
+        for (const char* p = "not-nmea-at-all\r\n"; *p; ++p) g.feed(*p);
+        for (const char* p = "\r\n"; *p; ++p) g.feed(*p);
+        for (const char* p = "$GPGSV,3,1,11,01,05,048,20*7A\r\n"; *p; ++p) g.feed(*p);  // unsupported
+        for (unsigned i = 0; i < kGpsLineMax * 2u; ++i) g.feed('X');                     // overflow
+        g.feed('\n');
+
+        CHECK(g.fix().lat_deg1e7 == saved.lat_deg1e7, "garbage/overflow leaves position intact");
+        CHECK(g.fix().speed_kmh_x100 == saved.speed_kmh_x100, "...and speed intact");
+
+        // ...and the parser still works after the overflow (len_ was reset).
+        for (const char* p = good; *p; ++p) g.feed(*p);
+        CHECK(g.fix().has_fix, "parser recovers after an over-long line");
+    }
+
+    // --- 0x508 / 0x509 wire layout ---
+    {
+        GpsFix f{};
+        f.has_fix = true; f.sats = 8;
+        f.lat_deg1e7 = 406353900; f.lon_deg1e7 = -36927966;
+        f.speed_kmh_x100 = 4148;  f.course_deg_x100 = 8440;
+
+        const CanFrame p = GpsTx::build_position(f);
+        CHECK(p.id == VCU_gps_position_ID && p.dlc == 8, "0x508 id/dlc");
+        CHECK(p.bus == static_cast<uint8_t>(CanBus::Acu), "0x508 on the ACU bus (uDV + pit)");
+        CHECK(static_cast<int32_t>(rd32(p.data, 0)) ==  406353900, "0x508 latitude  s32 LE");
+        CHECK(static_cast<int32_t>(rd32(p.data, 4)) ==  -36927966, "0x508 longitude s32 LE (signed)");
+
+        const CanFrame s = GpsTx::build_status(f, 1234);
+        CHECK(s.id == VCU_gps_status_ID && s.dlc == 8, "0x509 id/dlc");
+        CHECK(rd16(s.data, 0) == 4148, "0x509 speed km/h*100");
+        CHECK(rd16(s.data, 2) == 8440, "0x509 course deg*100");
+        CHECK(s.data[4] == 8, "0x509 sats");
+        CHECK((s.data[5] & 0x01u) == 1u, "0x509 has_fix bit");
+        CHECK(rd16(s.data, 6) == 1234, "0x509 nmea_count (liveness)");
+
+        // No fix -> the bit clears but the last position still ships (documented).
+        GpsFix nf = f; nf.has_fix = false;
+        CHECK((GpsTx::build_status(nf, 5).data[5] & 0x01u) == 0u, "0x509 has_fix clears");
+        CHECK(static_cast<int32_t>(rd32(GpsTx::build_position(nf).data, 0)) == 406353900,
+              "0x508 still carries the last known position when unfixed");
+
+        // Overflow saturates instead of wrapping into a plausible small value.
+        GpsFix fast = f; fast.speed_kmh_x100 = 999999u;
+        CHECK(rd16(GpsTx::build_status(fast, 0).data, 0) == 0xFFFF, "speed saturates, never wraps");
+    }
 }
 
 // ----- dispatch -------------------------------------------------------------
@@ -806,6 +933,7 @@ static void run_all() {
     test_udv_rx();
     test_udv_tx();
     test_radio_snapshot();
+    test_gps();
 }
 
 int main(int argc, char** argv) {
@@ -833,6 +961,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
     else if (!std::strcmp(m, "--test-radio"))              test_radio_snapshot();
+    else if (!std::strcmp(m, "--test-gps"))                test_gps();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);
