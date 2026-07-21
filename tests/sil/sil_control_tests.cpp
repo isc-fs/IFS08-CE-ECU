@@ -54,7 +54,7 @@ static CtrlInputs good_drive_inputs() {
     in.inv_present       = true;
     in.inv_vconfig_ready = true;
     in.inv_state         = InvReadyState;
-    in.inv_dc_bus_V      = PrechargeTargetV;
+    in.inv_dc_bus_V      = 400;   // any plausible HV bus voltage (the FSM doesn't gate on a threshold)
     in.ams_fresh         = true;
     in.ok_precharge      = true;
     in.ams_error         = false;
