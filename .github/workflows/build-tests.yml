@@ -4,7 +4,7 @@ name: Build and tests
 #   sil-tests       — host SIL suite: self-contained (no hardware, no network/Unity).
 #                     Compiles the PURE control core -- sil_control_tests.cpp plus
 #                     Core/Src/app/{control,inverter,vehicle_service,udv_tx,
-#                     radio_snapshot}.cpp -- and nothing else. There are NO mocks and
+#                     radio_snapshot,gps_nmea,gps_tx}.cpp -- and nothing else. There are NO mocks and
 #                     NO freertos.c/HAL sources in this target: those files are
 #                     HAL-free and RTOS-free by design, and Controller::step() takes
 #                     now_ms as an argument, so the suite is deterministic host code.
@@ -90,6 +90,13 @@ jobs:
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
           release: '14.2.Rel1'
+
+      # Runs BEFORE the build: it is a source check, and failing fast on a
+      # regen-clobbered MessageRAM layout beats waiting on a compile that would
+      # succeed anyway (the defect is silent at build time -- it only shows up
+      # as dead CAN TX on the car).
+      - name: Verify FDCAN MessageRAM layout (no overlap -- #48 guard)
+        run: python3 scripts/check_fdcan_ram.py Core/Src/fdcan.c
 
       - name: Configure CMake (cross)
         run: cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/gcc-arm-none-eabi.cmake"

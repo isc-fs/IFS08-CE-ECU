@@ -82,7 +82,8 @@ CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
     return make_acu(PitDiag_pedals_ID, b);
 }
 
-CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
+CanFrame PitDiag::build_inverter(const VehicleState& v,
+                                 std::uint8_t inv_mode_cmd) noexcept {
     PitDiag_inverter_t inv{};
     inv.dc_bus_voltage = v.inv_dc_bus_V;
     // 0x463 reports ELECTRICAL rpm; diag shows MECHANICAL shaft rpm, same
@@ -90,6 +91,9 @@ CanFrame PitDiag::build_inverter(const VehicleState& v) noexcept {
     inv.inv_rpm        = v.inv_rpm / config::MotorPolePairs;
     inv.inv_error      = v.inv_error;
     inv.dem_present    = v.inv_dem_present ? 1u : 0u;   // active fault vs latched history
+    // 7-bit field; every InvMode fits (max 0x13 = 19). Mask defensively so a
+    // bad value can never bleed into dem_present's bit.
+    inv.inv_mode_cmd   = static_cast<std::uint8_t>(inv_mode_cmd & 0x7Fu);
     std::uint8_t b[PitDiag_inverter_DLC];
     encode_PitDiag_inverter(inv, b);
     return make_acu(PitDiag_inverter_ID, b);

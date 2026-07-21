@@ -80,11 +80,25 @@ Five fragments reassemble the **102-byte** snapshot (`5 × 24 = 120 ≥ 102`).
 | 70..73 | inv_rpm | i32 | `veh.inv_rpm` (0x463, erpm — electrical) |
 | 74..77 | **inv_speed_actual** | i32 | **PLACEHOLDER 0** — no source decoded |
 | 78..81 | **inv_current_actual** | i32 | **PLACEHOLDER 0** — no source decoded |
-| 82..101 | reserved | 20 B | 0 |
+| 82..85 | gps_lat_deg1e7 | i32 | `GpsService` — degrees * 1e7, +N / -S |
+| 86..89 | gps_lon_deg1e7 | i32 | `GpsService` — degrees * 1e7, +E / -W |
+| 90..91 | gps_speed_kmh_x100 | u16 | km/h * 100 (converted from NMEA knots) |
+| 92..93 | gps_course_deg_x100 | u16 | course over ground, deg * 100 |
+| 94 | gps_sats | u8 | satellites in view (GGA) |
+| 95 | gps_has_fix | u8 | 1 = valid fix — **gate the four fields above on this** |
+| 96..101 | reserved | 6 B | 0 |
 
-> **No GPS in v2.** The older RF_SLOW carried GPS placeholders; the snapshot
-> layout drops them (bytes 82..101 are reserved). The USART10 GPS pins remain
-> unused (see `docs/PINES_RUTEADOS_IOC.md`).
+> **GPS is live since #147.** The MTK3339 on USART10 fills what used to be the
+> reserved tail. The wire size is UNCHANGED at 102 bytes, so an un-updated
+> ground station keeps working — it simply ignores 82..95. Source is
+> `GpsService` (a local UART peripheral), NOT `VehicleService`.
+>
+> **Always gate on `gps_has_fix`.** Position and speed carry the LAST VALID
+> values when the fix drops; they do not zero out, so an ungated display shows
+> a stale position as if it were live.
+>
+> Ground-station decode is tracked in isc-fs/IFS08-TE#1 — until that lands the
+> bytes are transmitted but not shown.
 
 ## Cadence
 

@@ -48,7 +48,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+/* GpsTask -- MTK3339 NMEA drain + 0x508/0x509 publish (Core/Src/app/gps_task.cpp).
+ * Deliberately declared and created HERE, in the USER CODE blocks, instead of via
+ * CubeMX: a regen rewrites the generated task tables (it has already silently
+ * reset the FDCAN2 MessageRAM offset once), and losing the GPS task to a regen
+ * would be a silent telemetry outage. USER CODE survives regeneration.
+ * Low priority -- it must never compete with ControlTask; the RX ring absorbs
+ * any preemption. */
+osThreadId_t GpsTaskHandle;
+const osThreadAttr_t GpsTask_attributes = {
+  .name = "GpsTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -213,6 +225,9 @@ void MX_FREERTOS_Init(void) {
   TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
+  /* GpsTask: ecu_gps_task_run already has the osThreadFunc_t signature, so it is
+     passed directly -- no CubeMX Start* trampoline needed. */
+  GpsTaskHandle = osThreadNew(ecu_gps_task_run, NULL, &GpsTask_attributes);
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 

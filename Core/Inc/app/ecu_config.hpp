@@ -32,7 +32,6 @@ inline constexpr uint32_t UdvTxPeriodMs        = 100;
 // ---- Start / ready-to-drive FSM -------------------------------------------
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
 inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
-inline constexpr uint16_t PrechargeTargetV     = 300;   // inverter DC-bus "precharged" (V)
 
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
 inline constexpr uint8_t  InvOffState          = 0;   // off/init -- climb with InvMode::Off (0x01) to reach standby
@@ -124,6 +123,22 @@ inline constexpr int32_t  InvTorqueMapBias     = 2400;  // /Div
 
 // ---- Input conditioning ----------------------------------------------------
 inline constexpr uint8_t  StartDebounceSamples = 5;     // x ControlPeriodMs (=50 ms)
+
+// ---- GPS (MTK3339 on USART10, 9600 8N1 -- PG11 RX / PG12 TX) ---------------
+// The UART runs at 9600 (the module's default and what the bench GPS_TEST
+// validated); USART10's baud is set in usart.c / ECU.ioc, NOT here.
+inline constexpr uint32_t GpsPollPeriodMs      = 20;    // GpsTask drain cadence
+inline constexpr uint32_t GpsTxPeriodMs        = 200;   // 0x508/0x509 cadence (5 Hz)
+// RX ring between the USART10 ISR and GpsTask. MUST be a power of two (the ring
+// masks instead of dividing). At 9600 baud a 20 ms drain window takes in ~19
+// bytes, so 256 is ~13x headroom -- enough to ride out a long task preemption.
+inline constexpr uint32_t GpsRxRingSize        = 256;
+// PMTK fix-rate command sent at task start (checksum is appended by the task).
+// "PMTK220,200" = 200 ms = 5 Hz, matching GpsTxPeriodMs. The MTK3339 defaults to
+// 1 Hz, which is too coarse to track a car. Valid range is 100..10000 ms; do NOT
+// go below 200 ms without also cutting the sentence set further (at 9600 baud
+// RMC+GGA at 10 Hz does not fit in the available bandwidth).
+inline constexpr const char* GpsPmtkUpdateRate = "PMTK220,200";
 
 // ---- Freshness / staleness (ms) -------------------------------------------
 inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuStale window
