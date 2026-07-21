@@ -52,6 +52,17 @@ BO_ 1286 VCU_motor_rpm: 4 VCU
 BO_ 1297 VCU_r2d_confirm: 1 VCU
  SG_ r2d_confirm : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
+BO_ 1288 VCU_gps_position: 8 VCU
+ SG_ latitude : 0|32@1- (1e-07,0) [0|0] "deg" Vector__XXX
+ SG_ longitude : 32|32@1- (1e-07,0) [0|0] "deg" Vector__XXX
+
+BO_ 1289 VCU_gps_status: 8 VCU
+ SG_ speed_kmh : 0|16@1+ (0.01,0) [0|0] "km/h" Vector__XXX
+ SG_ course_deg : 16|16@1+ (0.01,0) [0|0] "deg" Vector__XXX
+ SG_ sats : 32|8@1+ (1,0) [0|0] "count" Vector__XXX
+ SG_ has_fix : 40|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ nmea_count : 48|16@1+ (1,0) [0|0] "count" Vector__XXX
+
 BO_ 2017 PitDiag_ack: 1 VCU
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -184,6 +195,8 @@ BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1284 100;
 BA_ "GenMsgCycleTime" BO_ 1285 100;
 BA_ "GenMsgCycleTime" BO_ 1286 10;
+BA_ "GenMsgCycleTime" BO_ 1288 200;
+BA_ "GenMsgCycleTime" BO_ 1289 200;
 BA_ "GenMsgCycleTime" BO_ 1792 100;
 BA_ "GenMsgCycleTime" BO_ 1793 100;
 BA_ "GenMsgCycleTime" BO_ 1797 100;

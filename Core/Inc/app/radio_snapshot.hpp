@@ -69,7 +69,17 @@ struct RadioSnapshotInputs {
     std::int32_t  inv_rpm            = 0;   // [70..73]
     std::int32_t  inv_speed_actual   = 0;   // [74..77] PLACEHOLDER (no source)
     std::int32_t  inv_current_actual = 0;   // [78..81] PLACEHOLDER (no source)
-    // [82..101] reserved / zero
+    // --- GPS (MTK3339 / USART10, see gps_nmea.hpp). Placed in what used to be
+    //     the reserved tail, so the wire size stays 102 bytes and an OLD ground
+    //     station keeps working (it just ignores these bytes). The TE-side
+    //     _decode_snapshot() must be extended to SHOW them. ---
+    std::int32_t  gps_lat_deg1e7     = 0;   // [82..85]  degrees * 1e7, +N/-S
+    std::int32_t  gps_lon_deg1e7     = 0;   // [86..89]  degrees * 1e7, +E/-W
+    std::uint16_t gps_speed_kmh_x100 = 0;   // [90..91]  km/h * 100
+    std::uint16_t gps_course_deg_x100= 0;   // [92..93]  deg * 100
+    std::uint8_t  gps_sats           = 0;   // [94]
+    std::uint8_t  gps_has_fix        = 0;   // [95]  gate lat/lon/speed on this
+    // [96..101] reserved / zero
 };
 
 // Fill `out` (102 bytes) with the little-endian snapshot per _decode_snapshot().

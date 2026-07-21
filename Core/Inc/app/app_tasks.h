@@ -19,6 +19,7 @@ void ecu_can_rx_task_run(void *argument);     /* drain can_rx_queue -> services 
 void ecu_can_tx_task_run(void *argument);     /* drain can_tx_queue -> HAL TX */
 void ecu_telemetry_task_run(void *argument);  /* 200 ms: FDCAN3 + nRF24 */
 void ecu_diag_task_run(void *argument);       /* 1 Hz: 0x704 health */
+void ecu_gps_task_run(void *argument);        /* 20 ms: NMEA drain, 0x508/0x509 */
 
 #ifdef __cplusplus
 }

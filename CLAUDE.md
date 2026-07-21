@@ -45,6 +45,7 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 | `CanRxTask`    | AboveNormal   | ~RX     | Drena `can_rx_queue`. Despacha: trigger BL → cmd pit-diag → VehicleService. |
 | `CanTxTask`    | AboveNormal   | ~TX     | Drena `can_tx_queue` → `HAL_FDCAN_AddMessageToTxFifoQ`. |
 | `DiagTask`     | Low           | 1000 ms | Emite `0x704` (health) **aparte de ControlTask**, para sobrevivir a un cuelgue de éste. |
+| `GpsTask`      | Low           | 20 ms   | Drena el anillo NMEA (ISR USART10), parsea y publica `0x508`/`0x509` a 5 Hz + `GpsService`. Creada en los **bloques USER CODE** de `freertos.c` (sobrevive a un regen de CubeMX). |
 
 ---
 
@@ -92,6 +93,16 @@ está **retirado** (la AMS auto-dispara precarga). El offset de MessageRAM de FD
   - Se envían **planos** (bytes 0-1 = 0, sin E2E, byte-por-byte como la VCU original). El
     par va **NEGADO**: restricción mecánica del motor (drive adelante = par negativo), **no
     opcional**.
+
+- **GPS** (MTK3339 en `USART10`, 9600 8N1, PG11 RX / PG12 TX) → bus ACU, **sin gate**, 5 Hz:
+  - `0x508` `VCU_gps_position` — lat/lon como grados×1e7, **s32 LE** (DBC con escala 1e-7).
+  - `0x509` `VCU_gps_status` — velocidad **km/h**×100 (convertida de nudos NMEA, ×1.852),
+    rumbo deg×100, satélites, `has_fix` y `nmea_count` (contador de sentencias = **liveness**:
+    si no sube, el módulo/cableado está muerto; si sube con `has_fix=0`, sólo falta cielo).
+  - Va **ungated** porque lo consume el uDV para localización (igual que `0x504/0x505/0x506`);
+    la pit-tool y MingoCAN lo ven gratis (mismo bus + DBC generado). **Gatea siempre por `has_fix`**:
+    `0x508` mantiene la última posición válida cuando se pierde el fix.
+  - El parser (`gps_nmea.cpp`) es puro y host-testable → SIL `--test-gps`.
 
 **Stream pit-diag** (bus ACU, gated por `0x7E0` = `DEADBEEF`, deshabilita con `0`, ACK `0x7E1`):
 
@@ -212,6 +223,8 @@ CubeMX exige editar ese CMakeLists a mano).
 | `Core/Src/app/io_signals.cpp` | ADC3 (freno, APPS1/2) + GPIO (botón, RTDS, LEDs). |
 | `Core/Src/app/inverter.cpp` | Adaptador inversor NX/EMC: setpoints 0x360/0x362, decode 0x461/63/66. |
 | `Core/Src/app/vehicle_service.cpp` | Estado RX compartido (snapshot por control). |
+| `Core/Src/app/gps_nmea.cpp` · `Core/Inc/app/gps_nmea.hpp` | Parser NMEA (RMC/GGA) del MTK3339. **Puro, sin HAL, sólo enteros** → SIL. Portado del banco `IFS08_PRIVATE/GPS_TEST`. |
+| `Core/Src/app/gps_task.cpp` · `gps_service.cpp` · `gps_tx.cpp` | Tarea GPS (ISR USART10 → anillo SPSC → parser), snapshot compartido y builders `0x508`/`0x509`. |
 | `Core/Src/app/{bootloader,error_latch,reset_cause,firmware_info,pit_diag,watchdog}.cpp` | Trigger BL (0x002), latch de fault en BKPxR, reset cause, fwinfo (0x703), builders pit-diag, helpers IWDG. |
 | `Core/Inc/can/messages/*.def` + `all_messages.inc` | DSL CAN (fuente de verdad). |
 | `Core/Src/{main,fdcan,freertos}.c` | Handoff BL (#48), MX FDCAN + offset 387w, attrs de tareas. |

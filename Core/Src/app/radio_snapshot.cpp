@@ -63,7 +63,14 @@ void serialize_radio_snapshot(std::uint8_t out[kRadioSnapshotWireSize],
     put_i32(&out[70], in.inv_rpm);
     put_i32(&out[74], in.inv_speed_actual);
     put_i32(&out[78], in.inv_current_actual);
-    // [82..101] reserved (already zero).
+    // --- GPS (formerly reserved tail; wire size unchanged at 102 bytes) ---
+    put_i32(&out[82],  in.gps_lat_deg1e7);
+    put_i32(&out[86],  in.gps_lon_deg1e7);
+    put_le16(&out[90], in.gps_speed_kmh_x100);
+    put_le16(&out[92], in.gps_course_deg_x100);
+    out[94] = in.gps_sats;
+    out[95] = in.gps_has_fix;
+    // [96..101] reserved (already zero).
 }
 
 void build_radio_fragment(std::uint8_t out[kRadioFragmentSize],

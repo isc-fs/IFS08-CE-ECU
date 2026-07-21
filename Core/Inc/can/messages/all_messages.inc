@@ -19,6 +19,11 @@
 #include "vcu_motor_rpm.def"        /* 0x506  inverter rpm relay (SLAM)       */
 #include "vcu_r2d_confirm.def"      /* 0x511  DV ready-to-drive confirm       */
 
+/* GPS (MTK3339 on USART10). Ungated on the ACU bus: uDV localisation feed,
+ * visible to the pit tool / MingoCAN for free (same bus + generated DBC). */
+#include "vcu_gps_position.def"     /* 0x508  lat/lon, deg*1e7 s32 LE         */
+#include "vcu_gps_status.def"       /* 0x509  speed km/h, course, sats, fix   */
+
 /* pit-diag stream (gated by 0x7E0) */
 #include "pit_diag_ack.def"         /* 0x7E1                                  */
 #include "pit_diag_status.def"      /* 0x700                                  */

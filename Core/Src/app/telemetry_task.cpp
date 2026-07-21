@@ -4,6 +4,7 @@
 #include "app/app_tasks.h"
 #include "app/can_tx.hpp"
 #include "app/ecu_config.hpp"   // config::StubTelemetryDummy (bench dummy-telemetry toggle)
+#include "app/gps_service.hpp"
 #include "app/radio_snapshot.hpp"
 #include "app/vehicle_service.hpp"
 
@@ -208,6 +209,19 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
     in.inv_rpm            = v.inv_rpm;
     in.inv_speed_actual   = 0;  // PLACEHOLDER: no inverter speed/current source.
     in.inv_current_actual = 0;
+
+    // GPS (0x508/0x509 also carry this; here it rides the radio to the pit).
+    // Straight from GpsService -- NOT from VehicleService: the GPS is a local
+    // UART peripheral, not something we receive over CAN.
+    const GpsState gps      = GpsService::instance().snapshot();
+    in.gps_lat_deg1e7       = gps.fix.lat_deg1e7;
+    in.gps_lon_deg1e7       = gps.fix.lon_deg1e7;
+    in.gps_speed_kmh_x100   = static_cast<uint16_t>(
+        gps.fix.speed_kmh_x100 > 0xFFFFu ? 0xFFFFu : gps.fix.speed_kmh_x100);
+    in.gps_course_deg_x100  = static_cast<uint16_t>(
+        gps.fix.course_deg_x100 > 0xFFFFu ? 0xFFFFu : gps.fix.course_deg_x100);
+    in.gps_sats             = gps.fix.sats;
+    in.gps_has_fix          = gps.fix.has_fix ? 1u : 0u;
 
     uint8_t snap[kRadioSnapshotWireSize];
     serialize_radio_snapshot(snap, in);
