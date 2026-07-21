@@ -99,6 +99,14 @@ extern "C" void ecu_control_task_run(void *argument) {
         if (out.torque_pct > config::TorqueCap) {
             out.torque_pct = config::TorqueCap;
         }
+        g_last_torque_pct = out.torque_pct;
+        g_last_ctrl_state = static_cast<std::uint8_t>(out.state);
+        g_last_apps1_raw     = in.apps1_raw;
+        g_last_apps2_raw     = in.apps2_raw;
+        g_last_brake_raw     = in.brake_raw;
+        g_last_start_button  = in.start_button ? 1u : 0u;
+        g_last_ev_2_3        = out.ev_2_3   ? 1u : 0u;
+        g_last_t11_8_9       = out.t11_8_9  ? 1u : 0u;
 
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
@@ -160,7 +168,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
             can_tx_post(PitDiag::build_pedals(in));
-            can_tx_post(PitDiag::build_inverter(veh));
+            can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh));
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in));

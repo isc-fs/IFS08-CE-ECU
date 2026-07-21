@@ -34,10 +34,12 @@ inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
 inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
+inline constexpr uint8_t  InvOffState          = 0;   // off/init -- climb with InvMode::Off (0x01) to reach standby
 inline constexpr uint8_t  InvStandbyState      = 3;
 inline constexpr uint8_t  InvReadyState        = 4;
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
+inline constexpr uint8_t  InvShutdownState     = 13;  // shutdown (e.g. after TS-off) -- same "on" climb word (0x01)
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;
@@ -71,6 +73,17 @@ inline constexpr uint16_t StubBrakeRaw         = 0;
 inline constexpr bool StubNoAms      = false;  // assume precharge-OK + AMS-healthy (no AMS on the bus). DISABLES the AMS gate.
 inline constexpr bool StubNoInverter = false;  // fake inverter present/vconfig/Ready (no inverter). DISABLES the inverter handshake.
 inline constexpr bool StubStart      = false;  // assume start button pressed (PB5 unwired). MANUAL R2D only — keep false for a DV/uDV R2D test (else it preempts the 0x510 path).
+
+// ---- BENCH TELEMETRY stub (bring-up only) — config toggle, NOT a build flag -
+// When true, TelemetryTask fills the VehicleState with a deterministic synthetic
+// SWEEP (keyed on the frame seq) instead of the live snapshot, so the nRF24 radio
+// snapshot AND the FDCAN3 dashboard carry MOVING values with no live AMS/inverter
+// on the bus -- lets you validate the ground station / dash decode + display on a
+// bare bench. Consumed as `if constexpr (config::StubTelemetryDummy)`, so false
+// discards it at compile time. ⚠ NEVER true for a flight/drive build (it would
+// broadcast fake pack/inverter telemetry). Covers the CAN-sourced fields; the
+// pedals/torque/flags still come from ControlTask's g_last_* mirrors.
+inline constexpr bool     StubTelemetryDummy   = false;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
 inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
@@ -111,6 +124,22 @@ inline constexpr int32_t  InvTorqueMapBias     = 2400;  // /Div
 // ---- Input conditioning ----------------------------------------------------
 inline constexpr uint8_t  StartDebounceSamples = 5;     // x ControlPeriodMs (=50 ms)
 
+// ---- GPS (MTK3339 on USART10, 9600 8N1 -- PG11 RX / PG12 TX) ---------------
+// The UART runs at 9600 (the module's default and what the bench GPS_TEST
+// validated); USART10's baud is set in usart.c / ECU.ioc, NOT here.
+inline constexpr uint32_t GpsPollPeriodMs      = 20;    // GpsTask drain cadence
+inline constexpr uint32_t GpsTxPeriodMs        = 200;   // 0x508/0x509 cadence (5 Hz)
+// RX ring between the USART10 ISR and GpsTask. MUST be a power of two (the ring
+// masks instead of dividing). At 9600 baud a 20 ms drain window takes in ~19
+// bytes, so 256 is ~13x headroom -- enough to ride out a long task preemption.
+inline constexpr uint32_t GpsRxRingSize        = 256;
+// PMTK fix-rate command sent at task start (checksum is appended by the task).
+// "PMTK220,200" = 200 ms = 5 Hz, matching GpsTxPeriodMs. The MTK3339 defaults to
+// 1 Hz, which is too coarse to track a car. Valid range is 100..10000 ms; do NOT
+// go below 200 ms without also cutting the sentence set further (at 9600 baud
+// RMC+GGA at 10 Hz does not fit in the available bandwidth).
+inline constexpr const char* GpsPmtkUpdateRate = "PMTK220,200";
+
 // ---- Freshness / staleness (ms) -------------------------------------------
 inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuStale window
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
@@ -121,8 +150,10 @@ inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request con
 // Non-overlapping MessageRAM offset for FDCAN2, in words. FDCAN1 keeps offset 0
 // and occupies 1 std + 2 ext + 32*4*3 = 387 words of the shared 10 KB SRAMCAN;
 // FDCAN2 starts right after so the two instances DON'T overlap -- overlap was
-// the #48 TX-dead root cause. CubeMX assigns 0 to every instance and reverts it
-// on regen, so App_InitTask re-applies it (regen-stable).
+// the #48 TX-dead root cause. CubeMX resets it to 0 on EVERY regen, so it MUST be
+// re-applied by hand in MX_FDCAN2_Init (fdcan.c) each time -- NOT regen-stable, and
+// App_InitTask does NOT re-apply it. (2026-07-01: a regen silently reset this + the
+// FDCAN2 AutoRetransmission=ENABLE; both had to be restored in fdcan.c.)
 inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 
 // ---- CAN IDs the ECU CONSUMES (RX) -----------------------------------------
@@ -130,6 +161,13 @@ inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 // DSL-generated <Msg>_ID so these can't silently drift.
 inline constexpr uint32_t AcuOkPrechargeId     = 0x020u;     // AMS precharge-OK
 inline constexpr uint32_t AcuVCellMinId        = 0x12Cu;     // AMS min cell voltage
+inline constexpr uint32_t AcuVminModuleAId     = 0x131u;     // AMS per-module vmin, modules 0..2
+inline constexpr uint32_t AcuVminModuleBId     = 0x132u;     // AMS per-module vmin, modules 3..4
+inline constexpr uint32_t AcuVmaxModuleAId     = 0x133u;     // AMS per-module vmax, modules 0..2
+inline constexpr uint32_t AcuVmaxModuleBId     = 0x134u;     // AMS per-module vmax, modules 3..4
+inline constexpr uint32_t AcuCurrentsId        = 0x135u;     // AMS accu/dcdc currents (deciamps)
+inline constexpr uint32_t AcuTmaxModuleAId     = 0x136u;     // AMS per-module tmax, modules 0..2
+inline constexpr uint32_t AcuTmaxModuleBId     = 0x137u;     // AMS per-module tmax, modules 3..4 + dcdc stub
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t UdvTorqueCmdId       = 0x507u;     // uDV torque command (s32 LE, integer %)
 inline constexpr uint32_t UdvR2dRequestId      = 0x510u;     // uDV DV ready-to-drive request

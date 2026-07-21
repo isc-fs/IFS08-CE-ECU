@@ -23,6 +23,9 @@
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
 #include "app/udv_tx.hpp"        // uDV autonomous-contract TX builders (#17)
 #include "app/vehicle_service.hpp" // inverter/AMS RX decoders (rpm / temps / state)
+#include "app/radio_snapshot.hpp"  // v2 fragmented-snapshot radio serializer
+#include "app/gps_nmea.hpp"        // MTK3339 NMEA parser (USART10 GPS)
+#include "app/gps_tx.hpp"          // 0x508/0x509 GPS frame builders
 
 using namespace ecu;
 using namespace ecu::config;
@@ -386,6 +389,96 @@ static void test_inverter_fault_recovery() {
     CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
 }
 
+// TS-off recovery WITHOUT a power cycle (the crucial IFS07 feature this ECU was
+// missing). After the tractive system is deactivated mid-drive the inverter drops
+// to OFF(0) / SHUTDOWN(13); the driver must re-do R2D (still required -- FSAE), and
+// the ECU must then climb the inverter back to torque on its own. The old code
+// commanded Ready(0x04) blindly in WaitInvStandby, which an OFF/SHUTDOWN inverter
+// ignores -> FSM stuck -> power cycle. The fix: reactively send Off(0x01) ("on")
+// until the inverter reaches standby, then Ready(0x04).
+static void test_inverter_ts_off_recovery() {
+    std::printf("[inverter_ts_off_recovery]\n");
+
+    Controller c;
+    uint32_t t = 1000;
+    drive_to_active(c, t);                       // driving, inverter Ready(4)
+
+    // --- TS deactivated mid-drive: AMS opens the AIRs (ok_precharge falls) and
+    //     the inverter collapses to OFF(0). FSM must re-arm (back to Precharge). ---
+    CtrlInputs in = good_drive_inputs();
+    in.ok_precharge = false;
+    in.inv_state    = InvOffState;               // 0 -- inverter fell to off
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Precharge, "TS-off -> re-arm Precharge");
+    CHECK(o.torque_pct == 0, "no torque after TS-off");
+    CHECK(o.inv_mode == InvMode::Off, "Precharge commands Off (0x01)");
+
+    // --- TS back on: climb Precharge -> WaitStartBrake, driver re-does R2D. ---
+    in.ok_precharge = true;                      // HV/precharge restored
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitStartBrake, "ok_precharge -> WaitStartBrake (re-arm)");
+
+    in.start_button = true;
+    in.brake_raw    = BrakeArmRaw + 100;         // R2D re-arm STILL required (FSAE)
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::R2dDelay, "start+brake -> R2dDelay (re-arm)");
+
+    in.start_button = false;
+    in.brake_raw    = 0;
+    t += R2dSoundMs;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitInvStandby, "R2D done -> WaitInvStandby");
+
+    // --- THE FIX: inverter still at OFF(0). Old code sent Ready and stalled here
+    //     forever; now we send Off(0x01) ("on") to climb it, staying in standby. ---
+    CHECK(o.inv_mode == InvMode::Off, "OFF(0) inverter -> command Off/0x01 (climb), NOT Ready");
+    CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby while inverter off");
+
+    // SHUTDOWN(13) climbs with the same "on" word.
+    in.inv_state = InvShutdownState;             // 13
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Off, "SHUTDOWN(13) inverter -> command Off/0x01 (climb)");
+    CHECK(o.state == CtrlState::WaitInvStandby, "still climbing (not ready yet)");
+
+    // Inverter reaches Standby(3): now command Ready(0x04).
+    in.inv_state = InvStandbyState;              // 3
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Ready, "STANDBY(3) inverter -> command Ready (0x04)");
+    CHECK(o.state == CtrlState::WaitInvStandby, "waiting for ready");
+
+    // Inverter reaches Ready(4): advance to Active and drive torque again -- no
+    // power cycle anywhere in this sequence.
+    in.inv_state = InvReadyState;                // 4
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Active, "READY(4) -> Active (recovered)");
+
+    o = c.step(in, t); t += ControlPeriodMs;     // one more tick: torque flows
+    CHECK(o.state == CtrlState::Active, "stays Active");
+    CHECK(o.inv_mode == InvMode::TorqueEnable, "back to TorqueEnable");
+    CHECK(o.torque_pct == 100, "full pedal drives torque again -- no power cycle");
+
+    // A latched fault DURING the climb still wins (reactive fault block overrides
+    // the climb word): OFF-climb must not mask a hard fault that appears.
+    {
+        Controller c2;
+        uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.ok_precharge = false; in2.inv_state = InvOffState;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> Precharge
+        in2.ok_precharge = true;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> WaitStartBrake
+        in2.start_button = true; in2.brake_raw = BrakeArmRaw + 100;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> R2dDelay
+        in2.start_button = false; in2.brake_raw = 0; t2 += R2dSoundMs;
+        c2.step(in2, t2); t2 += ControlPeriodMs;                 // -> WaitInvStandby
+        in2.inv_state = InvHardFaultState;                       // 11 appears mid-climb
+        CtrlOutput o2 = c2.step(in2, t2);
+        CHECK(o2.inv_mode == InvMode::HardFaultReset,
+              "hard fault during the climb -> HardFaultReset (0x0D) wins over the on-word");
+    }
+}
+
 // Inverter RX decode: 0x463 rpm (20-bit signed @ bit 44 -- the bit-44 fix, byte
 // patterns verified vs the NX DBC with cantools) and 0x464 temps (raw bytes pass
 // through; the DBC -50 offset turns them into degC on decode).
@@ -600,6 +693,223 @@ static void test_udv_tx() {
     CHECK(UdvTx::build_motor_rpm(-1).data[0] == 0x00, "-1 erpm -> 0 (truncates toward zero)");
 }
 
+// v2 radio snapshot -- byte layout MUST match the live ground-station parser
+// (IFS08-TE feat/receptor_08 ISC_RTT_serial.py _decode_snapshot). Distinct
+// value per field so any mis-offset is caught; a Python round-trip against the
+// real parser (tests/sil/radio_snapshot_roundtrip.py) is the belt-and-braces.
+static uint16_t rd16(const uint8_t* d, int o) {
+    return static_cast<uint16_t>(d[o] | (d[o + 1] << 8));
+}
+static uint32_t rd32(const uint8_t* d, int o) {
+    return static_cast<uint32_t>(d[o]) | (static_cast<uint32_t>(d[o + 1]) << 8) |
+           (static_cast<uint32_t>(d[o + 2]) << 16) | (static_cast<uint32_t>(d[o + 3]) << 24);
+}
+// Shared known-value snapshot inputs (distinct per field). Used by the offset
+// test and the --dump-radio round-trip against the real ground-station parser.
+static RadioSnapshotInputs radio_test_inputs() {
+    RadioSnapshotInputs in{};
+    in.tick_ms = 0x11223344u; in.seq = 0xABCD;
+    in.start_button = 1; in.apps1_raw = 2500; in.apps2_raw = 2400; in.brake_raw = 1234;
+    in.torque_pct = 77; in.ev_2_3 = 1; in.t11_8_9 = 1;
+    in.state = 5; in.ok_precharge = 1; in.ams_fsm_state = 3;
+    in.v_cell_min_mV = 3650; in.soc = 87;
+    for (int i = 0; i < 5; ++i) {
+        in.vmin_module[i] = static_cast<uint16_t>(3600 + i);
+        in.vmax_module[i] = static_cast<uint16_t>(3700 + i);
+        in.tmax_module[i] = static_cast<int16_t>(30 + i);
+    }
+    in.current_accu_dA = -421; in.current_dcdc_dA = 55; in.tmax_dcdc = 38;
+    in.inv_state = 6; in.inv_vconfig_active = 1; in.inv_error = 0;
+    in.inv_dc_bus_V = 550; in.inv_temp_motor1 = 72; in.inv_temp_pwrstg = 68; in.inv_temp_board = 55;
+    in.inv_rpm = -12345;
+    in.gps_lat_deg1e7 = 406353900; in.gps_lon_deg1e7 = -36927966;
+    in.gps_speed_kmh_x100 = 4148; in.gps_course_deg_x100 = 8440;
+    in.gps_sats = 8; in.gps_has_fix = 1;
+    return in;
+}
+
+// Print the serialized 102-byte snapshot as one hex line (for the Python
+// round-trip against the real parser). Header/footer suppressed by main.
+static void dump_radio_snapshot() {
+    uint8_t s[kRadioSnapshotWireSize];
+    serialize_radio_snapshot(s, radio_test_inputs());
+    for (unsigned i = 0; i < kRadioSnapshotWireSize; ++i) std::printf("%02x", s[i]);
+    std::printf("\n");
+}
+
+static void test_radio_snapshot() {
+    std::printf("[radio_snapshot]\n");
+    const RadioSnapshotInputs in = radio_test_inputs();
+
+    uint8_t s[kRadioSnapshotWireSize];
+    serialize_radio_snapshot(s, in);
+
+    CHECK(rd32(s, 0) == 0x11223344u, "tick_ms @0");
+    CHECK(rd16(s, 4) == 0xABCD,      "seq @4");
+    CHECK(s[6] == 1,                 "start_button @6");
+    CHECK(rd16(s, 7) == 2500 && rd16(s, 9) == 2400 && rd16(s, 11) == 1234, "pedals @7/9/11");
+    CHECK(rd16(s, 13) == 77,         "torque_pct @13 (u8 zero-extended)");
+    CHECK(s[15] == 1 && s[16] == 1,  "ev_2_3/t11_8_9 @15/16");
+    CHECK(s[17] == 5 && s[18] == 1 && s[19] == 3, "state/ok_precharge/ams_fsm @17-19");
+    CHECK(rd16(s, 20) == 3650,       "v_cell_min_mV @20");
+    CHECK(s[22] == 87,               "soc @22");
+    bool mods_ok = true;
+    for (int i = 0; i < 5; ++i) {
+        if (rd16(s, 23 + 2 * i) != static_cast<uint16_t>(3600 + i)) mods_ok = false;
+        if (rd16(s, 33 + 2 * i) != static_cast<uint16_t>(3700 + i)) mods_ok = false;
+        if (static_cast<int16_t>(rd16(s, 49 + 2 * i)) != static_cast<int16_t>(30 + i)) mods_ok = false;
+    }
+    CHECK(mods_ok, "per-module vmin@23 / vmax@33 / tmax@49 (5 each)");
+    CHECK(static_cast<int16_t>(rd16(s, 43)) == -421, "current_accu @43 (signed)");
+    CHECK(static_cast<int16_t>(rd16(s, 45)) == 55,   "current_dcdc @45");
+    CHECK(static_cast<int16_t>(rd16(s, 47)) == 38,   "temp_dcdc @47");
+    CHECK(s[59] == 6 && s[60] == 1 && s[61] == 0, "inv_state/vconfig/error @59-61");
+    CHECK(rd16(s, 62) == 550, "inv_dc_bus_V @62");
+    CHECK(rd16(s, 64) == 72 && rd16(s, 66) == 68 && rd16(s, 68) == 55, "inv temps @64/66/68");
+    CHECK(static_cast<int32_t>(rd32(s, 70)) == -12345, "inv_rpm @70 (signed)");
+    CHECK(rd32(s, 74) == 0 && rd32(s, 78) == 0, "inv_speed/current_actual @74/78 (placeholder)");
+    // GPS occupies what used to be the reserved tail (wire size still 102).
+    CHECK(static_cast<int32_t>(rd32(s, 82)) ==  406353900, "gps lat @82 (signed)");
+    CHECK(static_cast<int32_t>(rd32(s, 86)) ==  -36927966, "gps lon @86 (signed)");
+    CHECK(rd16(s, 90) == 4148, "gps speed km/h*100 @90");
+    CHECK(rd16(s, 92) == 8440, "gps course deg*100 @92");
+    CHECK(s[94] == 8 && s[95] == 1, "gps sats/has_fix @94/95");
+    bool tail_zero = true;
+    for (int i = 96; i < 102; ++i) if (s[i] != 0) tail_zero = false;
+    CHECK(tail_zero, "reserved [96..101] zero");
+
+    // Fragmentation: 5 fragments, v2 header, data slices reassemble the snapshot.
+    uint8_t reasm[kRadioSnapshotFragments * kRadioFragPayloadSize] = {};
+    bool hdr_ok = true;
+    for (uint8_t f = 0; f < kRadioSnapshotFragments; ++f) {
+        uint8_t p[kRadioFragmentSize];
+        build_radio_fragment(p, s, in.seq, f);
+        if (!(p[0] == kRadioMagic && p[1] == kRadioVersionSnapshot && p[2] == f &&
+              p[3] == kRadioSnapshotFragments && rd16(p, 4) == in.seq && p[6] == kRadioKindSnapshot))
+            hdr_ok = false;
+        std::memcpy(&reasm[f * kRadioFragPayloadSize], &p[8], kRadioFragPayloadSize);
+    }
+    CHECK(hdr_ok, "all 5 fragment headers (magic/ver/idx/tot/seq/kind)");
+    CHECK(std::memcmp(reasm, s, kRadioSnapshotWireSize) == 0,
+          "5 fragments reassemble to the 102-byte snapshot");
+}
+
+// GPS (MTK3339 / USART10) -- the NMEA parser ported from the bench-proven
+// GPS_TEST driver, the knots->km/h conversion, and the 0x508/0x509 wire layout.
+// The parser is the risky part (integer ddmm.mmmm -> deg*1e7), so it is driven
+// with real sentences and checked to the last digit.
+static void test_gps() {
+    std::printf("[gps]\n");
+
+    // --- knots -> km/h (x1.852, round-to-nearest) ---
+    CHECK(gps_knots_x100_to_kmh_x100(0)    == 0,     "0 kn -> 0 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(100)  == 185,   "1.00 kn -> 1.85 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(2240) == 4148,  "22.40 kn -> 41.48 km/h");
+    CHECK(gps_knots_x100_to_kmh_x100(10000)== 18520, "100.00 kn -> 185.20 km/h");
+
+    // --- a real fix: GGA (sats) + RMC (position/speed/course) ---
+    // 4038.1234,N -> 40 + 38.1234/60 = 40.6353900 deg -> 406353900
+    // 00341.5678,W -> -(3 + 41.5678/60) = -3.6927966 deg -> -36927966
+    {
+        GpsNmea g;
+        const char* stream =
+            "$GPGGA,123519,4038.1234,N,00341.5678,W,1,08,0.9,545.4,M,46.9,M,,*47\r\n"
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = stream; *p; ++p) g.feed(*p);
+
+        const GpsFix& f = g.fix();
+        CHECK(f.has_fix, "valid fix reported");
+        CHECK(f.sats == 8, "GGA satellites = 8");
+        CHECK(f.lat_deg1e7 ==  406353900, "lat 4038.1234,N -> +40.6353900 deg");
+        CHECK(f.lon_deg1e7 ==  -36927966, "lon 00341.5678,W -> -3.6927966 deg (negated)");
+        CHECK(f.speed_kmh_x100  == 4148, "22.40 kn -> 41.48 km/h");
+        CHECK(f.course_deg_x100 == 8440, "course 084.40 deg");
+        CHECK(g.sentences() == 2, "two sentences parsed");
+    }
+
+    // --- southern / eastern hemisphere signs (the other two quadrants) ---
+    {
+        GpsNmea g;
+        const char* s =
+            "$GNRMC,000000,A,3352.0000,S,15112.0000,E,000.00,000.00,010120,,,A*00\r\n";
+        for (const char* p = s; *p; ++p) g.feed(*p);
+        // 33 + 52/60 = 33.8666666 -> negated (S); 151 + 12/60 = 151.2 -> +E
+        CHECK(g.fix().lat_deg1e7 == -338666666, "S hemisphere -> negative latitude");
+        CHECK(g.fix().lon_deg1e7 == 1512000000, "E hemisphere -> positive longitude");
+        CHECK(g.fix().has_fix, "GNRMC talker ID accepted (not just GP)");
+    }
+
+    // --- no fix (RMC status 'V'): must clear has_fix and NOT clobber the last
+    //     known position with the empty lat/lon fields an unfixed RMC carries ---
+    {
+        GpsNmea g;
+        const char* fixed =
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = fixed; *p; ++p) g.feed(*p);
+        const std::int32_t lat_before = g.fix().lat_deg1e7;
+
+        const char* lost = "$GPRMC,123520,V,,,,,,,230394,,,N*00\r\n";
+        for (const char* p = lost; *p; ++p) g.feed(*p);
+        CHECK(!g.fix().has_fix, "status 'V' -> has_fix false");
+        CHECK(g.fix().lat_deg1e7 == lat_before, "lost fix keeps the last valid position");
+    }
+
+    // --- robustness: junk, empty lines, and an over-long line must not corrupt
+    //     a good solution (the module emits garbage while it boots) ---
+    {
+        GpsNmea g;
+        const char* good =
+            "$GPRMC,123519,A,4038.1234,N,00341.5678,W,022.40,084.40,230394,003.1,W*6A\r\n";
+        for (const char* p = good; *p; ++p) g.feed(*p);
+        const GpsFix saved = g.fix();
+
+        for (const char* p = "not-nmea-at-all\r\n"; *p; ++p) g.feed(*p);
+        for (const char* p = "\r\n"; *p; ++p) g.feed(*p);
+        for (const char* p = "$GPGSV,3,1,11,01,05,048,20*7A\r\n"; *p; ++p) g.feed(*p);  // unsupported
+        for (unsigned i = 0; i < kGpsLineMax * 2u; ++i) g.feed('X');                     // overflow
+        g.feed('\n');
+
+        CHECK(g.fix().lat_deg1e7 == saved.lat_deg1e7, "garbage/overflow leaves position intact");
+        CHECK(g.fix().speed_kmh_x100 == saved.speed_kmh_x100, "...and speed intact");
+
+        // ...and the parser still works after the overflow (len_ was reset).
+        for (const char* p = good; *p; ++p) g.feed(*p);
+        CHECK(g.fix().has_fix, "parser recovers after an over-long line");
+    }
+
+    // --- 0x508 / 0x509 wire layout ---
+    {
+        GpsFix f{};
+        f.has_fix = true; f.sats = 8;
+        f.lat_deg1e7 = 406353900; f.lon_deg1e7 = -36927966;
+        f.speed_kmh_x100 = 4148;  f.course_deg_x100 = 8440;
+
+        const CanFrame p = GpsTx::build_position(f);
+        CHECK(p.id == VCU_gps_position_ID && p.dlc == 8, "0x508 id/dlc");
+        CHECK(p.bus == static_cast<uint8_t>(CanBus::Acu), "0x508 on the ACU bus (uDV + pit)");
+        CHECK(static_cast<int32_t>(rd32(p.data, 0)) ==  406353900, "0x508 latitude  s32 LE");
+        CHECK(static_cast<int32_t>(rd32(p.data, 4)) ==  -36927966, "0x508 longitude s32 LE (signed)");
+
+        const CanFrame s = GpsTx::build_status(f, 1234);
+        CHECK(s.id == VCU_gps_status_ID && s.dlc == 8, "0x509 id/dlc");
+        CHECK(rd16(s.data, 0) == 4148, "0x509 speed km/h*100");
+        CHECK(rd16(s.data, 2) == 8440, "0x509 course deg*100");
+        CHECK(s.data[4] == 8, "0x509 sats");
+        CHECK((s.data[5] & 0x01u) == 1u, "0x509 has_fix bit");
+        CHECK(rd16(s.data, 6) == 1234, "0x509 nmea_count (liveness)");
+
+        // No fix -> the bit clears but the last position still ships (documented).
+        GpsFix nf = f; nf.has_fix = false;
+        CHECK((GpsTx::build_status(nf, 5).data[5] & 0x01u) == 0u, "0x509 has_fix clears");
+        CHECK(static_cast<int32_t>(rd32(GpsTx::build_position(nf).data, 0)) == 406353900,
+              "0x508 still carries the last known position when unfixed");
+
+        // Overflow saturates instead of wrapping into a plausible small value.
+        GpsFix fast = f; fast.speed_kmh_x100 = 999999u;
+        CHECK(rd16(GpsTx::build_status(fast, 0).data, 0) == 0xFFFF, "speed saturates, never wraps");
+    }
+}
+
 // ----- dispatch -------------------------------------------------------------
 
 static void run_all() {
@@ -617,14 +927,18 @@ static void run_all() {
     test_dsl_parity();
     test_inverter();
     test_inverter_fault_recovery();
+    test_inverter_ts_off_recovery();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
     test_udv_tx();
+    test_radio_snapshot();
+    test_gps();
 }
 
 int main(int argc, char** argv) {
     const char* m = (argc > 1) ? argv[1] : "--test-all";
+    if (!std::strcmp(m, "--dump-radio")) { dump_radio_snapshot(); return 0; }
     std::printf("=== ECU SIL (control core) : %s ===\n", m);
 
     if      (!std::strcmp(m, "--test-apps"))               test_apps_pct();
@@ -642,9 +956,12 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
+    else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
+    else if (!std::strcmp(m, "--test-radio"))              test_radio_snapshot();
+    else if (!std::strcmp(m, "--test-gps"))                test_gps();
     else                                                   run_all();  // --test-integration / --test-all / default
 
     std::printf("=== %d checks, %d failed ===\n", g_checks, g_fails);

@@ -48,7 +48,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+/* GpsTask -- MTK3339 NMEA drain + 0x508/0x509 publish (Core/Src/app/gps_task.cpp).
+ * Deliberately declared and created HERE, in the USER CODE blocks, instead of via
+ * CubeMX: a regen rewrites the generated task tables (it has already silently
+ * reset the FDCAN2 MessageRAM offset once), and losing the GPS task to a regen
+ * would be a silent telemetry outage. USER CODE survives regeneration.
+ * Low priority -- it must never compete with ControlTask; the RX ring absorbs
+ * any preemption. */
+osThreadId_t GpsTaskHandle;
+const osThreadAttr_t GpsTask_attributes = {
+  .name = "GpsTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -92,6 +104,13 @@ const osThreadAttr_t DiagTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for TelemetryTask */
+osThreadId_t TelemetryTaskHandle;
+const osThreadAttr_t TelemetryTask_attributes = {
+  .name = "TelemetryTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
 /* Definitions for can_rx_queue */
 osMessageQueueId_t can_rx_queueHandle;
 const osMessageQueueAttr_t can_rx_queue_attributes = {
@@ -114,6 +133,7 @@ void StartControlTask(void *argument);
 void StartCanRxTask(void *argument);
 void StartCanTxTask(void *argument);
 void StartDiagTask(void *argument);
+void StartTelemetryTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -201,7 +221,13 @@ void MX_FREERTOS_Init(void) {
   /* creation of DiagTask */
   DiagTaskHandle = osThreadNew(StartDiagTask, NULL, &DiagTask_attributes);
 
+  /* creation of TelemetryTask */
+  TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
+  /* GpsTask: ecu_gps_task_run already has the osThreadFunc_t signature, so it is
+     passed directly -- no CubeMX Start* trampoline needed. */
+  GpsTaskHandle = osThreadNew(ecu_gps_task_run, NULL, &GpsTask_attributes);
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -297,6 +323,20 @@ void StartDiagTask(void *argument)
   /* USER CODE BEGIN StartDiagTask */
   ecu_diag_task_run(argument);
   /* USER CODE END StartDiagTask */
+}
+
+/* USER CODE BEGIN Header_StartTelemetryTask */
+/**
+* @brief Function implementing the TelemetryTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTelemetryTask */
+void StartTelemetryTask(void *argument)
+{
+  /* USER CODE BEGIN StartTelemetryTask */
+  ecu_telemetry_task_run(argument);
+  /* USER CODE END StartTelemetryTask */
 }
 
 /* Private application code --------------------------------------------------*/
