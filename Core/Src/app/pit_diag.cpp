@@ -139,10 +139,13 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     // the bus so a bring-up image can't pass for a flight one. ALL ZERO on flight.
     // stub_no_ams is the load-bearing one -- it forces ok_precharge, which is what
     // 0x504 VCU_ts_active reports to the uDV, so set => TS-active here is FAKE.
-    // (stub_brake dropped: TelemetryTask took its byte4 bit -- see pit_diag_health.def)
     h.stub_no_ams      = config::StubNoAms ? 1u : 0u;
     h.stub_no_inverter = config::StubNoInverter ? 1u : 0u;
     h.stub_start       = config::StubStart ? 1u : 0u;
+    // stub_brake (#137): restored to byte5 b3 (StubBrakeRaw != 0 injects a fake
+    // brake_raw). Disables no safety gate -- also visible on 0x701 -- but carried
+    // here so the flight-vs-bench announce on the ungated 0x704 is complete again.
+    h.stub_brake       = (config::StubBrakeRaw != 0) ? 1u : 0u;
     h.reset_cause   = static_cast<std::uint8_t>(m.reset_cause);
     h.uptime_s      = m.uptime_s;
     h.last_fault    = static_cast<std::uint8_t>(m.last_fault);
