@@ -54,6 +54,12 @@ jobs:
         with:
           release: '14.2.Rel1'
 
+      # Same #48 guard the PR builds run. A release is exactly the wrong place
+      # to ship a regen-clobbered MessageRAM layout: it builds and flashes fine,
+      # then CAN TX is dead on the car.
+      - name: Verify FDCAN MessageRAM layout (no overlap -- #48 guard)
+        run: python3 scripts/check_fdcan_ram.py Core/Src/fdcan.c
+
       - name: Build firmware (cross, Release)
         run: |
           cmake -S firmware -B build-fw \
