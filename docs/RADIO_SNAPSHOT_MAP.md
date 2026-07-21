@@ -21,7 +21,14 @@ and is verified two ways:
 
 ## RF link config (nRF24, must match the receiver)
 
-`PIPE 0xE7E7E7E7E7 · channel 76 · 1 Mbps · AUTO_ACK off · CRC-16 · PA_MAX`.
+`PIPE "ECU01" (45 43 55 30 31) · channel 76 · 1 Mbps · AUTO_ACK off · CRC-16 · PA_MAX`.
+
+> The pipe address is the 5 ASCII bytes `ECU01`, **not** the nRF24 library default
+> `0xE7E7E7E7E7`. Source of truth: `g_nrf24Address` in
+> [`Core/Src/nrf24.c`](../Core/Src/nrf24.c) (line 47), written to both `RX_ADDR_P0`
+> and `TX_ADDR` in `NRF24_ApplyDefaultConfig()`. A receiver left on the library
+> default hears **nothing**, with no CAN symptom and no error on the ECU side.
+
 Path: STM32 → nRF24 → Arduino Nano → USB-serial (`AA 55 20 <32B> <XOR>`) → PC.
 
 ## On-air fragment (each 32-byte nRF24 payload)

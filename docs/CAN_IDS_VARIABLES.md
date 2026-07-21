@@ -1,5 +1,15 @@
 # ECU dev clone - mapa CAN actual
 
+> ⚠️ **HISTÓRICO (17-jun-2026) — NO es el mapa CAN vigente.** Cita como "referencia de
+> verdad" `Core/Src/control.c`, `Core/Src/can.c` y `Core/Inc/app_state.h`, **borrados en el
+> rewrite a C++17**. No incluye el contrato uDV (`0x504`–`0x511`), las tramas por módulo de
+> la AMS (`0x131`–`0x137`), `0x706`/`0x707`, ni el bus de dashboard FDCAN3.
+>
+> **Fuente de verdad actual:** el DSL code-first `Core/Inc/can/messages/*.def` →
+> [`dbc/ecu.dbc`](dbc/ecu.dbc) (lo regenera el bot *dbcinator* en cada PR, así que nunca
+> diverge). Resumen legible en [`../CLAUDE.md`](../CLAUDE.md); dashboard en
+> [`CAN3_MAP.md`](CAN3_MAP.md). Se conserva sólo por historia.
+
 Fecha: 17-jun-2026
 
 ## 1. Alcance

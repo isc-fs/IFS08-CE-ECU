@@ -1,5 +1,13 @@
 # Radio Telemetry Failure Analysis
 
+> ⚠️ **HISTÓRICO (2026-06-18).** Informe de incidencia sobre ficheros que ya no existen
+> (`telemetry.c`, `app_tasks.c`, `build_firmware.ps1`) y sobre el predecesor de
+> `StubTelemetryDummy` con su nombre de macro antiguo. Sus enlaces "origen en código"
+> apuntan a rutas Windows de otra máquina.
+>
+> El enlace de radio vigente (nRF24, snapshot v2 de 102 B) está en
+> [`RADIO_SNAPSHOT_MAP.md`](RADIO_SNAPSHOT_MAP.md). Se conserva sólo por historia.
+
 Fecha: 2026-06-18
 
 ## Resumen
