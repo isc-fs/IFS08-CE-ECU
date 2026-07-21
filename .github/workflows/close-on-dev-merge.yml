@@ -84,3 +84,60 @@ jobs:
                 console.log(`Could not close #${n}: ${err.message}`);
               }
             }
+
+      # The step above only closes what the PR EXPLICITLY references. The
+      # per-branch tracker issues opened by branch-issue.yml tell the author to
+      # write `Closes #N` in the PR description -- but that instruction lives
+      # inside the tracker issue, which nobody reads while opening a PR, so it
+      # is routinely missed and the trackers pile up (nine had accumulated by
+      # 2026-07 before a manual sweep). The branch -> tracker mapping is
+      # deterministic, so close it automatically instead of relying on memory.
+      - name: Close the tracker issue for the merged branch
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF:  ${{ github.event.pull_request.head.ref }}
+          PR_BASE:   ${{ github.event.pull_request.base.ref }}
+        with:
+          script: |
+            const prNum   = parseInt(process.env.PR_NUMBER, 10);
+            const branch  = process.env.HEAD_REF;
+            const baseRef = process.env.PR_BASE;
+
+            if (!branch) { console.log('No head ref; nothing to do.'); return; }
+
+            // branch-issue.yml stamps every tracker with this exact marker.
+            // Match on it (not the title) -- titles get edited, the marker does not.
+            const marker = `## Tracking branch \`${branch}\``;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            const trackers = issues.filter(i =>
+              !i.pull_request && typeof i.body === 'string' && i.body.includes(marker));
+
+            if (trackers.length === 0) {
+              console.log(`No open tracker found for branch '${branch}'.`);
+              return;
+            }
+
+            for (const t of trackers) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: t.number,
+                body: `Branch \`${branch}\` was merged into \`${baseRef}\` by #${prNum} — closing this branch tracker automatically.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: t.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              console.log(`Closed tracker #${t.number} for branch '${branch}'.`);
+            }
