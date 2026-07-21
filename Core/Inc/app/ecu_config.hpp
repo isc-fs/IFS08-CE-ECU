@@ -34,12 +34,19 @@ inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
 inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
-inline constexpr uint8_t  InvOffState          = 0;   // off/init -- climb with InvMode::Off (0x01) to reach standby
-inline constexpr uint8_t  InvStandbyState      = 3;
-inline constexpr uint8_t  InvReadyState        = 4;
+// NOTE on provenance: 3/4/10/11 are BENCH-PROVEN on this inverter (the fault
+// recovery chain 11 -> 0x0D -> 3 -> 0x04 -> 4 -> Active was observed). 0 and 13
+// come from the legacy IFS07 switch and are NOT confirmed here -- the W90
+// manual's state machine (section 9.1) lists OFF/READY/SPEED/TORQUE/CURRENT/
+// FAULT with no "standby" or "shutdown" at all, so treat them as unverified
+// until a real capture says otherwise (#148). They are kept because the pit-diag
+// VAL tables and the SIL use them, NOT because the values are established.
+inline constexpr uint8_t  InvOffState          = 0;   // UNVERIFIED (IFS07-derived)
+inline constexpr uint8_t  InvStandbyState      = 3;   // bench-proven
+inline constexpr uint8_t  InvReadyState        = 4;   // bench-proven
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
-inline constexpr uint8_t  InvShutdownState     = 13;  // shutdown (e.g. after TS-off) -- same "on" climb word (0x01)
+inline constexpr uint8_t  InvShutdownState     = 13;  // UNVERIFIED (IFS07-derived)
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;

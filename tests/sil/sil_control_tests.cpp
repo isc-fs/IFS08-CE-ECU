@@ -389,13 +389,15 @@ static void test_inverter_fault_recovery() {
     CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
 }
 
-// TS-off recovery WITHOUT a power cycle (the crucial IFS07 feature this ECU was
-// missing). After the tractive system is deactivated mid-drive the inverter drops
-// to OFF(0) / SHUTDOWN(13); the driver must re-do R2D (still required -- FSAE), and
-// the ECU must then climb the inverter back to torque on its own. The old code
-// commanded Ready(0x04) blindly in WaitInvStandby, which an OFF/SHUTDOWN inverter
-// ignores -> FSM stuck -> power cycle. The fix: reactively send Off(0x01) ("on")
-// until the inverter reaches standby, then Ready(0x04).
+// TS-off -> R2D re-arm -> torque, driven entirely through the FSM.
+//
+// NOTE: this suite does NOT prove the on-car TS-off recovery works -- that is
+// still open (#148) and needs a bench capture. What it pins down is the FSM's
+// side of the sequence: after ok_precharge falls the controller re-arms, and
+// throughout WaitInvStandby it commands Ready REGARDLESS of what the inverter
+// reports, which is what the W90 state machine (manual 9.1) documents --
+// OFF --(READY)--> READY is one direct transition. It also guards against
+// re-introducing #144's reactive Off-word climb, which contradicted that.
 static void test_inverter_ts_off_recovery() {
     std::printf("[inverter_ts_off_recovery]\n");
 
@@ -429,18 +431,25 @@ static void test_inverter_ts_off_recovery() {
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.state == CtrlState::WaitInvStandby, "R2D done -> WaitInvStandby");
 
-    // --- THE FIX: inverter still at OFF(0). Old code sent Ready and stalled here
-    //     forever; now we send Off(0x01) ("on") to climb it, staying in standby. ---
-    CHECK(o.inv_mode == InvMode::Off, "OFF(0) inverter -> command Off/0x01 (climb), NOT Ready");
-    CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby while inverter off");
+    // --- The inverter is still at OFF(0). Per the W90 manual state machine
+    //     (9.1), OFF --(App_State_Req = READY)--> READY is a SINGLE direct
+    //     transition -- so Ready is exactly the right word to send here.
+    //
+    //     REGRESSION GUARD: #144 made this reactive and sent Off(0x01) instead
+    //     when inv_state was OFF/SHUTDOWN, on the (IFS07-derived, never
+    //     confirmed) theory that an off inverter needs an "on" word first. That
+    //     holds an already-off inverter in OFF and never sends Ready, so it can
+    //     never climb. Reverted; these asserts stop it coming back. See #148. ---
+    CHECK(o.inv_mode == InvMode::Ready, "OFF(0) inverter -> command Ready (0x04), NOT Off");
+    CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby until the inverter is ready");
 
-    // SHUTDOWN(13) climbs with the same "on" word.
+    // Same for a SHUTDOWN(13) report -- still Ready, no special-casing.
     in.inv_state = InvShutdownState;             // 13
     o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.inv_mode == InvMode::Off, "SHUTDOWN(13) inverter -> command Off/0x01 (climb)");
-    CHECK(o.state == CtrlState::WaitInvStandby, "still climbing (not ready yet)");
+    CHECK(o.inv_mode == InvMode::Ready, "SHUTDOWN(13) inverter -> command Ready (0x04), NOT Off");
+    CHECK(o.state == CtrlState::WaitInvStandby, "still waiting (not ready yet)");
 
-    // Inverter reaches Standby(3): now command Ready(0x04).
+    // Inverter passes through Standby(3): still Ready, unchanged.
     in.inv_state = InvStandbyState;              // 3
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.inv_mode == InvMode::Ready, "STANDBY(3) inverter -> command Ready (0x04)");

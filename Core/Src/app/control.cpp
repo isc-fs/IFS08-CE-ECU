@@ -167,22 +167,23 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         rtds = true;                        // drive the RTDS buzzer
         break;
     case CtrlState::WaitInvStandby:
-        // Climb the inverter to Ready reactively, mirroring the legacy VCU's
-        // per-state inverter switch (pre-jarama main.c). After a TS-off + R2D
-        // re-arm the inverter can be sitting at OFF(0) or SHUTDOWN(13) -- and
-        // from there it will NOT accept Ready(0x04); it needs the "on" word
-        // (0x01) first to climb to Standby(3). Commanding Ready blindly (the old
-        // behaviour) left the FSM waiting forever for state 4, so a TS-off could
-        // only be recovered with a power cycle. Reactive climb:
-        //   OFF(0) / SHUTDOWN(13) -> Off (0x01)   (turn on -> standby)
-        //   otherwise (standby...) -> Ready (0x04) (standby -> ready)
-        // A latched fault (10/11) is overridden to its reset word by the reactive
-        // block below; reaching Ready(4) advances to Active (transition above).
-        if (in.inv_state == InvOffState || in.inv_state == InvShutdownState) {
-            mode = InvMode::Off;           // 0x01 -- "on": climb off/shutdown to standby
-        } else {
-            mode = InvMode::Ready;         // 0x04 -- standby -> ready
-        }
+        // Command Ready UNCONDITIONALLY, whatever the inverter currently reports.
+        //
+        // DO NOT make this reactive on inv_state again. #144 did exactly that --
+        // it sent Off(0x01) instead when the inverter reported OFF(0)/SHUTDOWN(13),
+        // on the theory that an off inverter needs an "on" word before it will
+        // accept Ready. That theory came from the legacy IFS07 switch and was
+        // never confirmed against this inverter. The W90 manual's state machine
+        // (section 9.1) contradicts it: OFF --(App_State_Req = READY)--> READY is
+        // a SINGLE direct transition, with no intermediate step. So commanding Off
+        // to an inverter already in OFF just holds it there and Ready is never
+        // sent -- it cannot climb at all. #144 did not fix the TS-off recovery it
+        // targeted and was a plausible way to make it worse. See #148.
+        //
+        // A latched fault (10/11) is still overridden to its reset word by the
+        // reactive block below -- that path IS bench-proven. Reaching Ready(4)
+        // advances to Active (transition above).
+        mode = InvMode::Ready;              // 0x04 -- OFF/standby -> ready
         break;
     case CtrlState::Active:
         // Healthy inverter -> drive. A faulted inverter (>= soft fault) gets its
