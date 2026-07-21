@@ -38,6 +38,15 @@ CAN_VAL(PitDiag_status, fsm_state, 3, "R2dDelay")
 CAN_VAL(PitDiag_status, fsm_state, 4, "WaitInvStandby")
 CAN_VAL(PitDiag_status, fsm_state, 5, "Active")
 CAN_VAL(PitDiag_status, fsm_state, 6, "AmsError")
-CAN_VAL(PitDiag_status, inv_state, 3, "Standby")
-CAN_VAL(PitDiag_status, inv_state, 4, "Ready")
+/* Inverter App_State_App (0x461). Only Standby/Ready were named, so the states
+ * that matter when the drive will NOT come up -- off, shutdown, the two faults --
+ * showed as bare numbers in the pit tool. Named here so a capture is readable
+ * on sight (#148: TS-off recovery). Mirrors ecu::config::Inv*State. */
+CAN_VAL(PitDiag_status, inv_state,  0, "Off")
+CAN_VAL(PitDiag_status, inv_state,  3, "Standby")
+CAN_VAL(PitDiag_status, inv_state,  4, "Ready")
+CAN_VAL(PitDiag_status, inv_state,  6, "TorqueEnable")
+CAN_VAL(PitDiag_status, inv_state, 10, "SoftFault")
+CAN_VAL(PitDiag_status, inv_state, 11, "HardFault")
+CAN_VAL(PitDiag_status, inv_state, 13, "Shutdown")
 #endif
