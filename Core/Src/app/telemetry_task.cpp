@@ -97,11 +97,11 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     put_u32(d, static_cast<uint32_t>(v.inv_rpm));
     send_dash(0x514u, d, 4u);
 
-    // 0x515/0x516 - inverter speed/current "actual". PLACEHOLDER (0): the
-    // inverter frames VehicleService decodes today (0x461/0x463/0x464/0x466)
-    // don't carry these; no real source exists in this firmware yet.
+    // 0x515/0x516 - mechanical speed (0x462) and D/Q current magnitude (0x463).
     std::memset(d, 0, sizeof(d));
+    put_u32(d, static_cast<uint32_t>(v.inv_speed_actual_rpm));
     send_dash(0x515u, d, 4u);
+    put_u32(d, static_cast<uint32_t>(v.inv_current_actual_A));
     send_dash(0x516u, d, 4u);
 
     std::memset(d, 0, sizeof(d));
@@ -168,6 +168,47 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     put_u16(&d[2], static_cast<uint16_t>(v.tmax_module[4]));
     put_u16(&d[4], static_cast<uint16_t>(v.tmax_dcdc));
     send_dash(0x521u, d, 6u);
+
+    // 0x522..0x527 - detailed NX inverter telemetry. Signed values retain
+    // two's-complement representation; D/Q currents retain their 1/32 A scale.
+    std::memset(d, 0, sizeof(d));
+    put_u16(&d[0], static_cast<uint16_t>(v.inv_current_d_raw));
+    put_u16(&d[2], static_cast<uint16_t>(v.inv_current_q_raw));
+    put_u16(&d[4], v.inv_volt_modulus_permil);
+    put_u16(&d[6], v.inv_temp_motor2);
+    send_dash(0x522u, d, 8u);
+
+    std::memset(d, 0, sizeof(d));
+    put_u16(&d[0], v.inv_dem_code);
+    d[2] = v.inv_dem_present ? 1u : 0u;
+    put_u16(&d[3], v.inv_pwrstg_bit_state);
+    d[5] = v.inv_foc_bit_state;
+    send_dash(0x523u, d, 6u);
+
+    std::memset(d, 0, sizeof(d));
+    put_u32(&d[0], v.inv_uptime_ms);
+    d[4] = v.inv_core0_load_pct;
+    d[5] = v.inv_core1_load_pct;
+    send_dash(0x524u, d, 6u);
+
+    std::memset(d, 0, sizeof(d));
+    put_u16(&d[0], v.inv_kl30_mV);
+    d[2] = v.inv_cmd_src;
+    d[3] = v.inv_ctrl_type;
+    d[4] = v.inv_ctrl_mode;
+    d[5] = v.inv_pos_fb_src;
+    send_dash(0x525u, d, 6u);
+
+    std::memset(d, 0, sizeof(d));
+    put_u32(&d[0], static_cast<uint32_t>(v.inv_ac_bus_power_W));
+    put_u16(&d[4], static_cast<uint16_t>(v.inv_torque_max_feas_Ndm));
+    put_u16(&d[6], static_cast<uint16_t>(v.inv_torque_est_Nm));
+    send_dash(0x526u, d, 8u);
+
+    std::memset(d, 0, sizeof(d));
+    put_u16(&d[0], static_cast<uint16_t>(v.inv_setpoint_d_raw));
+    put_u16(&d[2], static_cast<uint16_t>(v.inv_setpoint_q_raw));
+    send_dash(0x527u, d, 4u);
 }
 
 // Populate the snapshot inputs from the shared vehicle state + the ControlTask

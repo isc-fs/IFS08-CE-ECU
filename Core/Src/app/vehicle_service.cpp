@@ -18,6 +18,30 @@ std::int16_t be16_s(const std::uint8_t* d) noexcept {
     return static_cast<std::int16_t>(be16(d));
 }
 
+std::uint16_t le16(const std::uint8_t* d) noexcept {
+    return static_cast<std::uint16_t>(d[0] | (static_cast<std::uint16_t>(d[1]) << 8));
+}
+
+std::int16_t le16_s(const std::uint8_t* d) noexcept {
+    return static_cast<std::int16_t>(le16(d));
+}
+
+std::uint32_t isqrt(std::uint32_t n) noexcept {
+    std::uint32_t result = 0u;
+    std::uint32_t bit = 1u << 30;
+    while (bit > n) bit >>= 2;
+    while (bit != 0u) {
+        if (n >= result + bit) {
+            n -= result + bit;
+            result = (result >> 1) + bit;
+        } else {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+    return result;
+}
+
 }  // namespace
 
 namespace ecu {
@@ -49,6 +73,18 @@ std::uint16_t VehicleService::decode_ams_min_cell(const std::uint8_t* d) noexcep
 
 std::uint8_t VehicleService::decode_inv_state(const std::uint8_t* d) noexcept {
     return static_cast<std::uint8_t>(d[4] & 0x7Fu);          // App_State_App @ bit 32, 7 bits
+}
+
+std::int32_t VehicleService::decode_inv_speed_actual(const std::uint8_t* d) noexcept {
+    return static_cast<std::int32_t>(le16(&d[2])) - 32767;
+}
+
+std::int32_t VehicleService::decode_inv_current_actual_A(const std::uint8_t* d) noexcept {
+    const std::int32_t id = le16_s(&d[0]);
+    const std::int32_t iq = le16_s(&d[2]);
+    const std::uint32_t magnitude_raw = isqrt(static_cast<std::uint32_t>(
+        static_cast<std::int64_t>(id) * id + static_cast<std::int64_t>(iq) * iq));
+    return static_cast<std::int32_t>((magnitude_raw + 16u) / 32u);
 }
 
 std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcept {
@@ -102,20 +138,47 @@ bool VehicleService::is_fresh(std::uint32_t now, std::uint32_t last,
 bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
     // --- inverter bus (FDCAN1) ---
     if (f.bus == static_cast<std::uint8_t>(CanBus::Inv)) {
+        if (f.id == config::InvRxRuntimeId) {               // 0x460
+            if (f.dlc < 6) return false;
+            state_.inv_uptime_ms = static_cast<std::uint32_t>(f.data[0]) |
+                                   (static_cast<std::uint32_t>(f.data[1]) << 8) |
+                                   (static_cast<std::uint32_t>(f.data[2]) << 16) |
+                                   (static_cast<std::uint32_t>(f.data[3]) << 24);
+            state_.inv_core0_load_pct = f.data[4];
+            state_.inv_core1_load_pct = f.data[5];
+            state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
         if (f.id == config::InvRxStateId) {                 // 0x461
-            if (f.dlc < 5) return false;
+            if (f.dlc < 7) return false;
             state_.inv_state     = decode_inv_state(f.data);
             state_.inv_error     = f.data[2];               // DEM_Code low byte
+            state_.inv_dem_code  = static_cast<std::uint16_t>(le16(&f.data[2]) & 0x7FFFu);
             // DEM_Present (byte3 bit7): fault active NOW vs latched history. The
             // NX boots latched (DEM_Code set, DEM_Present clear) -- this bit is
-            // what tells the two apart. dlc>=5 guaranteed by the guard above.
+            // what tells the two apart. dlc>=7 guaranteed by the guard above.
             state_.inv_dem_present = (f.data[3] & 0x80u) != 0u;
+            state_.inv_foc_bit_state = static_cast<std::uint8_t>(
+                (f.data[4] >> 7) | (static_cast<std::uint16_t>(f.data[5]) << 1));
+            state_.inv_pwrstg_bit_state = static_cast<std::uint16_t>(
+                (f.data[5] >> 7) | (static_cast<std::uint16_t>(f.data[6]) << 1));
+            state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxSpeedId) {                 // 0x462
+            if (f.dlc < 4) return false;
+            state_.inv_speed_actual_rpm = decode_inv_speed_actual(f.data);
             state_.last_inv_tick = f.timestamp_ms;
             return true;
         }
         if (f.id == config::InvRxRpmId) {                   // 0x463
             if (f.dlc < 8) return false;
             state_.inv_rpm       = decode_inv_rpm(f.data);
+            state_.inv_current_d_raw = le16_s(&f.data[0]);
+            state_.inv_current_q_raw = le16_s(&f.data[2]);
+            state_.inv_current_actual_A = decode_inv_current_actual_A(f.data);
+            state_.inv_volt_modulus_permil = static_cast<std::uint16_t>(
+                f.data[4] | ((static_cast<std::uint16_t>(f.data[5]) & 0x0Fu) << 8));
             state_.last_inv_tick = f.timestamp_ms;
             return true;
         }
@@ -128,11 +191,40 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_inv_tick   = f.timestamp_ms;
             return true;
         }
-        if (f.id == config::InvRxDcBusId) {                 // 0x466
+        if (f.id == config::InvRxControlId) {               // 0x465
             if (f.dlc < 4) return false;
+            state_.inv_cmd_src    = static_cast<std::uint8_t>(f.data[0] & 0x0Fu);
+            state_.inv_ctrl_type  = static_cast<std::uint8_t>(f.data[0] >> 4);
+            state_.inv_ctrl_mode  = static_cast<std::uint8_t>(f.data[1] & 0x0Fu);
+            state_.inv_pos_fb_src = static_cast<std::uint8_t>(f.data[1] >> 4);
+            state_.inv_kl30_mV    = le16(&f.data[2]);
+            state_.last_inv_tick  = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxDcBusId) {                 // 0x466
+            if (f.dlc < 6) return false;
             state_.inv_dc_bus_V      = decode_inv_dc_bus_V(f.data);
+            const std::uint16_t power_bits = static_cast<std::uint16_t>(
+                (f.data[3] >> 2) | (static_cast<std::uint16_t>(f.data[4]) << 6) |
+                ((static_cast<std::uint16_t>(f.data[5]) & 0x03u) << 14));
+            const std::int32_t power_raw = static_cast<std::int16_t>(power_bits);
+            state_.inv_ac_bus_power_W = (power_raw * 32767 + (power_raw >= 0 ? 500 : -500)) / 1000;
             state_.last_vconfig_tick = f.timestamp_ms;
             state_.last_inv_tick     = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxSetpointId) {              // 0x467
+            if (f.dlc < 6) return false;
+            state_.inv_torque_max_feas_Ndm = le16_s(&f.data[0]);
+            state_.inv_setpoint_d_raw = le16_s(&f.data[2]);
+            state_.inv_setpoint_q_raw = le16_s(&f.data[4]);
+            state_.last_inv_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxTorqueId) {                // 0x468
+            if (f.dlc < 4) return false;
+            state_.inv_torque_est_Nm = le16_s(&f.data[2]);
+            state_.last_inv_tick = f.timestamp_ms;
             return true;
         }
         return false;

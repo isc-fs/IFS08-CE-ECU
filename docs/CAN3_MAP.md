@@ -5,9 +5,9 @@ Mapa de las tramas que la ECU publica hacia el dashboard por `CAN_BUS_DASH`
 
 Importante:
 
-- `TelemetryTask` arma las 18 tramas (`0x510..0x521`) que espera
-  `IFS08-CE-DASH` (`display_telemetry_can_config.c`), pero **no todos los
-  campos tienen fuente real hoy en el firmware de la ECU**.
+- `TelemetryTask` arma 24 tramas (`0x510..0x527`). `0x510..0x521` mantienen
+  el contrato existente del dash y `0x522..0x527` añaden el detalle del
+  inversor que ya entra por CAN1.
 - Los campos marcados **PLACEHOLDER** se mandan en `0` porque el dato no
   existe todavia en la ECU (no se decodifica ese CAN RX del inversor/AMS, o
   no hay driver GPS). No confundir un `0` de placeholder con una lectura
@@ -23,13 +23,13 @@ Origen en codigo:
 
 1. `TelemetryTask` hace snapshot de `VehicleService` (+ lee los `g_last_*`
    que `ControlTask` mirror-ea cada 10 ms: pedales, boton, flags EV.2.3/T11.8.9)
-2. construye las 18 tramas CAN3 de dashboard
+2. construye las 24 tramas CAN3 de dashboard
 3. las encola en `can_tx_queue` con `can_tx_post()`
 4. `CanTxTask` las transmite por `FDCAN3`
 
 Cadencia:
 
-- todas las tramas (`0x510..0x521`) se publican cada `200 ms`, en el mismo
+- todas las tramas (`0x510..0x527`) se publican cada `200 ms`, en el mismo
   ciclo de `TelemetryTask` -- no hay sub-tasa de 500 ms para el grupo AMS/GPS
   como en el contrato legacy (no hay `DashTask` ni cola de telemetria propia
   en el firmware actual)
@@ -106,23 +106,24 @@ DLC: `4`
 Bus: `FDCAN3`
 DLC: `4`
 
-**PLACEHOLDER (`0`)**: el inversor no reporta esta senal en ninguno de los
-frames que `VehicleService` decodifica hoy (`0x461/0x463/0x464/0x466`).
+Velocidad mecánica decodificada de `EMC_TX_STATE_3` (`0x462`). El inversor la
+codifica como `u16 LE - 32767`.
 
 | Bytes | Campo | Origen actual |
 |---|---|---|
-| 0-3 | `inv_speed_actual` LE | placeholder `0` |
+| 0-3 | `inv_speed_actual_rpm` s32 LE | `VehicleState.inv_speed_actual_rpm` (rpm) |
 
 ### `0x516` - corriente inversor
 
 Bus: `FDCAN3`
 DLC: `4`
 
-**PLACEHOLDER (`0`)**: mismo motivo que `0x515`.
+Magnitud de la corriente medida: `round(sqrt(Id² + Iq²))`, en amperios. `Id`
+e `Iq` proceden de `0x463` y tienen escala original `1/32 A/bit`.
 
 | Bytes | Campo | Origen actual |
 |---|---|---|
-| 0-3 | `inv_current_actual` LE | placeholder `0` |
+| 0-3 | `inv_current_actual_A` s32 LE | `VehicleState.inv_current_actual_A` (A) |
 
 ### `0x517` - estados ECU y AMS
 
@@ -269,11 +270,83 @@ sea que el AMS mande.
 | 2-3 | `temp_max_modulo[4]` LE | `VehicleState.tmax_module[4]` (0x137) |
 | 4-5 | `temp_dcdc` LE | `VehicleState.tmax_dcdc` (0x137, stub AMS) |
 
+### `0x522` - medidas D/Q y temperatura motor 2
+
+Bus: `FDCAN3`
+
+DLC: `8`
+
+| Bytes | Campo | Tipo / escala | Origen |
+|---|---|---|---|
+| 0-1 | `current_d_raw` | s16 LE, `1/32 A/bit` | 0x463 |
+| 2-3 | `current_q_raw` | s16 LE, `1/32 A/bit` | 0x463 |
+| 4-5 | `volt_modulus_permil` | u16 LE, permil | 0x463 |
+| 6-7 | `temp_motor2_raw` | u16 LE, `°C = raw - 50` | 0x464 |
+
+### `0x523` - diagnóstico inversor
+
+Bus: `FDCAN3`
+
+DLC: `6`
+
+| Bytes | Campo | Tipo | Origen |
+|---|---|---|---|
+| 0-1 | `dem_code` | u16 LE, 15 bits válidos | 0x461 |
+| 2 | `dem_present` | bool | 0x461 |
+| 3-4 | `pwrstg_bit_state` | u16 LE, 9 bits válidos | 0x461 |
+| 5 | `foc_bit_state` | u8 | 0x461 |
+
+### `0x524` - carga de ejecución inversor
+
+Bus: `FDCAN3`
+
+DLC: `6`
+
+| Bytes | Campo | Tipo | Origen |
+|---|---|---|---|
+| 0-3 | `uptime_ms` | u32 LE, ms | 0x460 |
+| 4 | `core0_load_pct` | u8, % | 0x460 |
+| 5 | `core1_load_pct` | u8, % | 0x460 |
+
+### `0x525` - configuración de control inversor
+
+Bus: `FDCAN3`
+
+DLC: `6`
+
+| Bytes | Campo | Tipo | Origen |
+|---|---|---|---|
+| 0-1 | `kl30_mV` | u16 LE, mV | 0x465 |
+| 2 | `cmd_src` | u8 | 0x465 |
+| 3 | `ctrl_type` | u8 | 0x465 |
+| 4 | `ctrl_mode` | u8 | 0x465 |
+| 5 | `pos_fb_src` | u8 | 0x465 |
+
+### `0x526` - potencia y par inversor
+
+Bus: `FDCAN3`
+
+DLC: `8`
+
+| Bytes | Campo | Tipo / unidad | Origen |
+|---|---|---|---|
+| 0-3 | `ac_bus_power_W` | s32 LE, W | 0x466 |
+| 4-5 | `torque_max_feas_Ndm` | s16 LE, Ndm | 0x467 |
+| 6-7 | `torque_est_Nm` | s16 LE, Nm | 0x468 |
+
+### `0x527` - consignas D/Q inversor
+
+Bus: `FDCAN3`
+
+DLC: `4`
+
+| Bytes | Campo | Tipo / escala | Origen |
+|---|---|---|---|
+| 0-1 | `setpoint_d_raw` | s16 LE, `1/32 A/bit` | 0x467 |
+| 2-3 | `setpoint_q_raw` | s16 LE, `1/32 A/bit` | 0x467 |
+
 ## Pendiente para cerrar los placeholders restantes
 
-- **Velocidad/corriente inversor (`0x515/0x516`)**: agregar el/los frame(s)
-  RX del inversor que traigan esas senales (si el protocolo NX/EMC los
-  expone) y decodificarlos en `vehicle_service.cpp`.
 - **SOC (`0x518` byte 0)**: no depende de la ECU -- el AMS no tiene estimador
   de SOC todavia (`IFS08-CE-AMS acu_tx_encoders.hpp`: "0x130 SoC % -- DEFERRED,
   no estimator"). Va a seguir en `0` hasta que el AMS lo implemente.

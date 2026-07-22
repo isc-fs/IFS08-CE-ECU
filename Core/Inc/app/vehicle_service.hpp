@@ -2,8 +2,7 @@
 //
 // The vehicle RX state the ECU receives off the two CAN buses, held in one
 // lock-free single-writer service (the AMS VehicleService pattern):
-//   - inverter (FDCAN1 / EMC): App_State (0x461), rpm (0x463), temps (0x464),
-//     DC-bus volts (0x466)
+//   - inverter (FDCAN1 / EMC): standard telemetry 0x460..0x468
 //   - AMS / ACU (FDCAN2): ok_precharge (0x020), min cell mV (0x12C), FSM (0x4A0)
 //
 // Single writer: CanRxTask (the only task that calls update_from_frame).
@@ -26,15 +25,36 @@ namespace ecu {
 
 struct VehicleState {
     // --- inverter (FDCAN1 / EMC) ---
+    std::uint32_t inv_uptime_ms     = 0;  // 0x460
+    std::uint8_t  inv_core0_load_pct = 0;
+    std::uint8_t  inv_core1_load_pct = 0;
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
+    std::uint16_t inv_dem_code      = 0;  // 0x461 DEM_Code (15 bits)
     bool          inv_dem_present   = false;  // 0x461 byte3 bit7: DEM active NOW vs latched history
+    std::uint8_t  inv_foc_bit_state = 0;  // 0x461
+    std::uint16_t inv_pwrstg_bit_state = 0;  // 0x461 (9 bits)
+    std::int32_t  inv_speed_actual_rpm = 0;  // 0x462 mechanical rpm
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
+    std::int16_t  inv_current_d_raw = 0;  // 0x463, 1/32 A per bit
+    std::int16_t  inv_current_q_raw = 0;  // 0x463, 1/32 A per bit
+    std::int32_t  inv_current_actual_A = 0;  // rounded magnitude sqrt(Id^2 + Iq^2)
+    std::uint16_t inv_volt_modulus_permil = 0;  // 0x463, 12 bits
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
     std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
     std::uint8_t  inv_temp_motor2   = 0;  // 0x464 motor temp 2      (raw)
+    std::uint16_t inv_kl30_mV       = 0;  // 0x465
+    std::uint8_t  inv_cmd_src       = 0;
+    std::uint8_t  inv_ctrl_type     = 0;
+    std::uint8_t  inv_ctrl_mode     = 0;
+    std::uint8_t  inv_pos_fb_src    = 0;
+    std::int32_t  inv_ac_bus_power_W = 0;  // 0x466, rounded integer watts
+    std::int16_t  inv_torque_max_feas_Ndm = 0;  // 0x467
+    std::int16_t  inv_setpoint_d_raw = 0;  // 0x467, 1/32 A per bit
+    std::int16_t  inv_setpoint_q_raw = 0;  // 0x467, 1/32 A per bit
+    std::int16_t  inv_torque_est_Nm = 0;  // 0x468
     std::uint32_t last_inv_tick     = 0;  // any inverter frame
     std::uint32_t last_vconfig_tick = 0;  // 0x466 seen -> gates Precharge
     // --- AMS / ACU (FDCAN2) ---
@@ -80,7 +100,9 @@ public:
     static std::uint8_t  decode_ams_fsm_state(const std::uint8_t* d) noexcept; // 0x4A0 byte0
     static std::uint16_t decode_ams_min_cell(const std::uint8_t* d) noexcept;  // 0x4A0 BE16 @ b4-5
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
+    static std::int32_t  decode_inv_speed_actual(const std::uint8_t* d) noexcept; // 0x462 offset binary
     static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
+    static std::int32_t  decode_inv_current_actual_A(const std::uint8_t* d) noexcept; // 0x463 D/Q magnitude
     static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
     static std::int32_t  decode_udv_torque_cmd(const std::uint8_t* d) noexcept; // 0x507 s32 LE (integer %)
 

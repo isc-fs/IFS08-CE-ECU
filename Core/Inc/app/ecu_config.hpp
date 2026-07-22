@@ -154,10 +154,15 @@ inline constexpr uint32_t AcuTmaxModuleBId     = 0x137u;     // AMS per-module t
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t UdvTorqueCmdId       = 0x507u;     // uDV torque command (s32 LE, integer %)
 inline constexpr uint32_t UdvR2dRequestId      = 0x510u;     // uDV DV ready-to-drive request
+inline constexpr uint32_t InvRxRuntimeId       = 0x460u;     // EMC_TX_STATE_1 (uptime + core loads)
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
+inline constexpr uint32_t InvRxSpeedId         = 0x462u;     // EMC_TX_STATE_3 (mechanical speed, offset binary)
 inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)
 inline constexpr uint32_t InvRxTempId          = 0x464u;     // EMC_TX_STATE_5 (board/stage/motor temps, raw -50 = degC)
+inline constexpr uint32_t InvRxControlId       = 0x465u;     // EMC_TX_STATE_6 (control modes + KL30)
 inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (DCBus_Voltage_V)
+inline constexpr uint32_t InvRxSetpointId      = 0x467u;     // EMC_TX_STATE_8 (feasible torque + D/Q setpoints)
+inline constexpr uint32_t InvRxTorqueId        = 0x468u;     // EMC_TX_STATE_9 (estimated torque)
 
 // ---- Inverter (NX/EMC) TX setpoints (FDCAN1, standard IDs) -----------------
 // IDs / mode words / byte layout / torque map all verified against the original

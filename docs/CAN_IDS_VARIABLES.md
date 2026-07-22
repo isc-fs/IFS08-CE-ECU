@@ -103,77 +103,22 @@ Estado actual:
 
 ### 3.3 Inversor -> ECU
 
-#### ID `0x461` - `TX_STATE_2`
+Todas son tramas estándar del inversor en `CAN_BUS_INV` (`FDCAN1`). CAN1 ya
+las acepta; `VehicleService` decodifica ahora el rango completo del DBC:
 
-- Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Direccion: inversor -> ECU
-- Uso: estado principal del inversor
+| ID | Estado global actualizado |
+|---|---|
+| `0x460` | uptime y carga de los cores 0/1 |
+| `0x461` | estado App, DEM completo/presente y estados FOC/potencia |
+| `0x462` | velocidad mecánica en rpm (`u16 LE - 32767`) |
+| `0x463` | corriente D/Q (`1/32 A`), magnitud, módulo de tensión y rpm eléctrica |
+| `0x464` | temperaturas de placa, etapa y motores 1/2 (`°C = raw - 50`) |
+| `0x465` | fuente/modo de control, fuente de posición y KL30 en mV |
+| `0x466` | tensión DC y potencia AC en W; además marca VDC configurado |
+| `0x467` | par máximo factible y consignas D/Q (`1/32 A`) |
+| `0x468` | par estimado en Nm |
 
-| Byte | Contenido | Significado |
-|---|---|---|
-| `data[2]` | error | `inv_error` cuando `inv_state == 10` o `11` |
-| `data[4]` nibble bajo | estado | `inv_state` |
-
-#### ID `0x463` - `TX_STATE_4`
-
-- Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Direccion: inversor -> ECU
-- DLC esperado: `8`
-- Uso: rpm del inversor
-
-| Byte | Contenido | Significado |
-|---|---|---|
-| `data[5]` | byte bajo | `inv_rpm` |
-| `data[6]` | byte medio | `inv_rpm` |
-| `data[7]` nibble bajo | nibble alto | `inv_rpm` |
-
-Nota: el firmware recompone un entero con signo de 20 bits.
-
-#### ID `0x464` - `TX_STATE_5`
-
-- Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Direccion: inversor -> ECU
-- DLC esperado: `8`
-- Uso: temperaturas del inversor
-
-| Byte | Contenido | Significado |
-|---|---|---|
-| `data[0]` | temperatura | `inv_motor_temp` |
-| `data[1]` | temperatura | `inv_igbt_temp` |
-| `data[2]` | temperatura | `inv_air_temp` |
-
-#### ID `0x465` - `TX_STATE_6`
-
-- Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Direccion: inversor -> ECU
-- DLC esperado: `8`
-- Uso: velocidad y corriente medidas
-
-| Byte | Contenido | Significado |
-|---|---|---|
-| `data[2]` | byte bajo | `inv_speed_actual` |
-| `data[3]` | byte alto | `inv_speed_actual` |
-| `data[4]` | byte bajo | `inv_current_actual` |
-| `data[5]` | byte alto | `inv_current_actual` |
-
-Nota: ambos campos se leen en little-endian de 16 bits y se guardan como
-`int32_t`.
-
-#### ID `0x466` - `TX_STATE_7`
-
-- Bus: `CAN_BUS_INV` (`FDCAN1`)
-- Direccion: inversor -> ECU
-- DLC esperado: `6`
-- Uso: tension de bus DC y marca de VDC listo
-
-| Byte | Contenido | Significado |
-|---|---|---|
-| `data[2]` | byte bajo | `inv_dc_bus_voltage` |
-| `data[3]` | byte alto | `inv_dc_bus_voltage` |
-
-Ademas, al recibir esta trama valida:
-
-- `inv_vdc_ready = 1`
+Los offsets de bit, signos y escalas siguen `NX0001_STS04_A16.dbc`.
 
 ### 3.4 AMS -> ECU
 
@@ -417,12 +362,15 @@ La salida al dash va por `CAN_BUS_DASH` (`FDCAN3`).
 ### ID `0x515`
 
 - DLC: `4`
-- Uso: `inv_speed_actual` completo
+- Uso: velocidad mecánica real, `int32_t` LE en rpm, procedente de `0x462`
 
 ### ID `0x516`
 
 - DLC: `4`
-- Uso: `inv_current_actual` completo
+- Uso: magnitud `sqrt(Id²+Iq²)`, `int32_t` LE en amperios, procedente de `0x463`
+
+Los IDs `0x522..0x527` transportan el detalle restante del inversor. Su mapa
+de bytes, tipos y escalas se mantiene en `docs/CAN3_MAP.md`.
 
 ## 6. Snapshot interno (`app_inputs_t`)
 

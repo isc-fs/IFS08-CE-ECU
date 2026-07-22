@@ -387,9 +387,7 @@ static void test_inverter_fault_recovery() {
     CHECK(md.data[2] == 0x0D, "App_State_Req = InvMode::HardFaultReset (0x0D)");
 }
 
-// Inverter RX decode: 0x463 rpm (20-bit signed @ bit 44 -- the bit-44 fix, byte
-// patterns verified vs the NX DBC with cantools) and 0x464 temps (raw bytes pass
-// through; the DBC -50 offset turns them into degC on decode).
+// Inverter RX decode: standard NX telemetry 0x460..0x468.
 static void test_inverter_rx() {
     std::printf("[inverter_rx]\n");
 
@@ -405,12 +403,34 @@ static void test_inverter_rx() {
 
     VehicleService& vs = VehicleService::instance();
 
+    CanFrame runtime{};
+    runtime.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    runtime.id = InvRxRuntimeId; runtime.dlc = 6;
+    runtime.data[0]=0x78; runtime.data[1]=0x56; runtime.data[2]=0x34; runtime.data[3]=0x12;
+    runtime.data[4]=37; runtime.data[5]=42;
+    CHECK(vs.update_from_frame(runtime), "0x460 accepted");
+
+    CanFrame state{};
+    state.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    state.id = InvRxStateId; state.dlc = 7;
+    state.data[2]=0x34; state.data[3]=0x92;  // DEM 0x1234 + present
+    state.data[4]=0x85; state.data[5]=0xD2; state.data[6]=0xAA; // app=5, FOC=0xA5, stage=0x155
+    CHECK(vs.update_from_frame(state), "0x461 accepted");
+
+    CanFrame speed{};
+    speed.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    speed.id = InvRxSpeedId; speed.dlc = 4;
+    speed.data[2]=0x84; speed.data[3]=0x7F;  // 32644 - 32767 = -123 rpm
+    CHECK(vs.update_from_frame(speed), "0x462 accepted");
+
     // rpm flows through the RX path (0x463) into the snapshot.
     CanFrame r{};
     r.bus = static_cast<std::uint8_t>(CanBus::Inv);
     r.id  = InvRxRpmId;          // 0x463
     r.dlc = 8;
-    r.data[5] = 0xF0; r.data[6] = 0xFF; r.data[7] = 0x07;   // 32767
+    r.data[0] = 96; r.data[2] = 128;  // Id=3 A, Iq=4 A
+    r.data[4] = 0xBC; r.data[5] = 0xFA; r.data[6] = 0xFF; r.data[7] = 0x07;
+    // modulus=0xABC; rpm=32767 (upper nibble of byte5 onward)
     CHECK(vs.update_from_frame(r), "0x463 accepted");
     CHECK(vs.snapshot().inv_rpm == 32767, "rpm reaches the snapshot");
 
@@ -421,9 +441,50 @@ static void test_inverter_rx() {
     t.dlc = 4;
     t.data[0]=92; t.data[1]=93; t.data[2]=84; t.data[3]=0xFF; // 42/43/34/205 degC
     CHECK(vs.update_from_frame(t), "0x464 accepted");
+    CanFrame control{};
+    control.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    control.id = InvRxControlId; control.dlc = 4;
+    control.data[0]=0xBA; control.data[1]=0xDC; control.data[2]=0x34; control.data[3]=0x12;
+    CHECK(vs.update_from_frame(control), "0x465 accepted");
+
+    CanFrame dc{};
+    dc.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    dc.id = InvRxDcBusId; dc.dlc = 6;
+    dc.data[2]=0xF4; dc.data[3]=0xA1; dc.data[4]=0x0F; // Vdc=500, power raw=1000
+    CHECK(vs.update_from_frame(dc), "0x466 accepted");
+
+    CanFrame setpoint{};
+    setpoint.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    setpoint.id = InvRxSetpointId; setpoint.dlc = 6;
+    setpoint.data[0]=0xD2; setpoint.data[1]=0x04; // 1234 Ndm
+    setpoint.data[2]=0xC0; setpoint.data[3]=0xFF; // -64 raw = -2 A
+    setpoint.data[4]=0x40; setpoint.data[5]=0x00; // 64 raw = 2 A
+    CHECK(vs.update_from_frame(setpoint), "0x467 accepted");
+
+    CanFrame torque{};
+    torque.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    torque.id = InvRxTorqueId; torque.dlc = 4;
+    torque.data[2]=0x85; torque.data[3]=0xFF; // -123 Nm
+    CHECK(vs.update_from_frame(torque), "0x468 accepted");
+
     const VehicleState s = vs.snapshot();
+    CHECK(s.inv_uptime_ms==0x12345678u && s.inv_core0_load_pct==37 && s.inv_core1_load_pct==42,
+          "runtime and core loads stored");
+    CHECK(s.inv_dem_code==0x1234 && s.inv_dem_present && s.inv_state==5, "DEM and app state stored");
+    CHECK(s.inv_foc_bit_state==0xA5 && s.inv_pwrstg_bit_state==0x155, "unaligned state bitfields decoded");
+    CHECK(s.inv_speed_actual_rpm==-123, "mechanical speed decoded");
+    CHECK(s.inv_current_d_raw==96 && s.inv_current_q_raw==128 && s.inv_current_actual_A==5,
+          "D/Q currents and 3-4-5 magnitude decoded");
+    CHECK(s.inv_volt_modulus_permil==0xABCu, "voltage modulus decoded");
     CHECK(s.inv_temp_board==92 && s.inv_temp_pwrstg==93, "board/stage temps stored raw");
     CHECK(s.inv_temp_motor1==84 && s.inv_temp_motor2==0xFF, "motor temps stored raw (0xFF = disconnect sentinel)");
+    CHECK(s.inv_cmd_src==0xA && s.inv_ctrl_type==0xB && s.inv_ctrl_mode==0xC && s.inv_pos_fb_src==0xD,
+          "control selectors decoded");
+    CHECK(s.inv_kl30_mV==0x1234, "KL30 voltage decoded");
+    CHECK(s.inv_dc_bus_V==500 && s.inv_ac_bus_power_W==32767, "DC voltage and AC power decoded");
+    CHECK(s.inv_torque_max_feas_Ndm==1234 && s.inv_setpoint_d_raw==-64 && s.inv_setpoint_q_raw==64,
+          "feasible torque and D/Q setpoints decoded");
+    CHECK(s.inv_torque_est_Nm==-123, "estimated torque decoded");
 }
 
 // DV drive mode (#17): the trigger IS the mode decision at WaitStartBrake --
