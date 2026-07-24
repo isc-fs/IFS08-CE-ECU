@@ -40,9 +40,25 @@ jobs:
                Followed by an optional colon and `#N`. */
             const pattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
 
+            /* Negation guard. GitHub's own keyword handling (and the regex
+               above) has no notion of negation, so a PR body that says
+               "this does NOT fix #123" closes #123 anyway. That is not
+               hypothetical: PR #155 said "It does not fix #148" precisely to
+               stop it being mistaken for a fix, and that sentence closed #148
+               on merge. Skip a match when the words just before it negate it. */
+            /* "not" alone covers "does not" / "will not" / "do not"; the
+               n't form is spelled with a character class so a smart apostrophe
+               (doesn’t), which GitHub bodies routinely contain, still matches. */
+            const NEGATION = /(?:\b(?:not|never|cannot|without)|n['\u2019]t)\s*$/i;
+
             const text = `${title}\n${body}`;
             const numbers = new Set();
             for (const m of text.matchAll(pattern)) {
+              const before = text.slice(Math.max(0, m.index - 40), m.index);
+              if (NEGATION.test(before)) {
+                console.log(`Skipping #${m[1]}: closing keyword is negated ("...${before.trim().slice(-30)}").`);
+                continue;
+              }
               numbers.add(parseInt(m[1], 10));
             }
 
