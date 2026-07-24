@@ -62,9 +62,12 @@ WaitStartBrake    →  MANUAL: (start_button && brake_raw > BrakeArmRaw)
                      el modo para todo el ciclo de marcha. Manual tiene precedencia.
 R2dDelay          →  (RTDS R2dSoundMs = 2000 ms)
 WaitInvStandby    →  (inv_state == InvReadyState=4)
-                     Sube el inversor de forma REACTIVA: OFF(0)/SHUTDOWN(13) → Off(0x01)
-                     ("on"), si no → Ready(0x04). Sin esto, tras un TS-off el inversor
-                     se queda en off y la FSM espera para siempre (hacía falta power cycle).
+                     Comanda Ready(0x04) INCONDICIONALMENTE, reporte lo que reporte el
+                     inversor (incl. OFF/SHUTDOWN): el manual W90 §9.1 hace
+                     OFF --(Ready)--> READY en una transición directa. NO volver a hacerlo
+                     reactivo: #144 mandó Off(0x01) a un inversor apagado, no arregló el
+                     TS-off y se revirtió en #155. El fallo latcheado (10/11) sí se
+                     sobrescribe con su reset word en el bloque reactivo de abajo. Ver #148.
 Active            →  torque runtime; si !ok_precharge → vuelve a Precharge
                      En DV el torque viene del 0x507 (NUNCA fallback a APPS; stale → 0).
 AmsError          →  entrada desde CUALQUIER estado si in.ams_error (latcheado);
