@@ -17,10 +17,17 @@
  * A flight build reports ALL ZERO. stub_no_ams is the load-bearing one -- it
  * forces ok_precharge true, which is what 0x504 VCU_ts_active reports to the
  * uDV, so a set bit means "TS-active on this ECU is FAKE, do not trust it".
- * (stub_brake was dropped when TelemetryTask took a task-liveness bit -- it is
- * the only stub that disables NO safety gate; StubBrakeRaw!=0 shows on 0x701.)
  *
- * reset_cause: 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG, 5 WWDG, 6 LPWR/BOR.
+ * byte5 b3 stub_brake (#137) -- the 4th stub announce, restored here. It was
+ * dropped when TelemetryTask took the 5th task-liveness bit and byte4 filled up.
+ * It disables NO safety gate (StubBrakeRaw!=0 just injects a fake brake_raw,
+ * also visible on 0x701), so it lives outside the byte4 safety-stub cluster --
+ * in the room freed by narrowing reset_cause to its true width (below).
+ *
+ * reset_cause (byte5 b0-b2, 3 bits): 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG,
+ * 5 WWDG, 6 LPWR/BOR. The STM32H7 has exactly these seven causes, so 3 bits is
+ * permanently sufficient -- the old 8-bit field wasted five bits, one of which
+ * is now stub_brake. (b4-b7 of byte5 stay free for future announces.)
  * last_fault: sticky sentinel latched in RTC backup across the reset (0 none).
  */
 
@@ -38,7 +45,9 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
     FIELD_LE_BITS (stub_no_ams,      uint8_t, 37, 1, 1, 0, "bit")
     FIELD_LE_BITS (stub_no_inverter, uint8_t, 38, 1, 1, 0, "bit")
     FIELD_LE_BITS (stub_start,       uint8_t, 39, 1, 1, 0, "bit")
-    FIELD_LE (reset_cause,   uint8_t,  5, 8,  1, 0, "enum")
+    /* byte5: reset_cause narrowed to 3 bits (b0-b2); stub_brake at b3 (#137) */
+    FIELD_LE_BITS (reset_cause,      uint8_t, 40, 3, 1, 0, "enum")
+    FIELD_LE_BITS (stub_brake,       uint8_t, 43, 1, 1, 0, "bit")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)

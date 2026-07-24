@@ -121,7 +121,8 @@ BO_ 1796 PitDiag_health: 8 VCU
  SG_ stub_no_ams : 37|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ stub_no_inverter : 38|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ stub_start : 39|1@1+ (1,0) [0|0] "bit" Vector__XXX
- SG_ reset_cause : 40|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ reset_cause : 40|3@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ stub_brake : 43|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
 
