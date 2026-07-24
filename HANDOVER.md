@@ -15,8 +15,8 @@ shipped a pile of merged work (GPS, inverter observability, SPI1 removal, two CI
 guards, docs). **The one unresolved engineering problem is [#148]: after a tractive-
 system (TS) deactivation the inverter will not come back to torque without a power
 cycle.** Everything needed to diagnose it is now on the bus — the next step is a
-**pit-diag capture on stands**, not more code. Two doc/CI PRs are open and green
-([#156], [#158]); merge them and you're at a clean baseline.
+**pit-diag capture on stands**, not more code. No PRs of ours are open — the baseline
+is already clean.
 
 ---
 
@@ -146,17 +146,14 @@ for topology**.
 
 ---
 
-## 3. Open PRs (all green at handover — merge these)
+## 3. Open PRs
 
-Merge order matters only because `dev` is protected (each merge pushes the others
-`BEHIND`; run `gh pr update-branch <n>`, wait for CI, then merge).
+**None of ours.** Everything this session opened is merged to `dev` — the two that
+were open at first draft, [#156] (autoclose negation guard) and [#158] (`stub_brake`
+restore), both landed (`dev` tip is the #158 merge). See [§9](#9-what-this-session-shipped-for-context-all-merged-to-dev).
 
-| PR | Branch | What | Notes |
-|----|--------|------|-------|
-| [#158] | `feat/137-restore-stub-brake` | Restores `stub_brake` on `0x704` (`Closes #137`) | Narrows `reset_cause` to 3 bits to free a bit; verified disjoint. Closes tracker #157 on merge |
-| [#156] | `ci/autoclose-negation-guard` | Stops the autoclose workflow closing an issue on a *negated* keyword ("does not fix #N") | See the war story in [§5](#5-gotchas-that-bit-us-this-session-read-before-repeating) |
-
-There is also an **unmerged prepared revert already merged** — ignore, #155 is in.
+Reminder for when you *do* have PRs open: `dev` is protected, so each merge pushes the
+others `BEHIND` — `gh pr update-branch <n>`, wait for CI, then merge, one at a time.
 
 New branch not ours: `feat/2` (tracker **#159**, "Publish inverter telemetry on CAN3")
 — someone else's WIP, 1 commit ahead of `dev`. Leave it.
@@ -173,7 +170,7 @@ New branch not ours: `feat/2` (tracker **#159**, "Publish inverter telemetry on 
   can't be starved by the pit-diag/telemetry flood. Real design choice (priority queue
   vs separate FIFO) — decide before building. *This is the main substantial firmware
   task that can be done off-car.*
-- **[#137]** — being closed by #158; will auto-close on merge.
+- **[#137]** — DONE, closed by #158 (`stub_brake` restored on `0x704`).
 
 **Blocked on another team (uDV):**
 - **[#108]** — ECU consumes uDV IMU broadcast `0x512` (FDCAN2, DLC 8, 50 Hz). Waiting
@@ -215,10 +212,10 @@ New branch not ours: `feat/2` (tracker **#159**, "Publish inverter telemetry on 
    and `TorqueCap` (→35/50/65) get set for on-stands testing and left uncommitted.
    Before branching, `git checkout -- Core/Inc/app/ecu_config.hpp` to discard them.
    `dev` must always have `StubBrakeRaw=0`, `TorqueCap=100`, all `StubX=false`.
-3. **The autoclose workflow is negation-blind** (being fixed in #156). Writing "does
-   not fix #N" in a PR body *closes* #N on merge. It closed #148 this way; had to
-   reopen by hand. Until #156 merges, don't reference an issue number after a negation
-   in a PR body/title.
+3. **The autoclose workflow was negation-blind** — writing "does not fix #N" in a PR
+   body *closed* #N on merge (it closed #148 this way; had to reopen by hand). **Fixed
+   by #156** (a negation guard in `close-on-dev-merge.yml`, now on `dev`), so this is
+   handled. Still, keep PR bodies unambiguous around issue numbers.
 4. **`gh ... --body "..."` with backticks/apostrophes gets mangled by the shell** —
    the shell runs backticked text as commands. **Always use `gh ... --body-file`** for
    any comment/PR body containing `` ` `` or `'`.
@@ -280,12 +277,14 @@ was removed this session). GPS = MTK3339 on **USART10 (PG11/PG12) @ 9600**.
   VAL names — **the tooling that makes #148's capture decisive**
 - **#152** removed inert SPI1 (nRF24 is bit-bang)
 - **#153** CI guard: FDCAN MessageRAM overlap (#48 defense)
-- **#149** CI: auto-close branch trackers on merge
+- **#149** CI: auto-close branch trackers on merge · **#156** CI: negation guard so a
+  "does not fix #N" PR body no longer closes #N
 - **#155** reverted #144 (the failed TS-off climb)
 - **#144** the failed TS-off attempt (kept in history, reverted)
+- **#158** restored `stub_brake` on `0x704` (closed #137)
 - **#126** W90 manual in-tree · **#133** vestigial constant · **#145** docs accuracy
-  pass · **#154** GPS in the radio snapshot map
-- Issue hygiene: 21 → ~8 open; dedup, superseded-branch closes.
+  pass · **#154** GPS in the radio snapshot map · **#160** this HANDOVER.md
+- Issue hygiene: 21 → 5 real open (+auto-trackers); dedup, superseded-branch closes.
 
 ---
 
