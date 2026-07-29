@@ -96,8 +96,18 @@ inline constexpr bool StubStart      = false;  // assume start button pressed (P
 inline constexpr bool     StubTelemetryDummy   = false;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
-inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
-inline constexpr uint8_t  DeadbandLowPct       = 10;    // below -> 0
+// Both sensors must exceed this before any torque is produced. This is a
+// sanity gate (a sensor failed low reads 0 and blocks torque whatever the other
+// says), NOT the T.11.8.9 plausibility check -- that is AppsDisagreePct below.
+// Kept BELOW DeadbandLowPct so the deadband alone decides the pedal onset;
+// at 8 it silently dominated a 5% deadband and pushed the real onset to ~9%.
+inline constexpr uint8_t  AppsAgreementPct     = 3;     // both sensors must exceed to produce torque
+// Pedal deadband: commanded torque below this is zeroed. Lowered 10 -> 5
+// (2026-07-29, driver reported too much dead travel). NOTE this value must stay
+// in step with the InvTorqueMap* zero-crossing below -- the map is built so that
+// exactly DeadbandLowPct maps to 0 Nm, and if the two disagree you get a second,
+// invisible deadband on top of this one.
+inline constexpr uint8_t  DeadbandLowPct       = 5;     // below -> 0
 inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // BRING-UP torque cap (% of commanded torque, applied in control_task). 100 = no cap.
 // Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
@@ -127,9 +137,13 @@ inline constexpr int32_t  MotorPolePairs       = 10;
 // ---- Inverter command unit map (used by the deferred inverter E2E adapter) -
 // torque_units = pct*240/90 - 2400/90  maps 10..100% -> 0..240, then the
 // inverter's signed two's-complement convention is applied in the adapter.
+// Torque map: Nm = pct*Mul/Div - Bias/Div, built so DeadbandLowPct -> 0 Nm and
+// 100% -> 240 Nm (full scale unchanged). Legacy VCU used 240/90 with bias 2400,
+// i.e. zero at 10%. Re-based for the 5% deadband: slope 240/(100-5) = 240/95,
+// bias 5*240 = 1200. Full scale stays 240 Nm -- only the zero-crossing moved.
 inline constexpr int32_t  InvTorqueMapMul      = 240;
-inline constexpr int32_t  InvTorqueMapDiv      = 90;
-inline constexpr int32_t  InvTorqueMapBias     = 2400;  // /Div
+inline constexpr int32_t  InvTorqueMapDiv      = 95;
+inline constexpr int32_t  InvTorqueMapBias     = 1200;  // /Div
 
 // ---- Input conditioning ----------------------------------------------------
 inline constexpr uint8_t  StartDebounceSamples = 5;     // x ControlPeriodMs (=50 ms)
@@ -201,7 +215,7 @@ inline constexpr uint8_t  InvTxSetpointModeDlc   = 3u;
 inline constexpr uint8_t  InvFltClearBit         = 0x80u;
 inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
 inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;
-// Torque map (reuses InvTorqueMap* above): pct>=10 -> pct*240/90 - 2400/90
+// Torque map (reuses InvTorqueMap* above): pct>=5 -> pct*240/95 - 1200/95
 // (10%->0, 100%->240), then NEGATED. The negation is a MECHANICAL constraint of
 // the motor (its mounting): forward drive = NEGATIVE Torque_Nm_Req. NOT optional
 // and NOT a protocol quirk -- removing it drives the car the wrong way (verified

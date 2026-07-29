@@ -302,9 +302,23 @@ static void test_dsl_parity() {
 // mechanical mounting; the E2E bytes go out as 0 (as the original VCU sent them).
 static void test_inverter() {
     std::printf("[inverter]\n");
-    CHECK(Inverter::torque_to_nm_req(5)   == 0,    "<10% (deadband) -> 0");
-    CHECK(Inverter::torque_to_nm_req(10)  == 0,    "10% -> 0 (map start)");
-    CHECK(Inverter::torque_to_nm_req(100) == -240, "100% -> -240 (mapped + mechanically negated)");
+    // Deadband lowered 10 -> 5 (2026-07-29). The map is re-based (240/95, bias
+    // 1200) so the zero-crossing sits at exactly DeadbandLowPct and FULL SCALE
+    // IS UNCHANGED at -240. These three pin all of that: below the band, exactly
+    // at it, and full pedal.
+    CHECK(Inverter::torque_to_nm_req(4)   == 0,    "<5% (deadband) -> 0");
+    CHECK(Inverter::torque_to_nm_req(5)   == 0,    "5% -> 0 (map zero-crossing == deadband)");
+    CHECK(Inverter::torque_to_nm_req(6)   <  0,    "6% -> torque flows immediately past the band");
+    CHECK(Inverter::torque_to_nm_req(10)  <  0,    "10% now produces torque (was 0 before)");
+    CHECK(Inverter::torque_to_nm_req(100) == -240, "100% -> -240 (full scale UNCHANGED)");
+    // Guard the invariant that caused the invisible second deadband: the map
+    // must cross zero exactly at DeadbandLowPct, never above it.
+    CHECK(Inverter::torque_to_nm_req(config::DeadbandLowPct) == 0,
+          "map zero-crossing tracks DeadbandLowPct");
+    CHECK(Inverter::torque_to_nm_req(config::DeadbandLowPct + 1) < 0,
+          "the very next percent past the deadband already commands torque");
+    CHECK(config::AppsAgreementPct < config::DeadbandLowPct,
+          "agreement gate must stay BELOW the deadband or it dictates the onset");
     CHECK(Inverter::torque_to_nm_req(100) <  0,    "forward torque is NEGATIVE (mechanical mounting)");
 
     // 0x360 mode frame: FDCAN1, id 0x360, dlc 3, {0, 0, App_State_Req}.
