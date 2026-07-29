@@ -104,7 +104,7 @@ BO_ 1798 PitDiag_inverter_temps: 4 VCU
  SG_ temp_motor1_degC : 16|8@1+ (1,-50) [0|0] "degC" Vector__XXX
  SG_ temp_motor2_degC : 24|8@1+ (1,-50) [0|0] "degC" Vector__XXX
 
-BO_ 1800 PitDiag_inv_faults: 4 VCU
+BO_ 1800 PitDiag_inv_faults: 6 VCU
  SG_ pwrstg_alive : 0|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ pwrstg_enable : 1|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ pwrstg_uvlo : 2|1@1+ (1,0) [0|0] "bit" Vector__XXX
@@ -124,6 +124,8 @@ BO_ 1800 PitDiag_inv_faults: 4 VCU
  SG_ emctrl_phcurr_acq : 23|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ cmd_follow_n : 24|2@1+ (1,0) [0|0] "count" Vector__XXX
  SG_ cmd_flt_clear : 26|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ inv_state_age_ms : 32|8@1+ (1,0) [0|0] "ms" Vector__XXX
+ SG_ inv_state_seq : 40|8@1+ (1,0) [0|0] "count" Vector__XXX
 
 BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_major : 0|8@1+ (1,0) [0|0] "" Vector__XXX
