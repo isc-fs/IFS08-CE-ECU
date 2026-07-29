@@ -515,6 +515,7 @@ static void test_inverter_fault_burst() {
     CHECK(o.inv_mode_follow[0] == InvMode::HardFaultReset, "soft fault follow #1 = 0x0D");
     CHECK(o.inv_mode_follow[1] == InvMode::Off,
           "soft fault follow #2 = Off (0x01) -- the word the manual says clears a FAULT");
+    CHECK(o.inv_flt_clear, "soft fault -> Flt_Clear asserted on the trailing Off");
     CHECK(o.torque_pct == 0, "no torque while faulted");
 
     // --- HARD fault (11) -> 0x0D, then Off(0x01). ---
@@ -523,12 +524,14 @@ static void test_inverter_fault_burst() {
     CHECK(o.inv_mode == InvMode::HardFaultReset, "hard fault -> primary word 0x0D");
     CHECK(o.inv_mode_follow_n == 1, "hard fault -> one follow-up word");
     CHECK(o.inv_mode_follow[0] == InvMode::Off, "hard fault follow = Off (0x01)");
+    CHECK(o.inv_flt_clear, "hard fault -> Flt_Clear asserted on the trailing Off");
 
     // --- Healthy inverter -> NO burst. The normal path must still emit exactly
     //     one 0x360 per cycle; this is the bus-load guard (#132). ---
     in.inv_state = InvReadyState;                // 4
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.inv_mode_follow_n == 0, "healthy inverter -> no follow-up words");
+    CHECK(!o.inv_flt_clear, "healthy inverter -> Flt_Clear NOT asserted");
     CHECK(o.inv_mode == InvMode::TorqueEnable, "healthy in Active -> TorqueEnable, unchanged");
 
     // --- AmsError still INHIBITS: Off only, no reset words, no burst. ---
@@ -538,6 +541,18 @@ static void test_inverter_fault_burst() {
     CHECK(o.state == CtrlState::AmsError, "ams_error -> AmsError from any state");
     CHECK(o.inv_mode == InvMode::Off, "AmsError commands Off only");
     CHECK(o.inv_mode_follow_n == 0, "AmsError inhibits the fault burst too");
+    CHECK(!o.inv_flt_clear, "AmsError does not assert Flt_Clear either");
+
+    // --- Wire format: Flt_Clear is byte 2 bit 7, packed WITH App_State_Req. ---
+    {
+        const CanFrame plain = Inverter::build_setpoint_mode(InvMode::Off);
+        CHECK(plain.data[2] == 0x01, "Off without Flt_Clear -> byte2 == 0x01 (bit7 clear)");
+        const CanFrame clr = Inverter::build_setpoint_mode(InvMode::Off, true);
+        CHECK(clr.data[2] == 0x81, "Off WITH Flt_Clear -> byte2 == 0x81 (App_State_Req 1 | bit7)");
+        CHECK(clr.id == InvTxSetpointModeId && clr.dlc == InvTxSetpointModeDlc,
+              "Flt_Clear rides the same 0x360 DLC 3 frame");
+        CHECK(clr.data[0] == 0 && clr.data[1] == 0, "bytes 0-1 stay zero");
+    }
 
     // --- End-to-end: the burst clears the fault and the drive comes back with
     //     NO power cycle -- the whole point of #148. ---

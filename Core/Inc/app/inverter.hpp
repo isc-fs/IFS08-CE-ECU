@@ -21,7 +21,12 @@ class Inverter {
 public:
     // 0x360 EMC_RX_SETPOINT_1: {0, 0, App_State_Req}. App_State_Req @ byte2 is
     // the InvMode mode word. Bytes 0-1 are 0 (as the original VCU sent them).
-    static CanFrame build_setpoint_mode(InvMode mode) noexcept;
+    //
+    // flt_clear sets byte 2 bit 7 (Flt_Clear in the vendor DBC), the inverter's
+    // explicit fault-clear request. It shares byte 2 with App_State_Req (bits
+    // 0-6), so the two are sent together. Default false -- the healthy path is
+    // byte-for-byte unchanged.
+    static CanFrame build_setpoint_mode(InvMode mode, bool flt_clear = false) noexcept;
 
     // 0x362 EMC_RX_SETPOINT_3: {0, 0, torque_lo, torque_hi}. Torque_Nm_Req is a
     // signed 16-bit LE at bytes 2-3. Bytes 0-1 are 0.

@@ -94,6 +94,14 @@ struct CtrlOutput {
     // so the inverter stays faulted and WaitInvStandby hangs forever (#148).
     InvMode   inv_mode_follow[2] = { InvMode::Off, InvMode::Off };
     uint8_t   inv_mode_follow_n = 0;
+    // Assert Flt_Clear (0x360 byte 2 bit 7) on the LAST follow-up word. Set only
+    // while the inverter reports a fault, so the bit is PULSED, not held: the
+    // primary word and any earlier follow word leave it clear, giving the
+    // inverter a fresh rising edge every 10 ms cycle rather than a stuck-high
+    // level (which an edge-triggered clear would see exactly once). The mode
+    // words alone do not shift a LATCHED fault -- dem_present = 0, condition
+    // already gone, inverter still parked in SoftFault(10) (#148).
+    bool      inv_flt_clear = false;
     bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)

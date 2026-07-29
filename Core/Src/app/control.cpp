@@ -154,6 +154,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // Follow-up mode words for the fault burst below (see CtrlOutput).
     InvMode follow[2] = { InvMode::Off, InvMode::Off };
     uint8_t follow_n = 0;
+    bool    flt_clear = false;
     bool    rtds = false;
     bool    drive = false;
     uint8_t cmd_torque = 0;
@@ -220,11 +221,13 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
             mode      = InvMode::HardFaultReset;   // 0x0D
             follow[0] = InvMode::Off;              // 0x01 -- the documented clear
             follow_n  = 1;
+            flt_clear = true;                      // + Flt_Clear on that Off
         } else if (in.inv_state == InvSoftFaultState) {
             mode      = InvMode::Fault;            // 0x13
             follow[0] = InvMode::HardFaultReset;   // 0x0D
             follow[1] = InvMode::Off;              // 0x01 -- the documented clear
             follow_n  = 2;
+            flt_clear = true;                      // + Flt_Clear on that Off
         }
     }
 
@@ -235,6 +238,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.inv_mode_follow[0]  = follow[0];
     out.inv_mode_follow[1]  = follow[1];
     out.inv_mode_follow_n   = follow_n;
+    out.inv_flt_clear       = flt_clear;
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;
     out.ev_2_3      = ev23_latched_;

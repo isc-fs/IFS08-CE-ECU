@@ -189,6 +189,13 @@ inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (
 // App_State_Req mode words (Off 0x01 / Ready 0x04 / TorqueEnable 0x06).
 inline constexpr uint32_t InvTxSetpointModeId    = 0x360u;   // EMC_RX_SETPOINT_1 (App_State_Req @ byte2)
 inline constexpr uint8_t  InvTxSetpointModeDlc   = 3u;
+// 0x360 byte 2 carries TWO signals (vendor DBC NX0001_STS04_A16):
+//   App_State_Req : 16|7@1+  -> bits 0-6 (the InvMode word)
+//   Flt_Clear     : 23|1@1+  -> bit 7    (explicit fault-clear request)
+// Every InvMode is <= 0x13, so bit 7 was always 0 -- Flt_Clear had never been
+// asserted. Used to clear a LATCHED inverter fault (dem_present = 0, condition
+// already gone) that the reset mode words alone do not shift (#148).
+inline constexpr uint8_t  InvFltClearBit         = 0x80u;
 inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
 inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;
 // Torque map (reuses InvTorqueMap* above): pct>=10 -> pct*240/90 - 2400/90
