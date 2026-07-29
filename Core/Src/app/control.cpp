@@ -171,23 +171,44 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         rtds = true;                        // drive the RTDS buzzer
         break;
     case CtrlState::WaitInvStandby:
-        // Command Ready UNCONDITIONALLY, whatever the inverter currently reports.
+        // Climb to Ready. From Standby(3) that is a direct Ready(0x04); from
+        // Off(0)/Shutdown(13) it is NOT -- this A16 config will not take Ready
+        // from those states.
         //
-        // DO NOT make this reactive on inv_state again. #144 did exactly that --
-        // it sent Off(0x01) instead when the inverter reported OFF(0)/SHUTDOWN(13),
-        // on the theory that an off inverter needs an "on" word before it will
-        // accept Ready. That theory came from the legacy IFS07 switch and was
-        // never confirmed against this inverter. The W90 manual's state machine
-        // (section 9.1) contradicts it: OFF --(App_State_Req = READY)--> READY is
-        // a SINGLE direct transition, with no intermediate step. So commanding Off
-        // to an inverter already in OFF just holds it there and Ready is never
-        // sent -- it cannot climb at all. #144 did not fix the TS-off recovery it
-        // targeted and was a plausible way to make it worse. See #148.
+        // BENCH EVIDENCE (2026-07-29, firmware 44688b6, on stands at 355 V):
+        // parked in WaitInvStandby with inv_state=13 Shutdown, commanding
+        // Ready(0x04) at 100 Hz, L1/L2 fault layers CLEAN (PwrStg 0x001 alive,
+        // EMCtrl 0x01 init_ok) and the DEM only latched history -- and the
+        // inverter never moved. Nothing was blocking it; it simply does not
+        // accept Ready from Shutdown.
+        //
+        // THIS IS NOT A RETURN TO #144. #144 sent Off INSTEAD of Ready and never
+        // followed with Ready, so the inverter could not climb at all and #155
+        // rightly reverted it. The IFS07 VCU -- the only configuration known to
+        // have recovered without a power cycle -- sent BOTH in one pass, via the
+        // fall-through in its App_State switch (pre-jarama main.c:1788-1811):
+        //     case 13 -> 0x01                (Shutdown: Off only)
+        //     case 0  -> 0x01 then 0x04      (Off: Off THEN Ready, same pass)
+        // That is what is reproduced here, using the same follow-word mechanism
+        // as the fault burst. Ready is ALWAYS still sent for state 0; the Off
+        // merely precedes it. See #148.
+        //
+        // Note the manual's 9.1 diagram shows OFF --(READY)--> READY as one
+        // direct transition -- but its App_State_Req enum (1..5) does not match
+        // this A16 config at all, so trust the bench for numbering and the
+        // diagram for topology only.
         //
         // A latched fault (10/11) is still overridden to its reset word by the
-        // reactive block below -- that path IS bench-proven. Reaching Ready(4)
-        // advances to Active (transition above).
-        mode = InvMode::Ready;              // 0x04 -- OFF/standby -> ready
+        // reactive block below. Reaching Ready(4) advances to Active (above).
+        if (in.inv_state == InvShutdownState) {
+            mode = InvMode::Off;            // 0x01 -- legacy case 13
+        } else if (in.inv_state == InvOffState) {
+            mode      = InvMode::Off;       // 0x01 -- legacy case 0 ...
+            follow[0] = InvMode::Ready;     // 0x04 -- ... falling through to case 3
+            follow_n  = 1;
+        } else {
+            mode = InvMode::Ready;          // 0x04 -- standby(3) -> ready
+        }
         break;
     case CtrlState::Active:
         // Healthy inverter -> drive. A faulted inverter (>= soft fault) gets its

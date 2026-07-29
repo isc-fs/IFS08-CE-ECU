@@ -46,7 +46,10 @@ inline constexpr uint8_t  InvStandbyState      = 3;   // bench-proven
 inline constexpr uint8_t  InvReadyState        = 4;   // bench-proven
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
-inline constexpr uint8_t  InvShutdownState     = 13;  // UNVERIFIED (IFS07-derived)
+// 13 is now BENCH-CONFIRMED (2026-07-29): observed on 0x700 inv_state after a
+// TS-off cycle, with the DEM cleared to latched history and L1/L2 clean -- the
+// inverter genuinely parks here and refuses Ready. 0 remains IFS07-derived.
+inline constexpr uint8_t  InvShutdownState     = 13;  // bench-confirmed 2026-07-29
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;

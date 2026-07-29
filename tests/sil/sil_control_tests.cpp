@@ -440,19 +440,29 @@ static void test_inverter_ts_off_recovery() {
     //     confirmed) theory that an off inverter needs an "on" word first. That
     //     holds an already-off inverter in OFF and never sends Ready, so it can
     //     never climb. Reverted; these asserts stop it coming back. See #148. ---
-    CHECK(o.inv_mode == InvMode::Ready, "OFF(0) inverter -> command Ready (0x04), NOT Off");
+    // OFF(0): Off THEN Ready in the SAME cycle -- the legacy case 0 -> case 3
+    // fall-through. Ready is still always sent; the Off merely precedes it, which
+    // is the difference from #144 (Off INSTEAD of Ready -> could never climb).
+    CHECK(o.inv_mode == InvMode::Off, "OFF(0) inverter -> Off(0x01) first");
+    CHECK(o.inv_mode_follow_n == 1, "OFF(0) -> one follow word");
+    CHECK(o.inv_mode_follow[0] == InvMode::Ready,
+          "OFF(0) -> Ready(0x04) STILL sent, same cycle (this is what #144 never did)");
     CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby until the inverter is ready");
 
-    // Same for a SHUTDOWN(13) report -- still Ready, no special-casing.
+    // SHUTDOWN(13): Off only, exactly as the legacy case 13. Bench-confirmed
+    // 2026-07-29 -- the inverter parks in 13 and will not accept Ready from there
+    // (L1/L2 clean, DEM latched, Ready commanded at 100 Hz, never moved).
     in.inv_state = InvShutdownState;             // 13
     o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.inv_mode == InvMode::Ready, "SHUTDOWN(13) inverter -> command Ready (0x04), NOT Off");
+    CHECK(o.inv_mode == InvMode::Off, "SHUTDOWN(13) inverter -> Off(0x01), legacy case 13");
+    CHECK(o.inv_mode_follow_n == 0, "SHUTDOWN(13) -> no follow word (Off alone, as the legacy)");
     CHECK(o.state == CtrlState::WaitInvStandby, "still waiting (not ready yet)");
 
     // Inverter passes through Standby(3): still Ready, unchanged.
     in.inv_state = InvStandbyState;              // 3
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.inv_mode == InvMode::Ready, "STANDBY(3) inverter -> command Ready (0x04)");
+    CHECK(o.inv_mode_follow_n == 0, "STANDBY(3) -> plain Ready, no Off prefix");
     CHECK(o.state == CtrlState::WaitInvStandby, "waiting for ready");
 
     // Inverter reaches Ready(4): advance to Active and drive torque again -- no
