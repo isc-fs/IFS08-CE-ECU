@@ -21,7 +21,7 @@
  * normal, CLEAR is the anomaly. Names mirror manual 9.2.1 / 9.2.2 verbatim.
  */
 
-CAN_MSG(PitDiag_inv_faults, 0x708, 4, "VCU", 100)
+CAN_MSG(PitDiag_inv_faults, 0x708, 6, "VCU", 100)
     /* --- L1: power stage (manual 9.2.1). Bits 0-8. --- */
     FIELD_LE_BITS (pwrstg_alive,         uint8_t,  0, 1, 1, 0, "bit")
     FIELD_LE_BITS (pwrstg_enable,        uint8_t,  1, 1, 1, 0, "bit")
@@ -50,4 +50,24 @@ CAN_MSG(PitDiag_inv_faults, 0x708, 4, "VCU", 100)
      * the FDCAN1 TX FIFO. --- */
     FIELD_LE_BITS (cmd_follow_n,         uint8_t, 24, 2, 1, 0, "count")
     FIELD_LE_BITS (cmd_flt_clear,        uint8_t, 26, 1, 1, 0, "bit")
+    /* --- Bytes 4-5: how FRESH the inverter state we act on actually is. ---
+     *
+     * The whole climb/fault ladder is driven by inv_state, which comes from
+     * 0x461 -- and NOTHING told us how often 0x461 actually arrives. The W90
+     * manual's Annex 1 puts App_State on a 10 ms frame but Dem_Fault on a
+     * 500 ms one, and the A16 config packs BOTH into 0x461, so its real period
+     * is unknown. If it is slow, the 100 Hz control loop fires dozens of
+     * command bursts off a single stale observation and the phase between the
+     * two decides the outcome -- which would make recovery intermittent under
+     * apparently identical conditions (#148).
+     *
+     * age counts ms since the last 0x461 (saturating at 255 -- anything that
+     * high already means "far too stale to steer a state machine with").
+     * seq increments once per 0x461 received and wraps; since this frame is
+     * emitted every 100 ms, the DELTA between consecutive 0x708 frames IS the
+     * arrival count per 100 ms -- delta 10 => 10 ms period, 1 => 100 ms,
+     * mostly-0 => 500 ms. That is the measurement, and it needs no FDCAN1
+     * access (which the pit adapter does not have). */
+    FIELD_LE      (inv_state_age_ms,     uint8_t,  4, 8, 1, 0, "ms")
+    FIELD_LE      (inv_state_seq,        uint8_t,  5, 8, 1, 0, "count")
 CAN_MSG_END(PitDiag_inv_faults)

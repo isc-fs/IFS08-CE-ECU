@@ -111,7 +111,8 @@ CanFrame PitDiag::build_inverter_temps(const VehicleState& v) noexcept {
 }
 
 CanFrame PitDiag::build_inv_faults(const VehicleState& v,
-                                   const CtrlOutput& c) noexcept {
+                                   const CtrlOutput& c,
+                                   std::uint32_t now_ms) noexcept {
     PitDiag_inv_faults_t f{};
     const std::uint16_t p = v.inv_pwrstg_bits;   // L1, 9 bits
     const std::uint8_t  e = v.inv_emctrl_bits;   // L2, 8 bits
@@ -135,6 +136,11 @@ CanFrame PitDiag::build_inv_faults(const VehicleState& v,
     // commanded side -- what the ECU decided to emit on FDCAN1 this cycle
     f.cmd_follow_n          = c.inv_mode_follow_n;
     f.cmd_flt_clear         = c.inv_flt_clear ? 1u : 0u;
+    // Freshness of the 0x461 we are steering on. Saturate at 255 ms -- past
+    // that the exact number stops mattering, it is simply far too stale.
+    const std::uint32_t age = static_cast<std::uint32_t>(now_ms - v.last_inv_state_tick);
+    f.inv_state_age_ms      = (age > 255u) ? 255u : static_cast<std::uint8_t>(age);
+    f.inv_state_seq         = v.inv_state_seq;
     std::uint8_t b[PitDiag_inv_faults_DLC];
     encode_PitDiag_inv_faults(f, b);
     return make_acu(PitDiag_inv_faults_ID, b);

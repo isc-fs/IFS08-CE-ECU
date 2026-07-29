@@ -120,6 +120,8 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
                 state_.inv_pwrstg_bits = static_cast<std::uint16_t>(
                     (f.data[5] >> 7) | (static_cast<std::uint16_t>(f.data[6]) << 1));
             }
+            state_.last_inv_state_tick = f.timestamp_ms;    // 0x461 only (#148)
+            ++state_.inv_state_seq;                         // wraps; delta = arrivals
             state_.last_inv_tick = f.timestamp_ms;
             return true;
         }

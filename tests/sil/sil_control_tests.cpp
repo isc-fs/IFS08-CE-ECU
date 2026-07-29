@@ -539,6 +539,36 @@ static void test_inverter_fault_layers() {
     CHECK(vs.snapshot().inv_state == 10, "short frame still decodes inv_state");
     CHECK(vs.snapshot().inv_pwrstg_bits == 0x023, "short frame leaves L1 untouched");
 
+    // 0x461 freshness tracking (#148): last_inv_state_tick and inv_state_seq
+    // must advance on 0x461 ONLY -- last_inv_tick is also bumped by 0x463/64/66
+    // and would hide a slow 0x461, which is the exact thing being measured.
+    {
+        CanFrame g{};
+        g.bus = static_cast<std::uint8_t>(CanBus::Inv);
+        g.id  = config::InvRxStateId;                 // 0x461
+        g.dlc = 7;
+        g.data[4] = 0x03;                             // App_State 3
+        g.timestamp_ms = 1000;
+        const std::uint8_t seq0 = vs.snapshot().inv_state_seq;
+        CHECK(vs.update_from_frame(g), "0x461 accepted (freshness)");
+        CHECK(vs.snapshot().last_inv_state_tick == 1000, "0x461 stamps last_inv_state_tick");
+        CHECK(static_cast<std::uint8_t>(vs.snapshot().inv_state_seq - seq0) == 1,
+              "0x461 increments inv_state_seq by exactly 1");
+
+        // a DIFFERENT inverter frame must NOT touch either -- that is the point
+        CanFrame r{};
+        r.bus = static_cast<std::uint8_t>(CanBus::Inv);
+        r.id  = config::InvRxRpmId;                   // 0x463
+        r.dlc = 8;
+        r.timestamp_ms = 2000;
+        const std::uint8_t seq1 = vs.snapshot().inv_state_seq;
+        CHECK(vs.update_from_frame(r), "0x463 accepted");
+        CHECK(vs.snapshot().last_inv_state_tick == 1000,
+              "0x463 does NOT refresh last_inv_state_tick (would mask a slow 0x461)");
+        CHECK(vs.snapshot().inv_state_seq == seq1, "0x463 does NOT bump inv_state_seq");
+        CHECK(vs.snapshot().last_inv_tick == 2000, "0x463 DOES refresh the generic last_inv_tick");
+    }
+
     // NOTE: no builder round-trip here -- pit_diag.cpp is deliberately outside
     // the SIL target (6 units, no HAL), so PitDiag::build_inv_faults is not
     // linked. The DSL encode path is covered by test_dsl_parity.
