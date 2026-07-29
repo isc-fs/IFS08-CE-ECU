@@ -43,6 +43,13 @@ public:
     static CanFrame build_inverter(const VehicleState& v,
                                    std::uint8_t inv_mode_cmd) noexcept;
     static CanFrame build_inverter_temps(const VehicleState& v) noexcept; // 0x706
+    // 0x708 -- the inverter's L1 (PwrStg) / L2 (EMCtrl) fault-layer bitmasks.
+    // L3 (DEM) alone cannot say whether a latched fault is held up by a live
+    // hardware condition underneath (#148).
+    // now_ms is needed for inv_state_age_ms (freshness of 0x461, #148).
+    static CanFrame build_inv_faults(const VehicleState& v,
+                                    const CtrlOutput& c,
+                                    std::uint32_t now_ms) noexcept;  // 0x708
     static CanFrame build_fwinfo() noexcept;                    // 0x703
     static CanFrame build_health(const HealthMetrics& m) noexcept;  // 0x704
     static CanFrame build_brake(const IoInputs& io) noexcept;   // 0x705

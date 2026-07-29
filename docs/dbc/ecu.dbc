@@ -104,6 +104,29 @@ BO_ 1798 PitDiag_inverter_temps: 4 VCU
  SG_ temp_motor1_degC : 16|8@1+ (1,-50) [0|0] "degC" Vector__XXX
  SG_ temp_motor2_degC : 24|8@1+ (1,-50) [0|0] "degC" Vector__XXX
 
+BO_ 1800 PitDiag_inv_faults: 6 VCU
+ SG_ pwrstg_alive : 0|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_enable : 1|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_uvlo : 2|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_desat : 3|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_dt_violation : 4|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_hvil_open : 5|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_ocp : 6|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_ovp_th1 : 7|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ pwrstg_ovp_th2 : 8|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_init_ok : 16|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_posfb : 17|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_asc : 18|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_curr_imbalance : 19|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_pwrstg_fault : 20|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_curr_derating : 21|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_loop_delocked : 22|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ emctrl_phcurr_acq : 23|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ cmd_follow_n : 24|2@1+ (1,0) [0|0] "count" Vector__XXX
+ SG_ cmd_flt_clear : 26|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ inv_state_age_ms : 32|8@1+ (1,0) [0|0] "ms" Vector__XXX
+ SG_ inv_state_seq : 40|8@1+ (1,0) [0|0] "count" Vector__XXX
+
 BO_ 1795 PitDiag_fwinfo: 7 VCU
  SG_ fw_major : 0|8@1+ (1,0) [0|0] "" Vector__XXX
  SG_ fw_minor : 8|8@1+ (1,0) [0|0] "" Vector__XXX
@@ -204,6 +227,7 @@ BA_ "GenMsgCycleTime" BO_ 1793 100;
 BA_ "GenMsgCycleTime" BO_ 1797 100;
 BA_ "GenMsgCycleTime" BO_ 1794 100;
 BA_ "GenMsgCycleTime" BO_ 1798 100;
+BA_ "GenMsgCycleTime" BO_ 1800 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
 BA_ "GenMsgCycleTime" BO_ 1799 100;

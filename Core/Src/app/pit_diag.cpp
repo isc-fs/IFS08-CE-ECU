@@ -110,6 +110,42 @@ CanFrame PitDiag::build_inverter_temps(const VehicleState& v) noexcept {
     return make_acu(PitDiag_inverter_temps_ID, b);
 }
 
+CanFrame PitDiag::build_inv_faults(const VehicleState& v,
+                                   const CtrlOutput& c,
+                                   std::uint32_t now_ms) noexcept {
+    PitDiag_inv_faults_t f{};
+    const std::uint16_t p = v.inv_pwrstg_bits;   // L1, 9 bits
+    const std::uint8_t  e = v.inv_emctrl_bits;   // L2, 8 bits
+    f.pwrstg_alive          = (p >> 0) & 1u;
+    f.pwrstg_enable         = (p >> 1) & 1u;
+    f.pwrstg_uvlo           = (p >> 2) & 1u;
+    f.pwrstg_desat          = (p >> 3) & 1u;
+    f.pwrstg_dt_violation   = (p >> 4) & 1u;
+    f.pwrstg_hvil_open      = (p >> 5) & 1u;
+    f.pwrstg_ocp            = (p >> 6) & 1u;
+    f.pwrstg_ovp_th1        = (p >> 7) & 1u;
+    f.pwrstg_ovp_th2        = (p >> 8) & 1u;
+    f.emctrl_init_ok        = (e >> 0) & 1u;
+    f.emctrl_posfb          = (e >> 1) & 1u;
+    f.emctrl_asc            = (e >> 2) & 1u;
+    f.emctrl_curr_imbalance = (e >> 3) & 1u;
+    f.emctrl_pwrstg_fault   = (e >> 4) & 1u;
+    f.emctrl_curr_derating  = (e >> 5) & 1u;
+    f.emctrl_loop_delocked  = (e >> 6) & 1u;
+    f.emctrl_phcurr_acq     = (e >> 7) & 1u;
+    // commanded side -- what the ECU decided to emit on FDCAN1 this cycle
+    f.cmd_follow_n          = c.inv_mode_follow_n;
+    f.cmd_flt_clear         = c.inv_flt_clear ? 1u : 0u;
+    // Freshness of the 0x461 we are steering on. Saturate at 255 ms -- past
+    // that the exact number stops mattering, it is simply far too stale.
+    const std::uint32_t age = static_cast<std::uint32_t>(now_ms - v.last_inv_state_tick);
+    f.inv_state_age_ms      = (age > 255u) ? 255u : static_cast<std::uint8_t>(age);
+    f.inv_state_seq         = v.inv_state_seq;
+    std::uint8_t b[PitDiag_inv_faults_DLC];
+    encode_PitDiag_inv_faults(f, b);
+    return make_acu(PitDiag_inv_faults_ID, b);
+}
+
 CanFrame PitDiag::build_fwinfo() noexcept {
     PitDiag_fwinfo_t fw{};
     fw.fw_major = ecu_fw_version_major();

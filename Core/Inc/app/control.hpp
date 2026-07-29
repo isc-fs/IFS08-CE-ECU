@@ -80,6 +80,28 @@ struct CtrlOutput {
     CtrlState state = CtrlState::WaitInvVdcConfig;
     uint8_t   torque_pct = 0;    // 0..100, commanded (non-zero only in Active)
     InvMode   inv_mode = InvMode::Off;
+    // Fault-recovery FOLLOW-UP mode words: extra App_State_Req values the task
+    // sends on 0x360 AFTER inv_mode, within the SAME 10 ms cycle (n = 0 on the
+    // normal path, so nothing changes when the inverter is healthy).
+    //
+    // WHY: the W90 manual 9.3 states that going to OFF is what restarts a FAULT
+    // -- OFF is the only fault-clearing path the vendor documents (0x0D/0x13 do
+    // not even appear in its App_State_Req list). The IFS07 VCU, which DID
+    // recover without a power cycle, sent exactly this burst because its
+    // App_State switch fell through with no breaks: soft fault -> 0x13, 0x0D,
+    // 0x01; hard fault -> 0x0D, 0x01. Commanding the reset word ALONE (what we
+    // did before) means the OFF that actually clears the fault is never sent,
+    // so the inverter stays faulted and WaitInvStandby hangs forever (#148).
+    InvMode   inv_mode_follow[2] = { InvMode::Off, InvMode::Off };
+    uint8_t   inv_mode_follow_n = 0;
+    // Assert Flt_Clear (0x360 byte 2 bit 7) on the LAST follow-up word. Set only
+    // while the inverter reports a fault, so the bit is PULSED, not held: the
+    // primary word and any earlier follow word leave it clear, giving the
+    // inverter a fresh rising edge every 10 ms cycle rather than a stuck-high
+    // level (which an edge-triggered clear would see exactly once). The mode
+    // words alone do not shift a LATCHED fault -- dem_present = 0, condition
+    // already gone, inverter still parked in SoftFault(10) (#148).
+    bool      inv_flt_clear = false;
     bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)

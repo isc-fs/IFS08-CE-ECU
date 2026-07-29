@@ -110,6 +110,18 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             // NX boots latched (DEM_Code set, DEM_Present clear) -- this bit is
             // what tells the two apart. dlc>=5 guaranteed by the guard above.
             state_.inv_dem_present = (f.data[3] & 0x80u) != 0u;
+            // L2/L1 fault layers (DBC EMCtrl_FOC_BitState 39|8@1+, PwrStg_
+            // BitState 47|9@1+) straddle bytes 4-6, so they need the full DLC 7.
+            // Guarded separately from the dlc>=5 check above: a short frame must
+            // still yield inv_state/DEM rather than dropping the whole update.
+            if (f.dlc >= 7) {
+                state_.inv_emctrl_bits = static_cast<std::uint8_t>(
+                    (f.data[4] >> 7) | static_cast<std::uint8_t>((f.data[5] & 0x7Fu) << 1));
+                state_.inv_pwrstg_bits = static_cast<std::uint16_t>(
+                    (f.data[5] >> 7) | (static_cast<std::uint16_t>(f.data[6]) << 1));
+            }
+            state_.last_inv_state_tick = f.timestamp_ms;    // 0x461 only (#148)
+            ++state_.inv_state_seq;                         // wraps; delta = arrivals
             state_.last_inv_tick = f.timestamp_ms;
             return true;
         }

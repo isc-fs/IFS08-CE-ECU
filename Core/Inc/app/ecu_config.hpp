@@ -46,7 +46,10 @@ inline constexpr uint8_t  InvStandbyState      = 3;   // bench-proven
 inline constexpr uint8_t  InvReadyState        = 4;   // bench-proven
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
-inline constexpr uint8_t  InvShutdownState     = 13;  // UNVERIFIED (IFS07-derived)
+// 13 is now BENCH-CONFIRMED (2026-07-29): observed on 0x700 inv_state after a
+// TS-off cycle, with the DEM cleared to latched history and L1/L2 clean -- the
+// inverter genuinely parks here and refuses Ready. 0 remains IFS07-derived.
+inline constexpr uint8_t  InvShutdownState     = 13;  // bench-confirmed 2026-07-29
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;
@@ -93,8 +96,18 @@ inline constexpr bool StubStart      = false;  // assume start button pressed (P
 inline constexpr bool     StubTelemetryDummy   = false;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
-inline constexpr uint8_t  AppsAgreementPct     = 8;     // both sensors must exceed to produce torque
-inline constexpr uint8_t  DeadbandLowPct       = 10;    // below -> 0
+// Both sensors must exceed this before any torque is produced. This is a
+// sanity gate (a sensor failed low reads 0 and blocks torque whatever the other
+// says), NOT the T.11.8.9 plausibility check -- that is AppsDisagreePct below.
+// Kept BELOW DeadbandLowPct so the deadband alone decides the pedal onset;
+// at 8 it silently dominated a 5% deadband and pushed the real onset to ~9%.
+inline constexpr uint8_t  AppsAgreementPct     = 3;     // both sensors must exceed to produce torque
+// Pedal deadband: commanded torque below this is zeroed. Lowered 10 -> 5
+// (2026-07-29, driver reported too much dead travel). NOTE this value must stay
+// in step with the InvTorqueMap* zero-crossing below -- the map is built so that
+// exactly DeadbandLowPct maps to 0 Nm, and if the two disagree you get a second,
+// invisible deadband on top of this one.
+inline constexpr uint8_t  DeadbandLowPct       = 5;     // below -> 0
 inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // BRING-UP torque cap (% of commanded torque, applied in control_task). 100 = no cap.
 // Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
@@ -124,9 +137,13 @@ inline constexpr int32_t  MotorPolePairs       = 10;
 // ---- Inverter command unit map (used by the deferred inverter E2E adapter) -
 // torque_units = pct*240/90 - 2400/90  maps 10..100% -> 0..240, then the
 // inverter's signed two's-complement convention is applied in the adapter.
+// Torque map: Nm = pct*Mul/Div - Bias/Div, built so DeadbandLowPct -> 0 Nm and
+// 100% -> 240 Nm (full scale unchanged). Legacy VCU used 240/90 with bias 2400,
+// i.e. zero at 10%. Re-based for the 5% deadband: slope 240/(100-5) = 240/95,
+// bias 5*240 = 1200. Full scale stays 240 Nm -- only the zero-crossing moved.
 inline constexpr int32_t  InvTorqueMapMul      = 240;
-inline constexpr int32_t  InvTorqueMapDiv      = 90;
-inline constexpr int32_t  InvTorqueMapBias     = 2400;  // /Div
+inline constexpr int32_t  InvTorqueMapDiv      = 95;
+inline constexpr int32_t  InvTorqueMapBias     = 1200;  // /Div
 
 // ---- Input conditioning ----------------------------------------------------
 inline constexpr uint8_t  StartDebounceSamples = 5;     // x ControlPeriodMs (=50 ms)
@@ -189,9 +206,16 @@ inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (
 // App_State_Req mode words (Off 0x01 / Ready 0x04 / TorqueEnable 0x06).
 inline constexpr uint32_t InvTxSetpointModeId    = 0x360u;   // EMC_RX_SETPOINT_1 (App_State_Req @ byte2)
 inline constexpr uint8_t  InvTxSetpointModeDlc   = 3u;
+// 0x360 byte 2 carries TWO signals (vendor DBC NX0001_STS04_A16):
+//   App_State_Req : 16|7@1+  -> bits 0-6 (the InvMode word)
+//   Flt_Clear     : 23|1@1+  -> bit 7    (explicit fault-clear request)
+// Every InvMode is <= 0x13, so bit 7 was always 0 -- Flt_Clear had never been
+// asserted. Used to clear a LATCHED inverter fault (dem_present = 0, condition
+// already gone) that the reset mode words alone do not shift (#148).
+inline constexpr uint8_t  InvFltClearBit         = 0x80u;
 inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
 inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;
-// Torque map (reuses InvTorqueMap* above): pct>=10 -> pct*240/90 - 2400/90
+// Torque map (reuses InvTorqueMap* above): pct>=5 -> pct*240/95 - 1200/95
 // (10%->0, 100%->240), then NEGATED. The negation is a MECHANICAL constraint of
 // the motor (its mounting): forward drive = NEGATIVE Torque_Nm_Req. NOT optional
 // and NOT a protocol quirk -- removing it drives the car the wrong way (verified

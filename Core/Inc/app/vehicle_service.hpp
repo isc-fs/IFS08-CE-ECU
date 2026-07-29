@@ -29,6 +29,12 @@ struct VehicleState {
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
     bool          inv_dem_present   = false;  // 0x461 byte3 bit7: DEM active NOW vs latched history
+    // The two LOWER fault layers, same frame (0x461), never decoded until #148.
+    // The W90's layers cascade upward (manual 9.2), so a latched L3 DEM that
+    // will not clear may be held up by a live L1/L2 condition -- which no CAN
+    // command can clear. Bitmasks, not enums: several bits can be set at once.
+    std::uint16_t inv_pwrstg_bits   = 0;  // 0x461 bits 47-55, L1 PwrStg_BitState (9 bits)
+    std::uint8_t  inv_emctrl_bits   = 0;  // 0x461 bits 39-46, L2 EMCtrl_FOC_BitState (8 bits)
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
@@ -36,6 +42,12 @@ struct VehicleState {
     std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
     std::uint8_t  inv_temp_motor2   = 0;  // 0x464 motor temp 2      (raw)
     std::uint32_t last_inv_tick     = 0;  // any inverter frame
+    // 0x461 SPECIFICALLY (not any inverter frame): inv_state and the DEM ride
+    // on it, and the whole climb/fault ladder is steered by them, so its own
+    // arrival rate is what matters -- last_inv_tick is also refreshed by
+    // 0x463/0x464/0x466 and would mask a slow 0x461 (#148).
+    std::uint32_t last_inv_state_tick = 0;  // 0x461 only
+    std::uint8_t  inv_state_seq       = 0;  // wrapping count of 0x461 frames
     std::uint32_t last_vconfig_tick = 0;  // 0x466 seen -> gates Precharge
     // --- AMS / ACU (FDCAN2) ---
     bool          ok_precharge      = false;  // 0x020 byte0 != 0

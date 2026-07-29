@@ -144,6 +144,19 @@ extern "C" void ecu_control_task_run(void *argument) {
         const CanFrame sp_mode = Inverter::build_setpoint_mode(out.inv_mode);
         const CanFrame sp_tq   = Inverter::build_setpoint_torque(out.torque_pct);
         can_tx_post(sp_mode);
+        // Fault-recovery burst: the reset word alone does not clear a latched
+        // inverter fault -- the follow-up Off(0x01) does (manual 9.3, and the
+        // IFS07 VCU that recovered without a power cycle sent the same
+        // sequence). Non-empty ONLY while inv_state is 10/11, so the healthy
+        // path still emits exactly one 0x360 per cycle (#148).
+        // Flt_Clear rides the LAST follow word only -> the bit pulses low-low-high
+        // each cycle, so an edge-triggered clear sees a fresh rising edge at 100 Hz
+        // instead of one stuck-high level.
+        for (uint8_t i = 0; i < out.inv_mode_follow_n; ++i) {
+            const bool last = (i + 1u == out.inv_mode_follow_n);
+            can_tx_post(Inverter::build_setpoint_mode(out.inv_mode_follow[i],
+                                                      last && out.inv_flt_clear));
+        }
         can_tx_post(sp_tq);
 #if defined(ECU_DEBUG_INV_BRIDGE)
         // DEBUG: mirror our OWN setpoints onto FDCAN2 (0x560/0x562). NEVER flight.
@@ -170,6 +183,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_pedals(in));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh));
+            can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness (#148)
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in));
 #if defined(ECU_DEBUG_INV_BRIDGE)

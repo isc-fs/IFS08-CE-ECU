@@ -302,9 +302,23 @@ static void test_dsl_parity() {
 // mechanical mounting; the E2E bytes go out as 0 (as the original VCU sent them).
 static void test_inverter() {
     std::printf("[inverter]\n");
-    CHECK(Inverter::torque_to_nm_req(5)   == 0,    "<10% (deadband) -> 0");
-    CHECK(Inverter::torque_to_nm_req(10)  == 0,    "10% -> 0 (map start)");
-    CHECK(Inverter::torque_to_nm_req(100) == -240, "100% -> -240 (mapped + mechanically negated)");
+    // Deadband lowered 10 -> 5 (2026-07-29). The map is re-based (240/95, bias
+    // 1200) so the zero-crossing sits at exactly DeadbandLowPct and FULL SCALE
+    // IS UNCHANGED at -240. These three pin all of that: below the band, exactly
+    // at it, and full pedal.
+    CHECK(Inverter::torque_to_nm_req(4)   == 0,    "<5% (deadband) -> 0");
+    CHECK(Inverter::torque_to_nm_req(5)   == 0,    "5% -> 0 (map zero-crossing == deadband)");
+    CHECK(Inverter::torque_to_nm_req(6)   <  0,    "6% -> torque flows immediately past the band");
+    CHECK(Inverter::torque_to_nm_req(10)  <  0,    "10% now produces torque (was 0 before)");
+    CHECK(Inverter::torque_to_nm_req(100) == -240, "100% -> -240 (full scale UNCHANGED)");
+    // Guard the invariant that caused the invisible second deadband: the map
+    // must cross zero exactly at DeadbandLowPct, never above it.
+    CHECK(Inverter::torque_to_nm_req(config::DeadbandLowPct) == 0,
+          "map zero-crossing tracks DeadbandLowPct");
+    CHECK(Inverter::torque_to_nm_req(config::DeadbandLowPct + 1) < 0,
+          "the very next percent past the deadband already commands torque");
+    CHECK(config::AppsAgreementPct < config::DeadbandLowPct,
+          "agreement gate must stay BELOW the deadband or it dictates the onset");
     CHECK(Inverter::torque_to_nm_req(100) <  0,    "forward torque is NEGATIVE (mechanical mounting)");
 
     // 0x360 mode frame: FDCAN1, id 0x360, dlc 3, {0, 0, App_State_Req}.
@@ -440,19 +454,29 @@ static void test_inverter_ts_off_recovery() {
     //     confirmed) theory that an off inverter needs an "on" word first. That
     //     holds an already-off inverter in OFF and never sends Ready, so it can
     //     never climb. Reverted; these asserts stop it coming back. See #148. ---
-    CHECK(o.inv_mode == InvMode::Ready, "OFF(0) inverter -> command Ready (0x04), NOT Off");
+    // OFF(0): Off THEN Ready in the SAME cycle -- the legacy case 0 -> case 3
+    // fall-through. Ready is still always sent; the Off merely precedes it, which
+    // is the difference from #144 (Off INSTEAD of Ready -> could never climb).
+    CHECK(o.inv_mode == InvMode::Off, "OFF(0) inverter -> Off(0x01) first");
+    CHECK(o.inv_mode_follow_n == 1, "OFF(0) -> one follow word");
+    CHECK(o.inv_mode_follow[0] == InvMode::Ready,
+          "OFF(0) -> Ready(0x04) STILL sent, same cycle (this is what #144 never did)");
     CHECK(o.state == CtrlState::WaitInvStandby, "holds in WaitInvStandby until the inverter is ready");
 
-    // Same for a SHUTDOWN(13) report -- still Ready, no special-casing.
+    // SHUTDOWN(13): Off only, exactly as the legacy case 13. Bench-confirmed
+    // 2026-07-29 -- the inverter parks in 13 and will not accept Ready from there
+    // (L1/L2 clean, DEM latched, Ready commanded at 100 Hz, never moved).
     in.inv_state = InvShutdownState;             // 13
     o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.inv_mode == InvMode::Ready, "SHUTDOWN(13) inverter -> command Ready (0x04), NOT Off");
+    CHECK(o.inv_mode == InvMode::Off, "SHUTDOWN(13) inverter -> Off(0x01), legacy case 13");
+    CHECK(o.inv_mode_follow_n == 0, "SHUTDOWN(13) -> no follow word (Off alone, as the legacy)");
     CHECK(o.state == CtrlState::WaitInvStandby, "still waiting (not ready yet)");
 
     // Inverter passes through Standby(3): still Ready, unchanged.
     in.inv_state = InvStandbyState;              // 3
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.inv_mode == InvMode::Ready, "STANDBY(3) inverter -> command Ready (0x04)");
+    CHECK(o.inv_mode_follow_n == 0, "STANDBY(3) -> plain Ready, no Off prefix");
     CHECK(o.state == CtrlState::WaitInvStandby, "waiting for ready");
 
     // Inverter reaches Ready(4): advance to Active and drive torque again -- no
@@ -485,6 +509,185 @@ static void test_inverter_ts_off_recovery() {
         CtrlOutput o2 = c2.step(in2, t2);
         CHECK(o2.inv_mode == InvMode::HardFaultReset,
               "hard fault during the climb -> HardFaultReset (0x0D) wins over the on-word");
+    }
+}
+
+// #148 -- L1/L2 fault-layer decode from 0x461. Both straddle byte boundaries
+// (EMCtrl_FOC_BitState 39|8@1+ -> byte4 b7 + byte5 b0-6; PwrStg_BitState
+// 47|9@1+ -> byte5 b7 + byte6), which is exactly the kind of shift that is easy
+// to get off by one -- hence explicit patterns with known bits set.
+static void test_inverter_fault_layers() {
+    std::printf("[inverter_fault_layers]\n");
+    VehicleService& vs = VehicleService::instance();
+
+    // byte4 = App_State_App(4=Ready) | EMCtrl bit0 (Init OK) in b7
+    // byte5 = EMCtrl bits1-7 = 0 ; PwrStg bit0 (Alive) in b7
+    // byte6 = PwrStg bits1-8 = 0b00000001 -> Enable (bit1)
+    CanFrame f{};
+    f.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    f.id  = config::InvRxStateId;                 // 0x461
+    f.dlc = 7;
+    f.data[2] = 2;                                // DEM_Code low byte = Undervoltage
+    f.data[3] = 0x00;                             // DEM_Present = 0 (latched)
+    f.data[4] = 0x04 | 0x80;                      // App_State 4 + EMCtrl b0
+    f.data[5] = 0x80;                             // EMCtrl b1-7 = 0, PwrStg b0 = 1
+    f.data[6] = 0x01;                             // PwrStg b1 = 1
+    CHECK(vs.update_from_frame(f), "0x461 DLC 7 accepted");
+    const VehicleState v = vs.snapshot();
+    CHECK(v.inv_state == 4, "App_State_App still decodes (byte4 b0-6)");
+    CHECK(v.inv_error == 2, "DEM_Code low byte = 2 (Undervoltage)");
+    CHECK(!v.inv_dem_present, "DEM_Present clear -> latched history, condition gone");
+    CHECK(v.inv_emctrl_bits == 0x01, "L2: only Init_OK set");
+    CHECK(v.inv_pwrstg_bits == 0x003, "L1: Alive|Enable set (healthy idle)");
+
+    // A real interlock trip: PwrStg HVIL_Open is bit5 -> value 32.
+    // bits 1..8 live in byte6, so bit5 = byte6 bit4 = 0x10.
+    f.data[6] = 0x01 | 0x10;
+    CHECK(vs.update_from_frame(f), "second 0x461 accepted");
+    CHECK(vs.snapshot().inv_pwrstg_bits == 0x023, "L1: Alive|Enable|HVIL_Open (0x23)");
+
+    // Short frame: must NOT clobber the layers, and must still yield inv_state.
+    f.dlc = 5;
+    f.data[4] = 0x0A;                             // App_State 10 (SoftFault)
+    CHECK(vs.update_from_frame(f), "0x461 DLC 5 still accepted");
+    CHECK(vs.snapshot().inv_state == 10, "short frame still decodes inv_state");
+    CHECK(vs.snapshot().inv_pwrstg_bits == 0x023, "short frame leaves L1 untouched");
+
+    // 0x461 freshness tracking (#148): last_inv_state_tick and inv_state_seq
+    // must advance on 0x461 ONLY -- last_inv_tick is also bumped by 0x463/64/66
+    // and would hide a slow 0x461, which is the exact thing being measured.
+    {
+        CanFrame g{};
+        g.bus = static_cast<std::uint8_t>(CanBus::Inv);
+        g.id  = config::InvRxStateId;                 // 0x461
+        g.dlc = 7;
+        g.data[4] = 0x03;                             // App_State 3
+        g.timestamp_ms = 1000;
+        const std::uint8_t seq0 = vs.snapshot().inv_state_seq;
+        CHECK(vs.update_from_frame(g), "0x461 accepted (freshness)");
+        CHECK(vs.snapshot().last_inv_state_tick == 1000, "0x461 stamps last_inv_state_tick");
+        CHECK(static_cast<std::uint8_t>(vs.snapshot().inv_state_seq - seq0) == 1,
+              "0x461 increments inv_state_seq by exactly 1");
+
+        // a DIFFERENT inverter frame must NOT touch either -- that is the point
+        CanFrame r{};
+        r.bus = static_cast<std::uint8_t>(CanBus::Inv);
+        r.id  = config::InvRxRpmId;                   // 0x463
+        r.dlc = 8;
+        r.timestamp_ms = 2000;
+        const std::uint8_t seq1 = vs.snapshot().inv_state_seq;
+        CHECK(vs.update_from_frame(r), "0x463 accepted");
+        CHECK(vs.snapshot().last_inv_state_tick == 1000,
+              "0x463 does NOT refresh last_inv_state_tick (would mask a slow 0x461)");
+        CHECK(vs.snapshot().inv_state_seq == seq1, "0x463 does NOT bump inv_state_seq");
+        CHECK(vs.snapshot().last_inv_tick == 2000, "0x463 DOES refresh the generic last_inv_tick");
+    }
+
+    // NOTE: no builder round-trip here -- pit_diag.cpp is deliberately outside
+    // the SIL target (6 units, no HAL), so PitDiag::build_inv_faults is not
+    // linked. The DSL encode path is covered by test_dsl_parity.
+}
+
+// #148 -- the fault-recovery BURST. A latched inverter fault is NOT cleared by
+// its reset word alone. The W90 manual 9.3 says going to OFF is what restarts a
+// FAULT (0x0D/0x13 are bench-derived and appear nowhere in its App_State_Req
+// list), and the IFS07 VCU that recovered without a power cycle sent the reset
+// word AND Off in the same pass -- its App_State switch fell through with no
+// breaks (soft -> 0x13, 0x0D, 0x01; hard -> 0x0D, 0x01).
+//
+// The 2026-07-24 bench capture is the evidence: inverter latched SoftFault(10),
+// dem_present ACTIVE, DC bus 355 V, ECU commanding 0x13 forever (inv_mode_cmd
+// on 0x702) -- it never cleared, so WaitInvStandby hung and torque never
+// returned without an LV power cycle.
+static void test_inverter_fault_burst() {
+    std::printf("[inverter_fault_burst]\n");
+
+    Controller c;
+    uint32_t t = 1000;
+    drive_to_active(c, t);
+    CtrlInputs in = good_drive_inputs();
+
+    // --- SOFT fault (10) -> 0x13, then 0x0D, then Off(0x01). Legacy order. ---
+    in.inv_state = InvSoftFaultState;            // 10
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Fault, "soft fault -> primary word Fault (0x13)");
+    CHECK(o.inv_mode_follow_n == 2, "soft fault -> two follow-up words");
+    CHECK(o.inv_mode_follow[0] == InvMode::HardFaultReset, "soft fault follow #1 = 0x0D");
+    CHECK(o.inv_mode_follow[1] == InvMode::Off,
+          "soft fault follow #2 = Off (0x01) -- the word the manual says clears a FAULT");
+    CHECK(o.inv_flt_clear, "soft fault -> Flt_Clear asserted on the trailing Off");
+    CHECK(o.torque_pct == 0, "no torque while faulted");
+
+    // --- HARD fault (11) -> 0x0D, then Off(0x01). ---
+    in.inv_state = InvHardFaultState;            // 11
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::HardFaultReset, "hard fault -> primary word 0x0D");
+    CHECK(o.inv_mode_follow_n == 1, "hard fault -> one follow-up word");
+    CHECK(o.inv_mode_follow[0] == InvMode::Off, "hard fault follow = Off (0x01)");
+    CHECK(o.inv_flt_clear, "hard fault -> Flt_Clear asserted on the trailing Off");
+
+    // --- Healthy inverter -> NO burst. The normal path must still emit exactly
+    //     one 0x360 per cycle; this is the bus-load guard (#132). ---
+    in.inv_state = InvReadyState;                // 4
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode_follow_n == 0, "healthy inverter -> no follow-up words");
+    CHECK(!o.inv_flt_clear, "healthy inverter -> Flt_Clear NOT asserted");
+    CHECK(o.inv_mode == InvMode::TorqueEnable, "healthy in Active -> TorqueEnable, unchanged");
+
+    // --- AmsError still INHIBITS: Off only, no reset words, no burst. ---
+    in.ams_error = true;
+    in.inv_state = InvSoftFaultState;            // fault present but suppressed
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::AmsError, "ams_error -> AmsError from any state");
+    CHECK(o.inv_mode == InvMode::Off, "AmsError commands Off only");
+    CHECK(o.inv_mode_follow_n == 0, "AmsError inhibits the fault burst too");
+    CHECK(!o.inv_flt_clear, "AmsError does not assert Flt_Clear either");
+
+    // --- Wire format: Flt_Clear is byte 2 bit 7, packed WITH App_State_Req. ---
+    {
+        const CanFrame plain = Inverter::build_setpoint_mode(InvMode::Off);
+        CHECK(plain.data[2] == 0x01, "Off without Flt_Clear -> byte2 == 0x01 (bit7 clear)");
+        const CanFrame clr = Inverter::build_setpoint_mode(InvMode::Off, true);
+        CHECK(clr.data[2] == 0x81, "Off WITH Flt_Clear -> byte2 == 0x81 (App_State_Req 1 | bit7)");
+        CHECK(clr.id == InvTxSetpointModeId && clr.dlc == InvTxSetpointModeDlc,
+              "Flt_Clear rides the same 0x360 DLC 3 frame");
+        CHECK(clr.data[0] == 0 && clr.data[1] == 0, "bytes 0-1 stay zero");
+    }
+
+    // --- End-to-end: the burst clears the fault and the drive comes back with
+    //     NO power cycle -- the whole point of #148. ---
+    {
+        Controller c2;
+        uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+
+        in2.ok_precharge = false;                        // TS off
+        in2.inv_state    = InvSoftFaultState;            // inverter latches soft fault
+        CtrlOutput o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.state == CtrlState::Precharge, "TS-off -> Precharge");
+        CHECK(o2.inv_mode_follow_n == 2, "burst is emitted pre-R2D too (not only in the climb)");
+
+        in2.ok_precharge = true;                         // HV back (355 V on the bench)
+        c2.step(in2, t2); t2 += ControlPeriodMs;         // -> WaitStartBrake
+        in2.start_button = true; in2.brake_raw = BrakeArmRaw + 100;
+        c2.step(in2, t2); t2 += ControlPeriodMs;         // -> R2dDelay
+        in2.start_button = false; in2.brake_raw = 0; t2 += R2dSoundMs;
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;    // -> WaitInvStandby
+        CHECK(o2.state == CtrlState::WaitInvStandby, "R2D re-arm -> WaitInvStandby");
+        CHECK(o2.inv_mode == InvMode::Fault, "still faulted -> reset word wins over Ready");
+        CHECK(o2.inv_mode_follow[1] == InvMode::Off, "...and Off still follows it");
+
+        in2.inv_state = InvStandbyState;                 // 3 -- the burst cleared it
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.inv_mode == InvMode::Ready, "cleared -> back to commanding Ready (0x04)");
+        CHECK(o2.inv_mode_follow_n == 0, "no burst once the fault is gone");
+
+        in2.inv_state = InvReadyState;                   // 4
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.state == CtrlState::Active, "READY(4) -> Active");
+        o2 = c2.step(in2, t2);
+        CHECK(o2.torque_pct == 100, "torque flows again -- recovered with NO power cycle");
     }
 }
 
@@ -937,6 +1140,8 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_ts_off_recovery();
+    test_inverter_fault_burst();
+    test_inverter_fault_layers();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -966,6 +1171,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
+    else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
+    else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
