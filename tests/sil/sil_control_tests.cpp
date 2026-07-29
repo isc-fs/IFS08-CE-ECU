@@ -488,6 +488,94 @@ static void test_inverter_ts_off_recovery() {
     }
 }
 
+// #148 -- the fault-recovery BURST. A latched inverter fault is NOT cleared by
+// its reset word alone. The W90 manual 9.3 says going to OFF is what restarts a
+// FAULT (0x0D/0x13 are bench-derived and appear nowhere in its App_State_Req
+// list), and the IFS07 VCU that recovered without a power cycle sent the reset
+// word AND Off in the same pass -- its App_State switch fell through with no
+// breaks (soft -> 0x13, 0x0D, 0x01; hard -> 0x0D, 0x01).
+//
+// The 2026-07-24 bench capture is the evidence: inverter latched SoftFault(10),
+// dem_present ACTIVE, DC bus 355 V, ECU commanding 0x13 forever (inv_mode_cmd
+// on 0x702) -- it never cleared, so WaitInvStandby hung and torque never
+// returned without an LV power cycle.
+static void test_inverter_fault_burst() {
+    std::printf("[inverter_fault_burst]\n");
+
+    Controller c;
+    uint32_t t = 1000;
+    drive_to_active(c, t);
+    CtrlInputs in = good_drive_inputs();
+
+    // --- SOFT fault (10) -> 0x13, then 0x0D, then Off(0x01). Legacy order. ---
+    in.inv_state = InvSoftFaultState;            // 10
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::Fault, "soft fault -> primary word Fault (0x13)");
+    CHECK(o.inv_mode_follow_n == 2, "soft fault -> two follow-up words");
+    CHECK(o.inv_mode_follow[0] == InvMode::HardFaultReset, "soft fault follow #1 = 0x0D");
+    CHECK(o.inv_mode_follow[1] == InvMode::Off,
+          "soft fault follow #2 = Off (0x01) -- the word the manual says clears a FAULT");
+    CHECK(o.torque_pct == 0, "no torque while faulted");
+
+    // --- HARD fault (11) -> 0x0D, then Off(0x01). ---
+    in.inv_state = InvHardFaultState;            // 11
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode == InvMode::HardFaultReset, "hard fault -> primary word 0x0D");
+    CHECK(o.inv_mode_follow_n == 1, "hard fault -> one follow-up word");
+    CHECK(o.inv_mode_follow[0] == InvMode::Off, "hard fault follow = Off (0x01)");
+
+    // --- Healthy inverter -> NO burst. The normal path must still emit exactly
+    //     one 0x360 per cycle; this is the bus-load guard (#132). ---
+    in.inv_state = InvReadyState;                // 4
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.inv_mode_follow_n == 0, "healthy inverter -> no follow-up words");
+    CHECK(o.inv_mode == InvMode::TorqueEnable, "healthy in Active -> TorqueEnable, unchanged");
+
+    // --- AmsError still INHIBITS: Off only, no reset words, no burst. ---
+    in.ams_error = true;
+    in.inv_state = InvSoftFaultState;            // fault present but suppressed
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::AmsError, "ams_error -> AmsError from any state");
+    CHECK(o.inv_mode == InvMode::Off, "AmsError commands Off only");
+    CHECK(o.inv_mode_follow_n == 0, "AmsError inhibits the fault burst too");
+
+    // --- End-to-end: the burst clears the fault and the drive comes back with
+    //     NO power cycle -- the whole point of #148. ---
+    {
+        Controller c2;
+        uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+
+        in2.ok_precharge = false;                        // TS off
+        in2.inv_state    = InvSoftFaultState;            // inverter latches soft fault
+        CtrlOutput o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.state == CtrlState::Precharge, "TS-off -> Precharge");
+        CHECK(o2.inv_mode_follow_n == 2, "burst is emitted pre-R2D too (not only in the climb)");
+
+        in2.ok_precharge = true;                         // HV back (355 V on the bench)
+        c2.step(in2, t2); t2 += ControlPeriodMs;         // -> WaitStartBrake
+        in2.start_button = true; in2.brake_raw = BrakeArmRaw + 100;
+        c2.step(in2, t2); t2 += ControlPeriodMs;         // -> R2dDelay
+        in2.start_button = false; in2.brake_raw = 0; t2 += R2dSoundMs;
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;    // -> WaitInvStandby
+        CHECK(o2.state == CtrlState::WaitInvStandby, "R2D re-arm -> WaitInvStandby");
+        CHECK(o2.inv_mode == InvMode::Fault, "still faulted -> reset word wins over Ready");
+        CHECK(o2.inv_mode_follow[1] == InvMode::Off, "...and Off still follows it");
+
+        in2.inv_state = InvStandbyState;                 // 3 -- the burst cleared it
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.inv_mode == InvMode::Ready, "cleared -> back to commanding Ready (0x04)");
+        CHECK(o2.inv_mode_follow_n == 0, "no burst once the fault is gone");
+
+        in2.inv_state = InvReadyState;                   // 4
+        o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+        CHECK(o2.state == CtrlState::Active, "READY(4) -> Active");
+        o2 = c2.step(in2, t2);
+        CHECK(o2.torque_pct == 100, "torque flows again -- recovered with NO power cycle");
+    }
+}
+
 // Inverter RX decode: 0x463 rpm (20-bit signed @ bit 44 -- the bit-44 fix, byte
 // patterns verified vs the NX DBC with cantools) and 0x464 temps (raw bytes pass
 // through; the DBC -50 offset turns them into degC on decode).
@@ -937,6 +1025,7 @@ static void run_all() {
     test_inverter();
     test_inverter_fault_recovery();
     test_inverter_ts_off_recovery();
+    test_inverter_fault_burst();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -966,6 +1055,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
+    else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

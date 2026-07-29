@@ -144,6 +144,14 @@ extern "C" void ecu_control_task_run(void *argument) {
         const CanFrame sp_mode = Inverter::build_setpoint_mode(out.inv_mode);
         const CanFrame sp_tq   = Inverter::build_setpoint_torque(out.torque_pct);
         can_tx_post(sp_mode);
+        // Fault-recovery burst: the reset word alone does not clear a latched
+        // inverter fault -- the follow-up Off(0x01) does (manual 9.3, and the
+        // IFS07 VCU that recovered without a power cycle sent the same
+        // sequence). Non-empty ONLY while inv_state is 10/11, so the healthy
+        // path still emits exactly one 0x360 per cycle (#148).
+        for (uint8_t i = 0; i < out.inv_mode_follow_n; ++i) {
+            can_tx_post(Inverter::build_setpoint_mode(out.inv_mode_follow[i]));
+        }
         can_tx_post(sp_tq);
 #if defined(ECU_DEBUG_INV_BRIDGE)
         // DEBUG: mirror our OWN setpoints onto FDCAN2 (0x560/0x562). NEVER flight.

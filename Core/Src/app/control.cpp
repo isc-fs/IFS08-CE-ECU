@@ -151,6 +151,9 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     }
 
     InvMode mode = InvMode::Off;
+    // Follow-up mode words for the fault burst below (see CtrlOutput).
+    InvMode follow[2] = { InvMode::Off, InvMode::Off };
+    uint8_t follow_n = 0;
     bool    rtds = false;
     bool    drive = false;
     uint8_t cmd_torque = 0;
@@ -205,11 +208,23 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // at WaitInvStandby forever waiting for a ready state that never comes. Torque
     // is already 0 outside the Active healthy path, so this never drives a fault.
     // Not applied in AmsError (that state inhibits -- Off is the safe command).
+    //
+    // The reset word is followed, IN THE SAME CYCLE, by Off(0x01) -- see
+    // CtrlOutput::inv_mode_follow. Sending only the reset word leaves the fault
+    // standing: manual 9.3 says going to OFF is what restarts a FAULT, and the
+    // IFS07 VCU's fall-through switch always ended on 0x01. A 2026-07-24 bench
+    // capture caught exactly this -- inverter latched SoftFault(10) with the DC
+    // bus at 355 V while the ECU commanded 0x13 forever and it never cleared.
     if (state_ != CtrlState::AmsError) {
         if (in.inv_state == InvHardFaultState) {
-            mode = InvMode::HardFaultReset;
+            mode      = InvMode::HardFaultReset;   // 0x0D
+            follow[0] = InvMode::Off;              // 0x01 -- the documented clear
+            follow_n  = 1;
         } else if (in.inv_state == InvSoftFaultState) {
-            mode = InvMode::Fault;
+            mode      = InvMode::Fault;            // 0x13
+            follow[0] = InvMode::HardFaultReset;   // 0x0D
+            follow[1] = InvMode::Off;              // 0x01 -- the documented clear
+            follow_n  = 2;
         }
     }
 
@@ -217,6 +232,9 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.state       = state_;
     out.torque_pct  = cmd_torque;
     out.inv_mode    = mode;
+    out.inv_mode_follow[0]  = follow[0];
+    out.inv_mode_follow[1]  = follow[1];
+    out.inv_mode_follow_n   = follow_n;
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;
     out.ev_2_3      = ev23_latched_;
