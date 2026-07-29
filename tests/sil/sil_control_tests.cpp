@@ -488,6 +488,52 @@ static void test_inverter_ts_off_recovery() {
     }
 }
 
+// #148 -- L1/L2 fault-layer decode from 0x461. Both straddle byte boundaries
+// (EMCtrl_FOC_BitState 39|8@1+ -> byte4 b7 + byte5 b0-6; PwrStg_BitState
+// 47|9@1+ -> byte5 b7 + byte6), which is exactly the kind of shift that is easy
+// to get off by one -- hence explicit patterns with known bits set.
+static void test_inverter_fault_layers() {
+    std::printf("[inverter_fault_layers]\n");
+    VehicleService& vs = VehicleService::instance();
+
+    // byte4 = App_State_App(4=Ready) | EMCtrl bit0 (Init OK) in b7
+    // byte5 = EMCtrl bits1-7 = 0 ; PwrStg bit0 (Alive) in b7
+    // byte6 = PwrStg bits1-8 = 0b00000001 -> Enable (bit1)
+    CanFrame f{};
+    f.bus = static_cast<std::uint8_t>(CanBus::Inv);
+    f.id  = config::InvRxStateId;                 // 0x461
+    f.dlc = 7;
+    f.data[2] = 2;                                // DEM_Code low byte = Undervoltage
+    f.data[3] = 0x00;                             // DEM_Present = 0 (latched)
+    f.data[4] = 0x04 | 0x80;                      // App_State 4 + EMCtrl b0
+    f.data[5] = 0x80;                             // EMCtrl b1-7 = 0, PwrStg b0 = 1
+    f.data[6] = 0x01;                             // PwrStg b1 = 1
+    CHECK(vs.update_from_frame(f), "0x461 DLC 7 accepted");
+    const VehicleState v = vs.snapshot();
+    CHECK(v.inv_state == 4, "App_State_App still decodes (byte4 b0-6)");
+    CHECK(v.inv_error == 2, "DEM_Code low byte = 2 (Undervoltage)");
+    CHECK(!v.inv_dem_present, "DEM_Present clear -> latched history, condition gone");
+    CHECK(v.inv_emctrl_bits == 0x01, "L2: only Init_OK set");
+    CHECK(v.inv_pwrstg_bits == 0x003, "L1: Alive|Enable set (healthy idle)");
+
+    // A real interlock trip: PwrStg HVIL_Open is bit5 -> value 32.
+    // bits 1..8 live in byte6, so bit5 = byte6 bit4 = 0x10.
+    f.data[6] = 0x01 | 0x10;
+    CHECK(vs.update_from_frame(f), "second 0x461 accepted");
+    CHECK(vs.snapshot().inv_pwrstg_bits == 0x023, "L1: Alive|Enable|HVIL_Open (0x23)");
+
+    // Short frame: must NOT clobber the layers, and must still yield inv_state.
+    f.dlc = 5;
+    f.data[4] = 0x0A;                             // App_State 10 (SoftFault)
+    CHECK(vs.update_from_frame(f), "0x461 DLC 5 still accepted");
+    CHECK(vs.snapshot().inv_state == 10, "short frame still decodes inv_state");
+    CHECK(vs.snapshot().inv_pwrstg_bits == 0x023, "short frame leaves L1 untouched");
+
+    // NOTE: no builder round-trip here -- pit_diag.cpp is deliberately outside
+    // the SIL target (6 units, no HAL), so PitDiag::build_inv_faults is not
+    // linked. The DSL encode path is covered by test_dsl_parity.
+}
+
 // #148 -- the fault-recovery BURST. A latched inverter fault is NOT cleared by
 // its reset word alone. The W90 manual 9.3 says going to OFF is what restarts a
 // FAULT (0x0D/0x13 are bench-derived and appear nowhere in its App_State_Req
@@ -1041,6 +1087,7 @@ static void run_all() {
     test_inverter_fault_recovery();
     test_inverter_ts_off_recovery();
     test_inverter_fault_burst();
+    test_inverter_fault_layers();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1071,6 +1118,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-recovery"))  test_inverter_fault_recovery();
     else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
     else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
+    else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

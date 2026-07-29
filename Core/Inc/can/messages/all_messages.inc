@@ -31,6 +31,7 @@
 #include "pit_diag_brake.def"       /* 0x705                                  */
 #include "pit_diag_inverter.def"    /* 0x702                                  */
 #include "pit_diag_inverter_temps.def" /* 0x706  inverter temperatures        */
+#include "pit_diag_inv_faults.def"  /* 0x708  inverter L1/L2 fault layers     */
 #include "pit_diag_fwinfo.def"      /* 0x703                                  */
 #include "pit_diag_health.def"      /* 0x704                                  */
 #include "pit_diag_dv.def"          /* 0x707  DV drive-mode + autonomy (#109)  */

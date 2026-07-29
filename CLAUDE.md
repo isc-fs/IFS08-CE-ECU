@@ -146,6 +146,7 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING; `brake_pressure` está **hardcodeado a 0** hoy) |
 | 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) |
 | 0x707 | PitDiag_dv       | `dv_r2d_req` · `brake_over_limit` · `r2d_confirm` · torque uDV — diagnóstico del modo driverless |
+| 0x708 | PitDiag_inv_faults | Capas de fallo **L1 `PwrStg`** (9 bits) y **L2 `EMCtrl`** (8 bits) del 0x461, con nombre bit a bit + el lado **comandado** (`cmd_follow_n`, `cmd_flt_clear`). El DEM (L3) por sí solo no distingue un latch limpiable de una condición L1/L2 viva que lo sostiene (#148) |
 
 > **`0x704` se emite siempre (ungated)** desde `DiagTask`, fuera del gate `0x7E0`, para que
 > `reset_cause` y la liveness por tarea sean visibles en CAN nada más arrancar y sobrevivan
