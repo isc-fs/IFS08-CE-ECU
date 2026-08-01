@@ -15,6 +15,8 @@
 #include "app/ecu_config.hpp"
 #include "app/inverter.hpp"
 #include "app/io_signals.hpp"
+#include "app/cal_session.hpp"
+#include "app/pedal_cal_nvm.hpp"
 #include "app/pit_diag.hpp"
 #include "app/udv_tx.hpp"
 #include "app/vehicle_service.hpp"
@@ -33,6 +35,26 @@ extern "C" void ecu_control_task_run(void *argument) {
 
     Controller ctrl;
     IoSignals  io;
+    // The ACTIVE pedal calibration, loaded ONCE at task start from the
+    // bootloader NVM sector (#169). load_cal_from_nvm never fails: absent,
+    // torn, unknown-version or invalid records all return the compile-time
+    // defaults, because refusing to drive over a bad calibration would be worse
+    // than running the values the car shipped with. The outcome is latched into
+    // a global so the diagnostic stream can announce a silent fallback -- an
+    // operator MUST be able to tell "my calibration is live" from "the ECU
+    // quietly ignored it".
+    const CalLoadResult cal_load =
+        load_cal_from_nvm(reinterpret_cast<const void*>(CalNvmBase), CalNvmSize);
+    // NOT const: a valid commit applies immediately (apply-on-commit). Safe by
+    // construction -- a session only opens while the vehicle is quiescent, so
+    // the calibration never changes under a moving car, and the operator's
+    // read-back verification then reflects what they just committed rather
+    // than the old values plus an instruction to power-cycle.
+    PedalCal   cal = cal_load.cal;
+    CalSession cal_session;
+    uint32_t   last_cal_status = 0;
+    g_cal_load_status  = static_cast<std::uint8_t>(cal_load.status);
+    g_cal_load_flags   = cal_load.flags;
     auto&      vs       = VehicleService::instance();
     uint32_t   last_pit = 0;
     uint32_t   last_udv = 0;
@@ -48,6 +70,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         const VehicleState veh = vs.snapshot();
 
         CtrlInputs ci{};
+        ci.cal = cal;
         ci.apps1_raw         = in.apps1_raw;
         ci.apps2_raw         = in.apps2_raw;
         ci.brake_raw         = in.brake_raw;
@@ -108,6 +131,68 @@ extern "C" void ecu_control_task_run(void *argument) {
         g_last_ev_2_3        = out.ev_2_3   ? 1u : 0u;
         g_last_t11_8_9       = out.t11_8_9  ? 1u : 0u;
 
+        // --- calibration session (#169) ------------------------------------
+        // Entry is gated on a genuinely quiescent car: TS down, not in the
+        // drive state, no torque commanded and the motor stopped. All four,
+        // because a pedal calibration that changed under load could command
+        // torque the driver did not ask for.
+        {
+            CalSessionInputs cs{};
+            cs.vehicle_safe = !ci.ok_precharge &&
+                              out.state != CtrlState::Active &&
+                              out.torque_pct == 0u &&
+                              veh.inv_rpm == 0;
+            cs.apps1_raw = in.apps1_raw;
+            cs.apps2_raw = in.apps2_raw;
+            cs.brake_raw = in.brake_raw;
+            cs.now_ms    = now;
+
+            bool emit = false;
+            CalSessionOutput cso{};
+            std::uint8_t last_cmd = 0;
+
+            if (g_cal_cmd_pending != 0u) {
+                last_cmd = g_cal_cmd;
+                cso = cal_session.handle(static_cast<CalCmd>(g_cal_cmd), g_cal_arg,
+                                         g_cal_guard, cs, cal);
+                g_cal_cmd_pending = 0u;
+                emit = true;
+
+                if (cso.commit_requested) {
+                    // APPLY FIRST, then persist. The operator is standing at the
+                    // car and will verify by sweeping the pedals, so the live
+                    // values must be the ones they just committed.
+                    cal = cso.to_commit;
+                    // Persistence is step 5. Until it lands the calibration is
+                    // live for THIS power cycle only, and saying so is the
+                    // honest answer -- silently applying something that
+                    // evaporates on the next boot is exactly the confusion the
+                    // 0x704 cal_status announcement exists to prevent.
+                    cal_session.note_persist_failed();
+                    cso.state  = CalSessionState::Error;
+                    cso.result = CalResult::NvmWriteFailed;
+                }
+            } else if (cal_session.tick(cs)) {
+                emit = true;                       // session timed out
+                cso.state = cal_session.state();
+                cso.result = CalResult::NotInSession;
+            } else if (cal_session.state() != CalSessionState::Idle &&
+                       static_cast<uint32_t>(now - last_cal_status) >= config::PitDiagStreamMs) {
+                emit = true;                       // heartbeat while a session is open
+                cso.state = cal_session.state();
+                cso.captured_mask = cal_session.captured_mask();
+            }
+
+            if (emit) {
+                last_cal_status = now;
+                can_tx_post(PitDiag::build_cal_status(cso, last_cmd, g_cal_load_status));
+                if (cso.emit_values) {
+                    can_tx_post(PitDiag::build_cal_apps(cso.values));
+                    can_tx_post(PitDiag::build_cal_brake(cso.values));
+                }
+            }
+        }
+
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
             VCU_heartbeat_t hb{};
@@ -131,7 +216,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         if (static_cast<uint32_t>(now - last_udv) >= config::UdvTxPeriodMs) {
             last_udv = now;
             can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
-            can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
+            can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > ci.cal.brake_dv_hard));
             // 0x511 R2D confirm: repeated at 100 ms (loss-robust) with the DV
             // latch as the value -- uDV keys on byte0 != 0.
             can_tx_post(UdvTx::build_r2d_confirm(out.dv_mode));
@@ -180,12 +265,12 @@ extern "C" void ecu_control_task_run(void *argument) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
-            can_tx_post(PitDiag::build_pedals(in));
+            can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh));
             can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness (#148)
             can_tx_post(PitDiag::build_fwinfo());
-            can_tx_post(PitDiag::build_brake(in));
+            can_tx_post(PitDiag::build_brake(in, ci.cal));
 #if defined(ECU_DEBUG_INV_BRIDGE)
             // DEBUG: FDCAN1 (inverter bus) TX health. 0x57F =
             // [TxErrCnt, RxErrCnt, LastErrorCode, flags(b0=busoff,b1=errpassive,b2=warn), activity].

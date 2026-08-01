@@ -10,6 +10,8 @@
 
 #include "app/can_frame.hpp"
 #include "app/control.hpp"
+#include "app/cal_session.hpp"
+#include "app/pedal_cal.hpp"
 #include "app/error_latch.hpp"
 #include "app/io_signals.hpp"
 #include "app/reset_cause.hpp"
@@ -35,7 +37,8 @@ public:
                                  bool start_button) noexcept;   // 0x700
     static CanFrame build_dv(const CtrlOutput& c, const CtrlInputs& in,
                              const VehicleState& v) noexcept;   // 0x707
-    static CanFrame build_pedals(const IoInputs& io) noexcept;  // 0x701
+    static CanFrame build_pedals(const IoInputs& io,
+                                 const PedalCal& cal) noexcept;  // 0x701
     // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360
     // this cycle (CtrlOutput::inv_mode) -- everything else in the frame is what
     // the inverter REPORTS. Passed in rather than mirrored through a global: the
@@ -52,8 +55,16 @@ public:
                                     std::uint32_t now_ms) noexcept;  // 0x708
     static CanFrame build_fwinfo() noexcept;                    // 0x703
     static CanFrame build_health(const HealthMetrics& m) noexcept;  // 0x704
-    static CanFrame build_brake(const IoInputs& io) noexcept;   // 0x705
+    static CanFrame build_brake(const IoInputs& io,
+                                const PedalCal& cal) noexcept;   // 0x705
     static CanFrame build_ack(bool enabled) noexcept;           // 0x7E1
+    // Calibration session (#169). cal_load mirrors the boot-time outcome so the
+    // calibration view does not have to also watch 0x704.
+    static CanFrame build_cal_status(const CalSessionOutput& o,
+                                     std::uint8_t last_cmd,
+                                     std::uint8_t cal_load) noexcept;   // 0x7E3
+    static CanFrame build_cal_apps(const PedalCal& c) noexcept;         // 0x7E4
+    static CanFrame build_cal_brake(const PedalCal& c) noexcept;        // 0x7E5
 };
 
 }  // namespace ecu

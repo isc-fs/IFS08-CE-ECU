@@ -6,6 +6,12 @@ extern "C" {
 volatile uint32_t g_task_step[ECU_TASK_COUNT] = {};
 volatile uint8_t  g_pit_diag_enabled = 0;
 volatile uint32_t g_can_tx_dropped = 0u;
+volatile uint8_t  g_cal_cmd_pending = 0u;
+volatile uint8_t  g_cal_cmd = 0u;
+volatile uint8_t  g_cal_arg = 0u;
+volatile uint32_t g_cal_guard = 0u;
+volatile uint8_t  g_cal_load_status = 0u;   /* ecu::CalLoad::Defaults */
+volatile uint8_t  g_cal_load_flags  = 0u;
 uint32_t g_last_torque_pct = 0;
 uint8_t  g_last_ctrl_state = 0;
 uint16_t g_last_apps1_raw = 0;

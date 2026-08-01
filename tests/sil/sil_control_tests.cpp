@@ -18,6 +18,8 @@
 #include <cstring>
 
 #include "app/control.hpp"
+#include "app/cal_session.hpp"
+#include "app/pedal_cal_nvm.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
@@ -509,6 +511,407 @@ static void test_inverter_ts_off_recovery() {
         CtrlOutput o2 = c2.step(in2, t2);
         CHECK(o2.inv_mode == InvMode::HardFaultReset,
               "hard fault during the climb -> HardFaultReset (0x0D) wins over the on-word");
+    }
+}
+
+// #169 -- pedal calibration as RUNTIME data. Two things must hold: the
+// defaults reproduce the old constexpr behaviour EXACTLY (so landing this is a
+// no-op on the car), and validate_cal() rejects anything that could make a
+// released pedal produce torque.
+static void test_pedal_cal() {
+    std::printf("[pedal_cal]\n");
+
+    // --- defaults are the old constexpr values, bit for bit ---
+    PedalCal d{};
+    CHECK(d.apps1_min == config::Apps1AdcMin && d.apps1_max == config::Apps1AdcMax,
+          "default APPS1 cal == the old constexpr pair");
+    CHECK(d.apps2_min == config::Apps2AdcMin && d.apps2_max == config::Apps2AdcMax,
+          "default APPS2 cal == the old constexpr pair");
+    CHECK(d.brake_arm == config::BrakeArmRaw &&
+          d.brake_dv_hard == config::BrakeDvHardRaw &&
+          d.brake_pressed == config::BrakePressedRaw,
+          "default brake thresholds == the old constexpr values");
+    CHECK(validate_cal(d) == 0, "the shipped default calibration is itself valid");
+
+    // --- the core actually USES the passed-in calibration, not a global ---
+    {
+        CtrlInputs in = good_drive_inputs();
+        in.apps1_raw = 3000; in.apps2_raw = 2700;   // mid travel on the defaults
+        Controller c1; uint32_t t = 1000;
+        drive_to_active(c1, t);
+        const uint8_t with_default = c1.step(in, t).torque_pct;
+
+        // Halve both spans: the SAME raw reading must now read much higher.
+        in.cal.apps1_max = static_cast<std::uint16_t>(
+            in.cal.apps1_min + (config::Apps1AdcMax - config::Apps1AdcMin) / 2);
+        in.cal.apps2_max = static_cast<std::uint16_t>(
+            in.cal.apps2_min + (config::Apps2AdcMax - config::Apps2AdcMin) / 2);
+        Controller c2; uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        const uint8_t with_narrow = c2.step(in, t2).torque_pct;
+        CHECK(with_narrow > with_default,
+              "narrowing the calibrated span raises the reported pedal % (cal is live)");
+    }
+
+    // --- the brake thresholds are live too ---
+    {
+        CtrlInputs in = good_drive_inputs();
+        in.brake_raw = 1200;                 // above a lowered arm, below the default
+        in.start_button = true;
+        Controller c1; uint32_t t = 1000;
+        // default arm is 750, so 1200 already arms -- lower the bar and confirm
+        // the DV gate moves with the calibration rather than the constant.
+        in.cal.brake_dv_hard = 1000;
+        CHECK(in.brake_raw > in.cal.brake_dv_hard, "DV hard-brake gate follows the cal");
+        (void)c1; (void)t;
+    }
+
+    // --- validation: each rule, one at a time ---
+    { PedalCal c{}; c.apps1_max = static_cast<std::uint16_t>(c.apps1_min + 10);
+      CHECK((validate_cal(c) & cal_flag::Apps1SpanTooSmall) != 0, "tiny APPS1 span rejected"); }
+    { PedalCal c{}; c.apps2_max = static_cast<std::uint16_t>(c.apps2_min + 10);
+      CHECK((validate_cal(c) & cal_flag::Apps2SpanTooSmall) != 0, "tiny APPS2 span rejected"); }
+    { PedalCal c{}; c.apps1_max = c.apps1_min;
+      CHECK((validate_cal(c) & cal_flag::AppsNotMonotonic) != 0, "max == min rejected"); }
+    { PedalCal c{}; c.apps1_max = static_cast<std::uint16_t>(c.apps1_min - 1);
+      CHECK((validate_cal(c) & cal_flag::AppsNotMonotonic) != 0, "inverted APPS rejected"); }
+    { PedalCal c{}; c.apps2_max = static_cast<std::uint16_t>(c.apps2_min + 350);
+      CHECK((validate_cal(c) & cal_flag::AppsSpanMismatch) != 0,
+            "wildly mismatched channel spans rejected (860 vs 350)"); }
+    { PedalCal c{}; c.brake_dv_hard = 200;   // below arm(750) -> order broken
+      CHECK((validate_cal(c) & cal_flag::BrakeOrder) != 0, "brake thresholds out of order rejected"); }
+    { PedalCal c{}; c.brake_rest = 900;      // at/above arm(750) -> released reads armed
+      CHECK((validate_cal(c) & cal_flag::BrakeOrder) != 0, "brake rest above the arm threshold rejected"); }
+    { PedalCal c{}; c.brake_rest = 2900;     // span vs pressed(3000) = 100 < 300
+      CHECK((validate_cal(c) & cal_flag::BrakeSpanTooSmall) != 0, "tiny brake span rejected"); }
+    { PedalCal c{}; c.apps1_max = 5000;
+      CHECK((validate_cal(c) & cal_flag::OutOfAdcRange) != 0, "value beyond 12-bit rejected"); }
+
+    // --- brake_pct: the 14%-at-rest bug and its fix ---
+    {
+        PedalCal u{};                       // brake_rest = 0 -> uncalibrated
+        CHECK(u.brake_rest == 0, "brake rest is unmeasured by default");
+        // Legacy behaviour preserved EXACTLY while uncalibrated: raw*100/4095.
+        CHECK(brake_pct(560, u) == static_cast<std::uint8_t>(560u * 100u / 4095u),
+              "uncalibrated brake_pct keeps the legacy full-range scaling");
+        CHECK(brake_pct(560, u) == 13, "...which is why a released brake reads ~13-14%");
+        CHECK(brake_pct(4095, u) == 100, "uncalibrated full scale still saturates");
+
+        // Once a rest point exists the same raw reading reads 0.
+        PedalCal c{};
+        c.brake_rest = 560; c.brake_pressed = 3000;
+        CHECK(brake_pct(560, c) == 0, "calibrated: released brake reads 0% (the bug fixed)");
+        CHECK(brake_pct(400, c) == 0, "below rest clamps to 0");
+        CHECK(brake_pct(3000, c) == 100, "at the pressed point reads 100%");
+        CHECK(brake_pct(4000, c) == 100, "above the pressed point clamps to 100");
+        CHECK(brake_pct(1780, c) == 50, "midway between rest and pressed reads 50%");
+        // A degenerate span must not divide by zero or wrap.
+        PedalCal z{}; z.brake_rest = 3000; z.brake_pressed = 3000;
+        CHECK(brake_pct(3000, z) <= 100, "degenerate span cannot produce a bogus percentage");
+    }
+
+    // A garbage record (all 0xFF, i.e. erased flash read back as a struct) must
+    // be rejected -- this is the boot-time fallback path, not a theoretical case.
+    { PedalCal c{}; c.apps1_min = c.apps1_max = c.apps2_min = c.apps2_max = 0xFFFF;
+      c.brake_rest = c.brake_arm = c.brake_dv_hard = c.brake_pressed = 0xFFFF;
+      CHECK(validate_cal(c) != 0, "erased-flash pattern (all 0xFFFF) rejected"); }
+}
+
+// #169 step 3 -- reading the calibration out of the bootloader NVM sector.
+// Flash is memory mapped, so the scanner takes a plain pointer and the suite can
+// drive it against a synthetic sector in RAM. Every path here is a real failure
+// mode of a log-structured store on a car that loses power at inconvenient
+// moments, not a hypothetical.
+namespace {
+
+// One 32-byte bl_nvm entry, laid out byte by byte to match the bootloader:
+//   0..1 magic LE, 2..3 key LE, 4 len, 5 res_a, 6..7 res_b, 8..11 seq LE, 12.. value
+void put_entry(std::uint8_t* slot, std::uint16_t magic, std::uint16_t key,
+               std::uint8_t len, std::uint32_t seq, const std::uint8_t* value) {
+    for (int i = 0; i < 32; ++i) slot[i] = 0xFF;          // erased flash
+    slot[0] = static_cast<std::uint8_t>(magic & 0xFF);
+    slot[1] = static_cast<std::uint8_t>(magic >> 8);
+    slot[2] = static_cast<std::uint8_t>(key & 0xFF);
+    slot[3] = static_cast<std::uint8_t>(key >> 8);
+    slot[4] = len;
+    slot[5] = 0; slot[6] = 0; slot[7] = 0;
+    slot[8]  = static_cast<std::uint8_t>(seq & 0xFF);
+    slot[9]  = static_cast<std::uint8_t>((seq >> 8) & 0xFF);
+    slot[10] = static_cast<std::uint8_t>((seq >> 16) & 0xFF);
+    slot[11] = static_cast<std::uint8_t>((seq >> 24) & 0xFF);
+    if (value) for (std::size_t i = 0; i < CalRecordLen; ++i) slot[12 + i] = value[i];
+}
+
+}  // namespace
+
+static void test_pedal_cal_nvm() {
+    std::printf("[pedal_cal_nvm]\n");
+
+    constexpr std::uint32_t kSlots = 8;
+    std::uint8_t sector[kSlots * 32];
+    auto erase_all = [&] { for (auto& b : sector) b = 0xFF; };
+
+    PedalCal good{};
+    good.apps1_min = 2500; good.apps1_max = 3400;
+    good.apps2_min = 2300; good.apps2_max = 3000;
+    good.brake_rest = 560; good.brake_arm = 800;
+    good.brake_dv_hard = 2400; good.brake_pressed = 3100;
+    CHECK(validate_cal(good) == 0, "the fixture calibration is itself valid");
+    std::uint8_t rec[CalRecordLen];
+    encode_cal_record(good, rec);
+
+    // --- virgin flash: everything 0xFF -> defaults, and it must NOT be an error ---
+    erase_all();
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Defaults, "erased sector -> Defaults (normal first boot)");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and the defaults come through");
+    }
+
+    // --- a single good record ---
+    erase_all();
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "stored record loads");
+        CHECK(r.cal.apps1_min == 2500 && r.cal.brake_pressed == 3100, "round-trips exactly");
+    }
+
+    // --- append-only: the NEWEST record wins, even though it is later in the
+    //     region. Scanning must not stop at the first hit. ---
+    erase_all();
+    PedalCal older = good; older.apps1_min = 1111;
+    std::uint8_t rec_old[CalRecordLen]; encode_cal_record(older, rec_old);
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 5, rec_old);
+    put_entry(sector + 3 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 9, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "multiple records load");
+        CHECK(r.cal.apps1_min == 2500, "highest seq wins, not the first slot found");
+    }
+
+    // --- other vendors' keys are ignored, including the bootloader's own ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, 0x0001, 1, 50, rec);   // BL node id, huge seq
+    put_entry(sector + 1 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 2, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "our key is found alongside bootloader keys");
+        CHECK(r.cal.apps1_min == 2500, "a bootloader key with a higher seq does not win");
+    }
+
+    // --- a torn write (bad magic) is skipped and the previous record survives.
+    //     This is the power-cut-mid-write case the store is designed for. ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    put_entry(sector + 1 * 32, 0x0000,      CalNvmKey, CalRecordLen, 99, rec_old);  // torn
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "torn entry skipped");
+        CHECK(r.cal.apps1_min == 2500, "the previous good record still wins after a torn write");
+    }
+
+    // --- a stored record that fails validation must NOT be applied. Corrupt
+    //     flash must not become a way around the safety rules. ---
+    erase_all();
+    PedalCal bad = good; bad.apps1_max = bad.apps1_min;   // zero span
+    std::uint8_t rec_bad[CalRecordLen]; encode_cal_record(bad, rec_bad);
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec_bad);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Invalid, "invalid stored record reported as Invalid");
+        CHECK(r.flags != 0, "...with the failing rule attached");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and the DEFAULTS are used, not the bad values");
+    }
+
+    // --- an unknown record version falls back rather than misparsing ---
+    erase_all();
+    std::uint8_t rec_v9[CalRecordLen]; encode_cal_record(good, rec_v9); rec_v9[0] = 9;
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec_v9);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::BadVersion, "unknown record version reported");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and defaults are used");
+    }
+
+    // --- a tombstone (len 0) deletes the calibration -> defaults ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    put_entry(sector + 1 * 32, CalNvmMagic, CalNvmKey, 0, 2, nullptr);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Defaults, "a newer tombstone drops back to defaults");
+    }
+
+    // --- degenerate inputs must not read out of bounds ---
+    CHECK(load_cal_from_nvm(nullptr, 4096).status == CalLoad::Defaults, "null base is safe");
+    CHECK(load_cal_from_nvm(sector, 4).status == CalLoad::Defaults, "region smaller than one entry is safe");
+}
+
+// #169 step 4 -- the operator calibration session. The branches that matter are
+// the ones an operator reaches by doing something wrong, so they are all here.
+static void test_cal_session() {
+    std::printf("[cal_session]\n");
+
+    const PedalCal active{};                       // what is currently in force
+    CalSessionInputs in{};
+    in.vehicle_safe = true;
+    in.now_ms = 1000;
+
+    auto capture_all = [&](CalSession& s, std::uint16_t a1r, std::uint16_t a1f,
+                           std::uint16_t a2r, std::uint16_t a2f,
+                           std::uint16_t br, std::uint16_t bp,
+                           std::uint16_t a1m, std::uint16_t a2m) {
+        in.apps1_raw = a1r; in.apps2_raw = a2r;
+        s.handle(CalCmd::Capture, 1, 0, in, active);          // APPS_REST
+        in.apps1_raw = a1f; in.apps2_raw = a2f;
+        s.handle(CalCmd::Capture, 2, 0, in, active);          // APPS_FULL
+        in.brake_raw = br;
+        s.handle(CalCmd::Capture, 3, 0, in, active);          // BRAKE_REST
+        in.brake_raw = bp;
+        s.handle(CalCmd::Capture, 4, 0, in, active);          // BRAKE_PRESSED
+        in.apps1_raw = a1m; in.apps2_raw = a2m;
+        s.handle(CalCmd::Capture, 5, 0, in, active);          // APPS_MID
+    };
+
+    // --- a stray frame cannot open a session ---
+    {
+        CalSession s;
+        auto o = s.handle(CalCmd::Enter, 0, 0xDEADBEEF, in, active);
+        CHECK(o.result == CalResult::BadGuard, "wrong guard rejected");
+        CHECK(o.state == CalSessionState::Idle, "...and no session opens");
+    }
+
+    // --- a moving car cannot be calibrated ---
+    {
+        CalSession s;
+        CalSessionInputs unsafe = in; unsafe.vehicle_safe = false;
+        auto o = s.handle(CalCmd::Enter, 0, CalGuardMagic, unsafe, active);
+        CHECK(o.result == CalResult::VehicleNotSafe, "unsafe vehicle rejected at ENTER");
+        CHECK(o.state == CalSessionState::Idle, "...no session");
+    }
+
+    // --- commands that need a session are refused without one ---
+    {
+        CalSession s;
+        CHECK(s.handle(CalCmd::Capture, 1, 0, in, active).result == CalResult::NotInSession,
+              "CAPTURE outside a session refused");
+        CHECK(s.handle(CalCmd::Commit, 0, 0, in, active).result == CalResult::NotInSession,
+              "COMMIT outside a session refused");
+        // ...but reading what is in force is not privileged
+        auto o = s.handle(CalCmd::ReadStored, 0, 0, in, active);
+        CHECK(o.result == CalResult::Ok && o.emit_values, "READ_STORED works with no session");
+        CHECK(o.values.apps1_min == active.apps1_min, "...and returns the ACTIVE calibration");
+    }
+
+    // --- happy path, ending in a commit request ---
+    {
+        CalSession s;
+        CHECK(s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active).state == CalSessionState::Active,
+              "valid ENTER opens the session");
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2650);
+        CHECK(s.captured_mask() == cal_point_bit::All, "all five points captured");
+
+        // committing with the wrong CRC must fail -- this is the desync guard
+        auto bad = s.handle(CalCmd::Commit, 0, 0x12345678u, in, active);
+        CHECK(bad.result == CalResult::ValidationFailed, "COMMIT with a stale CRC refused");
+        CHECK(!bad.commit_requested, "...and nothing is applied");
+
+        auto staged = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        CHECK(staged.emit_values, "READ_STAGED returns the staged set");
+        CHECK(staged.values.apps1_min == 2500, "...with the captured rest point");
+        // thresholds are DERIVED from the measured brake span, not inherited
+        CHECK(staged.values.brake_arm > staged.values.brake_rest &&
+              staged.values.brake_arm < staged.values.brake_dv_hard &&
+              staged.values.brake_dv_hard < staged.values.brake_pressed,
+              "brake thresholds derived from the span, correctly ordered");
+
+        const std::uint32_t crc = cal_crc32(staged.values);
+        auto ok = s.handle(CalCmd::Commit, 0, crc, in, active);
+        CHECK(ok.result == CalResult::Ok, "COMMIT with the right CRC accepted");
+        CHECK(ok.commit_requested, "...and asks the task to apply + persist");
+        CHECK(ok.to_commit.apps1_min == 2500, "...carrying the staged values");
+        CHECK(ok.state == CalSessionState::Committing, "state is Committing");
+    }
+
+    // --- committing early is refused ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        in.apps1_raw = 2500; in.apps2_raw = 2300;
+        s.handle(CalCmd::Capture, 1, 0, in, active);
+        auto o = s.handle(CalCmd::Commit, 0, 0, in, active);
+        CHECK(o.result == CalResult::MissingPoints, "COMMIT before all points refused");
+        CHECK(!o.commit_requested, "...nothing applied");
+    }
+
+    // --- THE load-bearing one: channels that diverge at mid travel are rejected
+    //     even though both endpoint pairs are individually perfect ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        // APPS1 mid sits at ~50% of its span; APPS2 mid sits at ~19% of its own.
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2430);
+        auto st = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        auto o = s.handle(CalCmd::Commit, 0, cal_crc32(st.values), in, active);
+        CHECK(o.result == CalResult::ValidationFailed, "mid-travel divergence rejected");
+        CHECK((o.validation_flags & cal_flag::AppsSpanMismatch) != 0,
+              "...flagged as a channel mismatch -- the T.11.8.9 failure endpoints cannot see");
+        CHECK(!o.commit_requested, "...and never reaches the flash");
+    }
+
+    // --- abort discards everything ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2650);
+        auto o = s.handle(CalCmd::Abort, 0, 0, in, active);
+        CHECK(o.state == CalSessionState::Idle, "ABORT closes the session");
+        CHECK(o.captured_mask == 0, "...and discards the captures");
+    }
+
+    // --- an abandoned session times out rather than lingering ---
+    {
+        CalSession s;
+        CalSessionInputs t = in;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, t, active);
+        t.now_ms += CalSessionTimeoutMs - 1;
+        CHECK(!s.tick(t), "no timeout just before the window");
+        CHECK(s.state() == CalSessionState::Active, "...session still open");
+        t.now_ms += 2;
+        CHECK(s.tick(t), "timeout fires past the window");
+        CHECK(s.state() == CalSessionState::Idle, "...session closed");
+        CHECK(s.captured_mask() == 0, "...staged data discarded, not left for a reconnect");
+    }
+
+    // --- the vehicle becoming unsafe mid-session kills it ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        CalSessionInputs unsafe = in; unsafe.vehicle_safe = false;
+        auto o = s.handle(CalCmd::Capture, 1, 0, unsafe, active);
+        CHECK(o.result == CalResult::VehicleNotSafe, "capture refused once unsafe");
+        CHECK(o.state == CalSessionState::Idle, "...and the session is torn down, not just refused");
+    }
+
+    // --- RESET_DEFAULTS stages the defaults but still needs a commit ---
+    {
+        CalSession s;
+        auto o = s.handle(CalCmd::ResetDefaults, 0, CalGuardMagic, in, active);
+        CHECK(o.state == CalSessionState::Active, "RESET_DEFAULTS opens a session");
+        CHECK(o.captured_mask == cal_point_bit::All, "...with nothing left to capture");
+        auto st = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        CHECK(st.values.apps1_min == config::Apps1AdcMin, "...staging the compile-time defaults");
+        CHECK(s.handle(CalCmd::ResetDefaults, 0, 0, in, active).result == CalResult::BadGuard,
+              "RESET_DEFAULTS without the guard refused");
+    }
+
+    // --- a persistence failure is reported, not swallowed ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        s.note_persist_failed();
+        CHECK(s.state() == CalSessionState::Error, "persistence failure moves to Error");
     }
 }
 
@@ -1142,6 +1545,9 @@ static void run_all() {
     test_inverter_ts_off_recovery();
     test_inverter_fault_burst();
     test_inverter_fault_layers();
+    test_pedal_cal();
+    test_pedal_cal_nvm();
+    test_cal_session();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1173,6 +1579,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
     else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
+    else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
+    else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
+    else if (!std::strcmp(m, "--test-cal-session"))        test_cal_session();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

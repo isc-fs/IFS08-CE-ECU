@@ -56,6 +56,27 @@ extern uint8_t  g_last_t11_8_9;
  * over SWD for the exact count. */
 extern volatile uint32_t g_can_tx_dropped;
 
+/* Outcome of loading the pedal calibration from NVM at boot (#169).
+ * status is ecu::CalLoad; flags is the cal_flag:: bitmask when the stored
+ * record was found but rejected. Surfaced on the diagnostic stream so a silent
+ * fallback to compile-time defaults is visible to the operator -- a
+ * calibration that was quietly ignored is indistinguishable from one that
+ * applied, and that is exactly the confusion this must prevent. */
+/* One-deep mailbox for an inbound 0x7E2 calibration command (#169).
+ * CanRxTask decodes and posts; ControlTask consumes and clears. Single
+ * producer, single consumer, and commands are human-paced, so a deeper queue
+ * would be ceremony -- a command arriving while one is still pending is
+ * dropped and the client simply does not see a reply, which its POLL recovers.
+ * ControlTask owns the session because it is the task that holds the live
+ * calibration and the live pedal readings a CAPTURE has to sample. */
+extern volatile uint8_t  g_cal_cmd_pending;
+extern volatile uint8_t  g_cal_cmd;
+extern volatile uint8_t  g_cal_arg;
+extern volatile uint32_t g_cal_guard;
+
+extern volatile uint8_t  g_cal_load_status;
+extern volatile uint8_t  g_cal_load_flags;
+
 /* Called once from freertos.c USER CODE after osKernelInitialize(), before the
  * scheduler starts. Currently just zeroes the step counters; a hook point for
  * any app-side RTOS object the .ioc can't carry. */

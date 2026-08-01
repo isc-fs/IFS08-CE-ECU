@@ -26,6 +26,9 @@
 
 /* pit-diag stream (gated by 0x7E0) */
 #include "pit_diag_ack.def"         /* 0x7E1                                  */
+#include "pit_cal_status.def"       /* 0x7E3  calibration session status      */
+#include "pit_cal_apps.def"         /* 0x7E4  APPS endpoints read-back        */
+#include "pit_cal_brake.def"        /* 0x7E5  brake values read-back          */
 #include "pit_diag_status.def"      /* 0x700                                  */
 #include "pit_diag_pedals.def"      /* 0x701                                  */
 #include "pit_diag_brake.def"       /* 0x705                                  */
@@ -51,6 +54,7 @@
 #include "udv_r2d_request.def"      /* 0x510  uDV DV ready-to-drive request   */
 #include "bl_boot_trigger.def"      /* 0x002  jump-to-bootloader magic        */
 #include "pit_diag_cmd.def"         /* 0x7E0  pit-diag enable/disable magic   */
+#include "pit_cal_cmd.def"          /* 0x7E2  operator calibration command    */
 
 /*
  * TODO(inverter): the NX/EMC inverter frames (RX 0x461 state / 0x463 speed /
