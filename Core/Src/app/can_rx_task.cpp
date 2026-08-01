@@ -76,7 +76,24 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
             continue;
         }
 
-        // (3) vehicle state: inverter (0x461/0x466) + AMS (0x020/0x12C/0x4A0).
+        // (3) calibration command (0x7E2) -> one-deep mailbox for ControlTask.
+        // Decoded here but NOT acted on: the session needs the live pedal
+        // readings and the live calibration, both of which ControlTask owns.
+        if (f.bus == static_cast<uint8_t>(CanBus::Acu) &&
+            f.id == static_cast<uint32_t>(PitCal_cmd_ID) && f.dlc >= 8u) {
+            if (g_cal_cmd_pending == 0u) {
+                g_cal_cmd   = f.data[0];
+                g_cal_arg   = f.data[1];
+                g_cal_guard = (static_cast<uint32_t>(f.data[4]) << 24) |
+                              (static_cast<uint32_t>(f.data[5]) << 16) |
+                              (static_cast<uint32_t>(f.data[6]) << 8)  |
+                               static_cast<uint32_t>(f.data[7]);
+                g_cal_cmd_pending = 1u;   // set LAST: the fields must be visible first
+            }
+            continue;
+        }
+
+        // (4) vehicle state: inverter (0x461/0x466) + AMS (0x020/0x12C/0x4A0).
         vs.update_from_frame(f);
     }
 }

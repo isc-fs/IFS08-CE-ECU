@@ -83,6 +83,19 @@ struct CalLoadResult {
 // path so the two can never disagree about the layout.
 void encode_cal_record(const PedalCal& c, std::uint8_t out[CalRecordLen]) noexcept;
 
+// CRC-32 over the canonical record serialisation above.
+//
+// Carried in the guard field of a COMMIT so the ECU can prove the client is
+// committing the set it believes it staged -- a client that has drifted out of
+// sync cannot commit values it does not hold, and the guard and the
+// consistency check end up being the same field.
+//
+// CRC-32/ISO-HDLC: reflected, polynomial 0xEDB88320, init 0xFFFFFFFF, final
+// XOR 0xFFFFFFFF. Stated explicitly because the pit tool has to reproduce it
+// byte for byte; it is the same variant can-flasher already uses for firmware
+// images, so its existing helper works unmodified.
+[[nodiscard]] std::uint32_t cal_crc32(const PedalCal& c) noexcept;
+
 }  // namespace ecu
 
 #endif  // PEDAL_CAL_NVM_HPP_

@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include "app/control.hpp"
+#include "app/cal_session.hpp"
 #include "app/pedal_cal_nvm.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
@@ -747,6 +748,173 @@ static void test_pedal_cal_nvm() {
     CHECK(load_cal_from_nvm(sector, 4).status == CalLoad::Defaults, "region smaller than one entry is safe");
 }
 
+// #169 step 4 -- the operator calibration session. The branches that matter are
+// the ones an operator reaches by doing something wrong, so they are all here.
+static void test_cal_session() {
+    std::printf("[cal_session]\n");
+
+    const PedalCal active{};                       // what is currently in force
+    CalSessionInputs in{};
+    in.vehicle_safe = true;
+    in.now_ms = 1000;
+
+    auto capture_all = [&](CalSession& s, std::uint16_t a1r, std::uint16_t a1f,
+                           std::uint16_t a2r, std::uint16_t a2f,
+                           std::uint16_t br, std::uint16_t bp,
+                           std::uint16_t a1m, std::uint16_t a2m) {
+        in.apps1_raw = a1r; in.apps2_raw = a2r;
+        s.handle(CalCmd::Capture, 1, 0, in, active);          // APPS_REST
+        in.apps1_raw = a1f; in.apps2_raw = a2f;
+        s.handle(CalCmd::Capture, 2, 0, in, active);          // APPS_FULL
+        in.brake_raw = br;
+        s.handle(CalCmd::Capture, 3, 0, in, active);          // BRAKE_REST
+        in.brake_raw = bp;
+        s.handle(CalCmd::Capture, 4, 0, in, active);          // BRAKE_PRESSED
+        in.apps1_raw = a1m; in.apps2_raw = a2m;
+        s.handle(CalCmd::Capture, 5, 0, in, active);          // APPS_MID
+    };
+
+    // --- a stray frame cannot open a session ---
+    {
+        CalSession s;
+        auto o = s.handle(CalCmd::Enter, 0, 0xDEADBEEF, in, active);
+        CHECK(o.result == CalResult::BadGuard, "wrong guard rejected");
+        CHECK(o.state == CalSessionState::Idle, "...and no session opens");
+    }
+
+    // --- a moving car cannot be calibrated ---
+    {
+        CalSession s;
+        CalSessionInputs unsafe = in; unsafe.vehicle_safe = false;
+        auto o = s.handle(CalCmd::Enter, 0, CalGuardMagic, unsafe, active);
+        CHECK(o.result == CalResult::VehicleNotSafe, "unsafe vehicle rejected at ENTER");
+        CHECK(o.state == CalSessionState::Idle, "...no session");
+    }
+
+    // --- commands that need a session are refused without one ---
+    {
+        CalSession s;
+        CHECK(s.handle(CalCmd::Capture, 1, 0, in, active).result == CalResult::NotInSession,
+              "CAPTURE outside a session refused");
+        CHECK(s.handle(CalCmd::Commit, 0, 0, in, active).result == CalResult::NotInSession,
+              "COMMIT outside a session refused");
+        // ...but reading what is in force is not privileged
+        auto o = s.handle(CalCmd::ReadStored, 0, 0, in, active);
+        CHECK(o.result == CalResult::Ok && o.emit_values, "READ_STORED works with no session");
+        CHECK(o.values.apps1_min == active.apps1_min, "...and returns the ACTIVE calibration");
+    }
+
+    // --- happy path, ending in a commit request ---
+    {
+        CalSession s;
+        CHECK(s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active).state == CalSessionState::Active,
+              "valid ENTER opens the session");
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2650);
+        CHECK(s.captured_mask() == cal_point_bit::All, "all five points captured");
+
+        // committing with the wrong CRC must fail -- this is the desync guard
+        auto bad = s.handle(CalCmd::Commit, 0, 0x12345678u, in, active);
+        CHECK(bad.result == CalResult::ValidationFailed, "COMMIT with a stale CRC refused");
+        CHECK(!bad.commit_requested, "...and nothing is applied");
+
+        auto staged = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        CHECK(staged.emit_values, "READ_STAGED returns the staged set");
+        CHECK(staged.values.apps1_min == 2500, "...with the captured rest point");
+        // thresholds are DERIVED from the measured brake span, not inherited
+        CHECK(staged.values.brake_arm > staged.values.brake_rest &&
+              staged.values.brake_arm < staged.values.brake_dv_hard &&
+              staged.values.brake_dv_hard < staged.values.brake_pressed,
+              "brake thresholds derived from the span, correctly ordered");
+
+        const std::uint32_t crc = cal_crc32(staged.values);
+        auto ok = s.handle(CalCmd::Commit, 0, crc, in, active);
+        CHECK(ok.result == CalResult::Ok, "COMMIT with the right CRC accepted");
+        CHECK(ok.commit_requested, "...and asks the task to apply + persist");
+        CHECK(ok.to_commit.apps1_min == 2500, "...carrying the staged values");
+        CHECK(ok.state == CalSessionState::Committing, "state is Committing");
+    }
+
+    // --- committing early is refused ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        in.apps1_raw = 2500; in.apps2_raw = 2300;
+        s.handle(CalCmd::Capture, 1, 0, in, active);
+        auto o = s.handle(CalCmd::Commit, 0, 0, in, active);
+        CHECK(o.result == CalResult::MissingPoints, "COMMIT before all points refused");
+        CHECK(!o.commit_requested, "...nothing applied");
+    }
+
+    // --- THE load-bearing one: channels that diverge at mid travel are rejected
+    //     even though both endpoint pairs are individually perfect ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        // APPS1 mid sits at ~50% of its span; APPS2 mid sits at ~19% of its own.
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2430);
+        auto st = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        auto o = s.handle(CalCmd::Commit, 0, cal_crc32(st.values), in, active);
+        CHECK(o.result == CalResult::ValidationFailed, "mid-travel divergence rejected");
+        CHECK((o.validation_flags & cal_flag::AppsSpanMismatch) != 0,
+              "...flagged as a channel mismatch -- the T.11.8.9 failure endpoints cannot see");
+        CHECK(!o.commit_requested, "...and never reaches the flash");
+    }
+
+    // --- abort discards everything ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        capture_all(s, 2500, 3400, 2300, 3000, 560, 3100, 2950, 2650);
+        auto o = s.handle(CalCmd::Abort, 0, 0, in, active);
+        CHECK(o.state == CalSessionState::Idle, "ABORT closes the session");
+        CHECK(o.captured_mask == 0, "...and discards the captures");
+    }
+
+    // --- an abandoned session times out rather than lingering ---
+    {
+        CalSession s;
+        CalSessionInputs t = in;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, t, active);
+        t.now_ms += CalSessionTimeoutMs - 1;
+        CHECK(!s.tick(t), "no timeout just before the window");
+        CHECK(s.state() == CalSessionState::Active, "...session still open");
+        t.now_ms += 2;
+        CHECK(s.tick(t), "timeout fires past the window");
+        CHECK(s.state() == CalSessionState::Idle, "...session closed");
+        CHECK(s.captured_mask() == 0, "...staged data discarded, not left for a reconnect");
+    }
+
+    // --- the vehicle becoming unsafe mid-session kills it ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        CalSessionInputs unsafe = in; unsafe.vehicle_safe = false;
+        auto o = s.handle(CalCmd::Capture, 1, 0, unsafe, active);
+        CHECK(o.result == CalResult::VehicleNotSafe, "capture refused once unsafe");
+        CHECK(o.state == CalSessionState::Idle, "...and the session is torn down, not just refused");
+    }
+
+    // --- RESET_DEFAULTS stages the defaults but still needs a commit ---
+    {
+        CalSession s;
+        auto o = s.handle(CalCmd::ResetDefaults, 0, CalGuardMagic, in, active);
+        CHECK(o.state == CalSessionState::Active, "RESET_DEFAULTS opens a session");
+        CHECK(o.captured_mask == cal_point_bit::All, "...with nothing left to capture");
+        auto st = s.handle(CalCmd::ReadStaged, 0, 0, in, active);
+        CHECK(st.values.apps1_min == config::Apps1AdcMin, "...staging the compile-time defaults");
+        CHECK(s.handle(CalCmd::ResetDefaults, 0, 0, in, active).result == CalResult::BadGuard,
+              "RESET_DEFAULTS without the guard refused");
+    }
+
+    // --- a persistence failure is reported, not swallowed ---
+    {
+        CalSession s;
+        s.handle(CalCmd::Enter, 0, CalGuardMagic, in, active);
+        s.note_persist_failed();
+        CHECK(s.state() == CalSessionState::Error, "persistence failure moves to Error");
+    }
+}
+
 // #148 -- L1/L2 fault-layer decode from 0x461. Both straddle byte boundaries
 // (EMCtrl_FOC_BitState 39|8@1+ -> byte4 b7 + byte5 b0-6; PwrStg_BitState
 // 47|9@1+ -> byte5 b7 + byte6), which is exactly the kind of shift that is easy
@@ -1379,6 +1547,7 @@ static void run_all() {
     test_inverter_fault_layers();
     test_pedal_cal();
     test_pedal_cal_nvm();
+    test_cal_session();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1412,6 +1581,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
     else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
+    else if (!std::strcmp(m, "--test-cal-session"))        test_cal_session();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

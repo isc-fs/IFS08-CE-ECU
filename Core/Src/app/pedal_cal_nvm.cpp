@@ -43,6 +43,21 @@ void encode_cal_record(const PedalCal& c, std::uint8_t out[CalRecordLen]) noexce
     }
 }
 
+std::uint32_t cal_crc32(const PedalCal& c) noexcept {
+    std::uint8_t rec[CalRecordLen];
+    encode_cal_record(c, rec);
+    // Bitwise rather than table-driven: 18 bytes is 144 iterations, which is
+    // nothing next to 1 KB of table in a flash-constrained image.
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (std::size_t i = 0; i < CalRecordLen; ++i) {
+        crc ^= rec[i];
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc & 1u) ? ((crc >> 1) ^ 0xEDB88320u) : (crc >> 1);
+        }
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
 CalLoadResult load_cal_from_nvm(const void* nvm_base, std::uint32_t nvm_size) noexcept {
     CalLoadResult r{};                      // defaults, status = Defaults
 

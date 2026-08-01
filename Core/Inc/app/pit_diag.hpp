@@ -10,6 +10,7 @@
 
 #include "app/can_frame.hpp"
 #include "app/control.hpp"
+#include "app/cal_session.hpp"
 #include "app/pedal_cal.hpp"
 #include "app/error_latch.hpp"
 #include "app/io_signals.hpp"
@@ -57,6 +58,13 @@ public:
     static CanFrame build_brake(const IoInputs& io,
                                 const PedalCal& cal) noexcept;   // 0x705
     static CanFrame build_ack(bool enabled) noexcept;           // 0x7E1
+    // Calibration session (#169). cal_load mirrors the boot-time outcome so the
+    // calibration view does not have to also watch 0x704.
+    static CanFrame build_cal_status(const CalSessionOutput& o,
+                                     std::uint8_t last_cmd,
+                                     std::uint8_t cal_load) noexcept;   // 0x7E3
+    static CanFrame build_cal_apps(const PedalCal& c) noexcept;         // 0x7E4
+    static CanFrame build_cal_brake(const PedalCal& c) noexcept;        // 0x7E5
 };
 
 }  // namespace ecu

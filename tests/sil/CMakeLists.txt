@@ -23,6 +23,7 @@ add_executable(ecu08_sil
     ${REPO}/Core/Src/app/control.cpp
     ${REPO}/Core/Src/app/pedal_cal.cpp
     ${REPO}/Core/Src/app/pedal_cal_nvm.cpp
+    ${REPO}/Core/Src/app/cal_session.cpp
     ${REPO}/Core/Src/app/inverter.cpp
     ${REPO}/Core/Src/app/udv_tx.cpp
     ${REPO}/Core/Src/app/radio_snapshot.cpp

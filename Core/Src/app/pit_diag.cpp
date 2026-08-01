@@ -207,6 +207,38 @@ CanFrame PitDiag::build_brake(const IoInputs& io, const PedalCal& cal) noexcept 
     return make_acu(PitDiag_brake_ID, b);
 }
 
+CanFrame PitDiag::build_cal_status(const CalSessionOutput& o, std::uint8_t last_cmd,
+                                   std::uint8_t cal_load) noexcept {
+    PitCal_status_t st{};
+    st.session_state    = static_cast<std::uint8_t>(o.state);
+    st.last_cmd         = last_cmd;
+    st.result           = static_cast<std::uint8_t>(o.result);
+    st.captured_mask    = o.captured_mask;
+    st.validation_flags = o.validation_flags;
+    st.cal_load         = cal_load;
+    std::uint8_t b[PitCal_status_DLC];
+    encode_PitCal_status(st, b);
+    return make_acu(PitCal_status_ID, b);
+}
+
+CanFrame PitDiag::build_cal_apps(const PedalCal& c) noexcept {
+    PitCal_apps_t a{};
+    a.apps1_min = c.apps1_min; a.apps1_max = c.apps1_max;
+    a.apps2_min = c.apps2_min; a.apps2_max = c.apps2_max;
+    std::uint8_t b[PitCal_apps_DLC];
+    encode_PitCal_apps(a, b);
+    return make_acu(PitCal_apps_ID, b);
+}
+
+CanFrame PitDiag::build_cal_brake(const PedalCal& c) noexcept {
+    PitCal_brake_t k{};
+    k.brake_rest = c.brake_rest; k.brake_arm = c.brake_arm;
+    k.brake_dv_hard = c.brake_dv_hard; k.brake_pressed = c.brake_pressed;
+    std::uint8_t b[PitCal_brake_DLC];
+    encode_PitCal_brake(k, b);
+    return make_acu(PitCal_brake_ID, b);
+}
+
 CanFrame PitDiag::build_ack(bool enabled) noexcept {
     PitDiag_ack_t a{};
     a.enabled = enabled ? 1u : 0u;
