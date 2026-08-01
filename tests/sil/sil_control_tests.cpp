@@ -750,6 +750,83 @@ static void test_pedal_cal_nvm() {
 
 // #169 step 4 -- the operator calibration session. The branches that matter are
 // the ones an operator reaches by doing something wrong, so they are all here.
+// #169 step 5 -- the WRITE-side helpers, checked against the bootloader's own
+// rules (isc-fs/stm32-can-bootloader Core/Src/bl_nvm.c). These pin the two
+// things that would silently diverge: where the next entry goes, and what
+// sequence number it needs.
+static void test_cal_nvm_write() {
+    std::printf("[cal_nvm_write]\n");
+
+    constexpr std::uint32_t kSlots = 8;
+    std::uint8_t sector[kSlots * 32];
+    auto erase_all = [&] { for (auto& b : sector) b = 0xFF; };
+
+    PedalCal c{};
+    std::uint8_t rec[CalRecordLen]; encode_cal_record(c, rec);
+    std::uint32_t off = 0, seq = 0;
+
+    // --- virgin sector: slot 0, seq 1 ---
+    erase_all();
+    CHECK(find_cal_write_slot(sector, sizeof(sector), &off, &seq), "virgin sector is writable");
+    CHECK(off == 0 && seq == 1, "first entry goes to slot 0 with seq 1");
+
+    // --- seq is GLOBAL: a bootloader key with a high seq must be beaten ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, 0x0001, 1, 77, rec);   // BL node-id key
+    CHECK(find_cal_write_slot(sector, sizeof(sector), &off, &seq), "writable after a BL entry");
+    CHECK(off == 32, "append lands one past the last magic entry");
+    CHECK(seq == 78, "seq beats the highest across ALL keys, not just ours");
+
+    // --- append point is ONE PAST THE LAST MAGIC, not the first erased slot.
+    //     A stray non-magic pattern mid-sector must not pull the write back
+    //     in front of live entries -- the exact case bl_nvm_init guards. ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    for (int i = 0; i < 32; ++i) sector[1 * 32 + i] = 0x5A;        // torn/stale slot
+    put_entry(sector + 2 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 2, rec);
+    CHECK(find_cal_write_slot(sector, sizeof(sector), &off, &seq), "writable past the stale slot");
+    CHECK(off == 3 * 32, "append goes AFTER the last live entry, not into the earlier gap");
+    CHECK(seq == 3, "seq continues from the highest live entry");
+
+    // --- a full region is refused, not compacted. Compaction erases the whole
+    //     sector and would blow the 500 ms IWDG budget. ---
+    erase_all();
+    for (std::uint32_t i = 0; i < kSlots; ++i)
+        put_entry(sector + i * 32, CalNvmMagic, CalNvmKey, CalRecordLen, i + 1, rec);
+    CHECK(!find_cal_write_slot(sector, sizeof(sector), &off, &seq),
+          "full region refuses -- the app never compacts");
+
+    // --- the target slot must be genuinely erased. Flash bits only go 1->0, so
+    //     a slot with stray bits is permanently un-programmable. ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    sector[1 * 32 + 7] = 0xFE;                                     // one stray bit
+    CHECK(!find_cal_write_slot(sector, sizeof(sector), &off, &seq),
+          "a target slot with stray bits is refused, not programmed blind");
+
+    // --- entry layout matches what the reader expects, and round-trips ---
+    {
+        PedalCal src{};
+        src.apps1_min = 2500; src.apps1_max = 3400;
+        src.apps2_min = 2300; src.apps2_max = 3000;
+        src.brake_rest = 560; src.brake_arm = 800;
+        src.brake_dv_hard = 2400; src.brake_pressed = 3100;
+        std::uint8_t entry[32];
+        build_cal_entry(src, 42, entry);
+        CHECK(entry[0] == 0xCD && entry[1] == 0xAB, "magic 0xABCD little-endian");
+        CHECK(entry[2] == 0x00 && entry[3] == 0x10, "key 0x1000 little-endian");
+        CHECK(entry[4] == CalRecordLen, "len field");
+        CHECK(entry[5] == 0 && entry[6] == 0 && entry[7] == 0,
+              "reserved bytes zeroed, matching the BL's zero-initialised entry");
+        CHECK(entry[8] == 42 && entry[9] == 0, "seq little-endian");
+        erase_all();
+        for (int i = 0; i < 32; ++i) sector[i] = entry[i];
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "an entry we built is one our reader accepts");
+        CHECK(r.cal.brake_pressed == 3100, "...and round-trips exactly");
+    }
+}
+
 static void test_cal_session() {
     std::printf("[cal_session]\n");
 
@@ -1548,6 +1625,7 @@ static void run_all() {
     test_pedal_cal();
     test_pedal_cal_nvm();
     test_cal_session();
+    test_cal_nvm_write();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1582,6 +1660,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
     else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
     else if (!std::strcmp(m, "--test-cal-session"))        test_cal_session();
+    else if (!std::strcmp(m, "--test-cal-nvm-write"))      test_cal_nvm_write();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();
