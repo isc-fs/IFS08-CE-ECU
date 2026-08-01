@@ -617,6 +617,87 @@ static void test_pedal_cal() {
       CHECK(validate_cal(c) != 0, "erased-flash pattern (all 0xFFFF) rejected"); }
 }
 
+// #169 -- EPT1400 brake pressure. The board divider is KNOWN (R8 1k series,
+// R9 2k shunt), so pressure is an absolute map from raw counts and needs no
+// calibration at all. These tests pin the derivation so a board change that is
+// not reflected in the constants fails here rather than on the car.
+static void test_brake_pressure() {
+    std::printf("[brake_pressure]\n");
+
+    // Re-derive the two anchor points from the resistor values, Vref and the
+    // sensor's 0.5/4.5 V spec. If someone respins the divider and forgets the
+    // constants, this is where it surfaces.
+    {
+        const double k = static_cast<double>(BrakeDivR9Ohm) /
+                         static_cast<double>(BrakeDivR8Ohm + BrakeDivR9Ohm);
+        const double zero = 0.5 * k / 3.3 * 4095.0;
+        const double full = 4.5 * k / 3.3 * 4095.0;
+        CHECK(k > 0.666 && k < 0.667, "divider is R9/(R8+R9) = 2/3");
+        CHECK(static_cast<int>(zero + 0.5) == BrakeCountsAtZeroBar,
+              "BrakeCountsAtZeroBar matches the divider derivation (414)");
+        CHECK(static_cast<int>(full + 0.5) == BrakeCountsAtFullBar,
+              "BrakeCountsAtFullBar matches the divider derivation (3723)");
+        // The earlier worry about the sensor clipping the ADC was wrong: with
+        // the real 2/3 divider full scale lands well inside 12 bits.
+        CHECK(BrakeCountsAtFullBar < 4095, "full scale does NOT clip the 12-bit ADC");
+    }
+
+    // The configured part: EPT1400 order code 04000 = 40 bar.
+    CHECK(config::BrakeSensorFullScaleBar == 40, "sensor is the 40 bar part");
+    CHECK(brake_pressure_dbar(BrakeCountsAtZeroBar) == 0, "0.5 V point reports 0.0 bar");
+    CHECK(brake_pressure_dbar(BrakeCountsAtFullBar) == 400, "4.5 V point reports 40.0 bar");
+    {
+        // Monotonic and correctly scaled across the range.
+        const std::uint16_t mid = static_cast<std::uint16_t>(
+            (BrakeCountsAtZeroBar + BrakeCountsAtFullBar) / 2);
+        const std::uint16_t d = brake_pressure_dbar(mid);
+        CHECK(d > 195 && d < 205, "midpoint reports ~20.0 bar");
+        CHECK(brake_pressure_dbar(mid + 100) > d, "monotonic with rising counts");
+    }
+    {
+        // The three inherited thresholds, now judgeable in physical units.
+        const std::uint16_t arm  = brake_pressure_dbar(config::BrakeArmRaw);
+        const std::uint16_t dvh  = brake_pressure_dbar(config::BrakeDvHardRaw);
+        const std::uint16_t prsd = brake_pressure_dbar(config::BrakePressedRaw);
+        CHECK(arm < dvh && dvh < prsd, "thresholds are ordered in pressure as well as counts");
+        CHECK(arm > 30 && arm < 50, "R2D arm lands near 4 bar -- a light press");
+        CHECK(prsd > 290 && prsd < 330, "EV.2.3 cut lands near 31 bar -- firm braking");
+    }
+    {
+        // The rest reading seen in the #148 captures, in real units. At 40 bar
+        // this is ~1.8 bar, minor enough to be plausible residual pressure or
+        // sensor offset -- unlike the 4.4 / 11 bar it would have implied on a
+        // 100 or 250 bar part.
+        const std::uint16_t d = brake_pressure_dbar(560);
+        CHECK(d > 10 && d < 25, "observed rest is ~1.8 bar of residual, not a gross offset");
+    }
+
+    // The map itself, pinned independently of the config constant so filling in
+    // the range later does not require revisiting these.
+    auto dbar = [](std::uint32_t pmax, std::uint16_t raw) -> unsigned {
+        if (raw <= BrakeCountsAtZeroBar) return 0u;
+        return static_cast<unsigned>(pmax * 10u * (raw - BrakeCountsAtZeroBar) /
+                                     (BrakeCountsAtFullBar - BrakeCountsAtZeroBar));
+    };
+    CHECK(dbar(100, BrakeCountsAtZeroBar) == 0, "0.5 V point == 0 bar");
+    CHECK(dbar(100, BrakeCountsAtFullBar) == 1000, "4.5 V point == full scale (100 bar)");
+    CHECK(dbar(250, BrakeCountsAtFullBar) == 2500, "...scales with the order-code range");
+    {
+        const std::uint16_t mid = static_cast<std::uint16_t>(
+            (BrakeCountsAtZeroBar + BrakeCountsAtFullBar) / 2);
+        const unsigned d = dbar(100, mid);
+        CHECK(d > 495 && d < 505, "midpoint is half scale");
+    }
+    CHECK(brake_pressure_dbar(0) == 0, "zero counts -> 0, no underflow");
+    CHECK(brake_pressure_dbar(BrakeCountsAtZeroBar - 1) == 0, "below the 0.5 V point clamps to 0");
+
+    // The rest reading observed on this car (~560) sits ABOVE the theoretical
+    // zero-pressure point (414). That is 146 counts, about 0.18 V at the sensor,
+    // i.e. real residual pressure or a sensor offset -- not a rounding artifact.
+    CHECK(560 > BrakeCountsAtZeroBar + 100,
+          "observed rest sits well above the theoretical 0 bar point -- residual pressure or offset");
+}
+
 // #169 step 3 -- reading the calibration out of the bootloader NVM sector.
 // Flash is memory mapped, so the scanner takes a plain pointer and the suite can
 // drive it against a synthetic sector in RAM. Every path here is a real failure
@@ -1623,6 +1704,7 @@ static void run_all() {
     test_inverter_fault_burst();
     test_inverter_fault_layers();
     test_pedal_cal();
+    test_brake_pressure();
     test_pedal_cal_nvm();
     test_cal_session();
     test_cal_nvm_write();
@@ -1658,6 +1740,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
+    else if (!std::strcmp(m, "--test-brake-pressure"))     test_brake_pressure();
     else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
     else if (!std::strcmp(m, "--test-cal-session"))        test_cal_session();
     else if (!std::strcmp(m, "--test-cal-nvm-write"))      test_cal_nvm_write();

@@ -120,10 +120,26 @@ The deadbands, the FSAE plausibility percentages (`Ev23*`, `AppsDisagree*`) and
 every timing stay compile-time. They are design decisions, not per-car
 measurements, and an operator must not be able to move them.
 
-`brake_pressure` on `0x705` is still **hardcoded to 0**. Reporting real bar needs
-the S_BRAKE sensor transfer function (part number, range, output span, any
-divider ahead of the 3V3 ADC), which we do not have. Calibration gives you a
-correct percentage and correct thresholds, not engineering units.
+`brake_pressure` on `0x705` reports real **bar** (0.1 bar units). The sensor is a
+Variohm EPT1400, 40 bar, ratiometric 0.5–4.5 V, behind a 2/3 divider (R8 1k /
+R9 2k). Because both the divider and Vref are known this is an **absolute map**
+— it needs no calibration at all:
+
+```
+0 bar  -> 414 counts       40 bar -> 3723 counts      82.7 counts/bar
+```
+
+That also makes the three brake thresholds reviewable in physical units:
+
+| Constant | Counts | Pressure | Gates |
+|---|---|---|---|
+| `BrakeArmRaw` | 750 | 4.1 bar | R2D arm (light press) |
+| `BrakeDvHardRaw` | 2500 | 25.2 bar | DV R2D + the `0x505` verdict to the uDV |
+| `BrakePressedRaw` | 3000 | 31.3 bar | EV.2.3 brake+throttle cut |
+
+> ⚠️ A released-pedal reading of ~560 counts is **1.8 bar**, not 0. That is either
+> genuine residual pressure in the system or sensor offset, and it shifts every
+> reported pressure by the same amount. Worth resolving on the car.
 
 ---
 

@@ -92,4 +92,17 @@ std::uint8_t brake_pct(std::uint16_t raw, const PedalCal& c) noexcept {
         (static_cast<std::uint32_t>(raw) * 100u) / CalAdcMax);
 }
 
+std::uint16_t brake_pressure_dbar(std::uint16_t raw) noexcept {
+    if (config::BrakeSensorFullScaleBar == 0u) return 0u;   // range unknown
+    if (raw <= BrakeCountsAtZeroBar) return 0u;             // at or below 0 bar
+
+    // P_dbar = Pmax * 10 * (raw - zero) / (full - zero). Multiply first;
+    // worst case 250 * 10 * 3681 = 9.2e6, well inside uint32.
+    constexpr std::uint32_t span = BrakeCountsAtFullBar - BrakeCountsAtZeroBar;
+    const std::uint32_t num = static_cast<std::uint32_t>(config::BrakeSensorFullScaleBar) * 10u *
+                              static_cast<std::uint32_t>(raw - BrakeCountsAtZeroBar);
+    const std::uint32_t dbar = num / span;
+    return (dbar > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(dbar);
+}
+
 }  // namespace ecu
