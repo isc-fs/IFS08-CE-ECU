@@ -51,46 +51,54 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 
 ---
 
-## FSM de arranque (`ecu::CtrlState`, `Core/Src/app/control.cpp`)
+## FSM de arranque (`ecu::CtrlState`)
 
-```
-WaitInvVdcConfig  →  (inv_vconfig_ready, 0x466)
-Precharge         →  stream 0x100; espera AMS ok_precharge (0x020); timeout 10 s → reintenta
-WaitStartBrake    →  MANUAL: (start_button && brake_raw > BrakeArmRaw)
-                  →  DV:     (dv_r2d_req 0x510 fresco && brake_raw > BrakeDvHardRaw)
-                     El trigger ES la decisión de modo (#17): el que dispare latchea
-                     el modo para todo el ciclo de marcha. Manual tiene precedencia.
-R2dDelay          →  (RTDS R2dSoundMs = 2000 ms)
-WaitInvStandby    →  (inv_state == InvReadyState=4)
-                     Sube el inversor según lo que reporte (#168, captura en banco
-                     2026-07-29 con L1/L2 limpias y el inversor parado en Shutdown
-                     ignorando Ready a 100 Hz):
-                       13 Shutdown → Off(0x01) solo          (legacy case 13)
-                        0 Off      → Off(0x01) y LUEGO Ready(0x04) en el MISMO ciclo
-                        resto      → Ready(0x04) directo     (Standby(3) etc.)
-                     NO es volver a #144: aquel mandaba Off EN LUGAR DE Ready y nunca
-                     enviaba Ready, así que no podía subir nunca; aquí Ready se sigue
-                     mandando siempre para el estado 0, sólo que precedido del Off.
-                     El fallo latcheado (10/11) sigue sobrescribiéndose con su reset
-                     word + Off + Flt_Clear en el bloque reactivo de abajo. Ver #148.
-Active            →  torque runtime; si !ok_precharge → vuelve a Precharge
-                     En DV el torque viene del 0x507 (NUNCA fallback a APPS; stale → 0).
-AmsError          →  entrada desde CUALQUIER estado si in.ams_error (latcheado);
-                     sale a WaitInvVdcConfig cuando !ams_error
-```
+> ⚠️ **Este bloque es un ÍNDICE, no una copia de la lógica.** Las transiciones, las
+> condiciones exactas y las palabras de modo que se mandan al inversor viven en
+> [`Core/Src/app/control.cpp`](Core/Src/app/control.cpp) (`Controller::step()`:
+> primero el `switch` de transiciones, luego el de salidas), con el razonamiento y
+> las referencias a issues en comentarios **ahí mismo, junto al código**.
+>
+> Antes esto duplicaba esa lógica línea a línea y **derivó dos veces en una sola
+> semana**: lo corregí en #163 y volvió a quedar obsoleto en cuanto #168 cambió la
+> subida del inversor. Un texto que hay que actualizar a mano cada vez que cambia
+> un `if` no se actualiza. Si necesitas el detalle, lee el código. Si cambias el
+> código, **no** hace falta volver aquí — sólo si añades o quitas un estado.
 
-**Recuperación de fallo del inversor — reactiva, en cualquier estado de marcha:**
-`inv_state` 11 (hard fault) → `0x0D` + `Off`, 10 (soft fault) → `0x13` + `0x0D` + `Off`,
-con **`Flt_Clear`** (0x360 byte2 bit7) pulsado en la ÚLTIMA palabra. La reset word sola
-NO limpia un fallo latcheado — el manual §9.3 dice que lo que reinicia un FAULT es ir a
-OFF, y la VCU IFS07 que recuperaba sin power cycle mandaba justo esa ráfaga (#148).
-Suprimida en `AmsError`.
-El inversor puede arrancar **latcheado** en hard fault, así que esto corre también antes
-de `Active` o la FSM se atasca en `WaitInvStandby`.
+Estados, en orden de arranque:
 
-`AmsError` distingue el **Start re-armable** de la AMS del **Error latcheado**
-(`AMS_status` 0x4A0 byte0 == 5): en Error la ECU **inhibe** en vez de reintentar
-precarga.
+| Estado | Para qué |
+|---|---|
+| `WaitInvVdcConfig` | espera a que el inversor reporte su configuración de bus DC |
+| `Precharge` | espera el veredicto de precarga de la AMS; reintenta por timeout |
+| `WaitStartBrake` | espera el trigger de R2D (manual o DV) |
+| `R2dDelay` | hace sonar el RTDS antes de habilitar par |
+| `WaitInvStandby` | sube el inversor hasta Ready |
+| `Active` | par en marcha |
+| `AmsError` | inhibición; se entra desde CUALQUIER estado |
+
+### Invariantes que el `switch` no cuenta por sí solo
+
+Esto sí vive aquí porque son **decisiones**, no mecánica — y no se leen de un
+vistazo en el código:
+
+- **El trigger ES la decisión de modo (#17).** En `WaitStartBrake`, el gate que
+  dispare (manual = botón + freno; DV = `0x510` fresco + freno EBS verificado en
+  nuestro propio sensor) latchea el modo para **todo el ciclo de marcha**. Manual
+  tiene precedencia. No se cambia de modo en caliente.
+- **En DV el par NUNCA cae de vuelta a las APPS.** La fuente es el `0x507`
+  condicionado; si el stream está stale el par es 0. No hay piloto sentado.
+- **`AmsError` distingue el Start re-armable de la AMS del Error latcheado**
+  (`0x4A0` byte0 == 5): en Error la ECU **inhibe** en vez de reintentar precarga,
+  y ahí se suprime también la recuperación de fallo del inversor.
+- **La recuperación de fallo del inversor corre ANTES de `Active`, no sólo dentro.**
+  El inversor puede arrancar ya latcheado en hard fault; si sólo se intentara
+  desde `Active`, la FSM se quedaría esperando para siempre en `WaitInvStandby`.
+- **El par va NEGADO** hacia el inversor: restricción mecánica del montaje del
+  motor, no un bug (ver `inverter.cpp`).
+- **La calibración de pedales es RUNTIME** (#169): los umbrales de APPS y freno
+  llegan por `CtrlInputs::cal`, no de `ecu_config.hpp`. Los valores de ese header
+  son sólo los defaults de fábrica.
 
 ---
 

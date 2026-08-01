@@ -175,7 +175,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         // Off(0)/Shutdown(13) it is NOT -- this A16 config will not take Ready
         // from those states.
         //
-        // BENCH EVIDENCE (2026-07-29, firmware 44688b6, on stands at 355 V):
+        // BENCH EVIDENCE (2026-07-29, firmware 44688b6, on stands at 355 V; #168):
         // parked in WaitInvStandby with inv_state=13 Shutdown, commanding
         // Ready(0x04) at 100 Hz, L1/L2 fault layers CLEAN (PwrStg 0x001 alive,
         // EMCtrl 0x01 init_ok) and the DEM only latched history -- and the
