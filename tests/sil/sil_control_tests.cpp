@@ -585,6 +585,29 @@ static void test_pedal_cal() {
     { PedalCal c{}; c.apps1_max = 5000;
       CHECK((validate_cal(c) & cal_flag::OutOfAdcRange) != 0, "value beyond 12-bit rejected"); }
 
+    // --- brake_pct: the 14%-at-rest bug and its fix ---
+    {
+        PedalCal u{};                       // brake_rest = 0 -> uncalibrated
+        CHECK(u.brake_rest == 0, "brake rest is unmeasured by default");
+        // Legacy behaviour preserved EXACTLY while uncalibrated: raw*100/4095.
+        CHECK(brake_pct(560, u) == static_cast<std::uint8_t>(560u * 100u / 4095u),
+              "uncalibrated brake_pct keeps the legacy full-range scaling");
+        CHECK(brake_pct(560, u) == 13, "...which is why a released brake reads ~13-14%");
+        CHECK(brake_pct(4095, u) == 100, "uncalibrated full scale still saturates");
+
+        // Once a rest point exists the same raw reading reads 0.
+        PedalCal c{};
+        c.brake_rest = 560; c.brake_pressed = 3000;
+        CHECK(brake_pct(560, c) == 0, "calibrated: released brake reads 0% (the bug fixed)");
+        CHECK(brake_pct(400, c) == 0, "below rest clamps to 0");
+        CHECK(brake_pct(3000, c) == 100, "at the pressed point reads 100%");
+        CHECK(brake_pct(4000, c) == 100, "above the pressed point clamps to 100");
+        CHECK(brake_pct(1780, c) == 50, "midway between rest and pressed reads 50%");
+        // A degenerate span must not divide by zero or wrap.
+        PedalCal z{}; z.brake_rest = 3000; z.brake_pressed = 3000;
+        CHECK(brake_pct(3000, z) <= 100, "degenerate span cannot produce a bogus percentage");
+    }
+
     // A garbage record (all 0xFF, i.e. erased flash read back as a struct) must
     // be rejected -- this is the boot-time fallback path, not a theoretical case.
     { PedalCal c{}; c.apps1_min = c.apps1_max = c.apps2_min = c.apps2_max = 0xFFFF;

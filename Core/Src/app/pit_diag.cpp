@@ -61,7 +61,7 @@ CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
     d.dv_r2d_req       = in.dv_r2d_req ? 1u : 0u;                            // uDV 0x510 set+fresh
     d.dv_cmd_fresh     = in.dv_fresh ? 1u : 0u;                              // uDV 0x507 stream fresh
     d.ts_active        = in.ok_precharge ? 1u : 0u;                         // TX 0x504 view
-    d.brake_over_limit = (in.brake_raw > config::BrakeDvHardRaw) ? 1u : 0u; // TX 0x505 verdict
+    d.brake_over_limit = (in.brake_raw > in.cal.brake_dv_hard) ? 1u : 0u;  // TX 0x505 verdict
     d.r2d_confirm      = c.dv_mode ? 1u : 0u;                               // TX 0x511 (== latched)
     d.dv_torque_pct    = in.dv_torque_pct;                                  // conditioned 0x507
     d.motor_rpm_mech   = static_cast<std::int16_t>(v.inv_rpm / config::MotorPolePairs);
@@ -70,13 +70,13 @@ CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
     return make_acu(PitDiag_dv_ID, b);
 }
 
-CanFrame PitDiag::build_pedals(const IoInputs& io) noexcept {
+CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_pedals_t p{};
     p.apps1_raw = io.apps1_raw;
     p.apps2_raw = io.apps2_raw;
     p.brake_raw = io.brake_raw;
-    p.apps1_pct = apps_pct(io.apps1_raw, config::Apps1AdcMin, config::Apps1AdcMax);
-    p.apps2_pct = apps_pct(io.apps2_raw, config::Apps2AdcMin, config::Apps2AdcMax);
+    p.apps1_pct = apps_pct(io.apps1_raw, cal.apps1_min, cal.apps1_max);
+    p.apps2_pct = apps_pct(io.apps2_raw, cal.apps2_min, cal.apps2_max);
     std::uint8_t b[PitDiag_pedals_DLC];
     encode_PitDiag_pedals(p, b);
     return make_acu(PitDiag_pedals_ID, b);
@@ -190,13 +190,16 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     return make_acu(PitDiag_health_ID, b);
 }
 
-CanFrame PitDiag::build_brake(const IoInputs& io) noexcept {
+CanFrame PitDiag::build_brake(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_brake_t br{};
-    // PENDING calibration: brake pressure stays 0 (0.1-bar) and % is a rough
-    // 12-bit-range placeholder until the real S_BRAKE sensor map lands.
+    // Pressure in bar still needs the S_BRAKE sensor transfer function (part
+    // number, range, output span, any divider ahead of the 3V3 ADC), which we
+    // do not have -- so it stays 0 rather than reporting an invented number.
+    // Out of scope for #169; tracked separately.
     br.brake_pressure = 0;
-    br.brake_pct = static_cast<std::uint8_t>(
-        io.brake_raw >= 4095u ? 100u : (static_cast<std::uint32_t>(io.brake_raw) * 100u / 4095u));
+    // Percentage now uses the CALIBRATED span once a rest point exists, and
+    // falls back to the legacy full-range scaling until then (see brake_pct).
+    br.brake_pct = brake_pct(io.brake_raw, cal);
     std::uint8_t b[PitDiag_brake_DLC];
     encode_PitDiag_brake(br, b);
     return make_acu(PitDiag_brake_ID, b);

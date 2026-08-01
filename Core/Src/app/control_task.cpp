@@ -33,6 +33,10 @@ extern "C" void ecu_control_task_run(void *argument) {
 
     Controller ctrl;
     IoSignals  io;
+    // The ACTIVE pedal calibration. Compile-time defaults for now; step 3 of
+    // #169 loads it from the bootloader NVM here (validated, falling back to
+    // these defaults if the stored record is absent or fails validate_cal()).
+    PedalCal   cal{};
     auto&      vs       = VehicleService::instance();
     uint32_t   last_pit = 0;
     uint32_t   last_udv = 0;
@@ -48,6 +52,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         const VehicleState veh = vs.snapshot();
 
         CtrlInputs ci{};
+        ci.cal = cal;
         ci.apps1_raw         = in.apps1_raw;
         ci.apps2_raw         = in.apps2_raw;
         ci.brake_raw         = in.brake_raw;
@@ -131,7 +136,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         if (static_cast<uint32_t>(now - last_udv) >= config::UdvTxPeriodMs) {
             last_udv = now;
             can_tx_post(UdvTx::build_ts_active(ci.ok_precharge));
-            can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > config::BrakeDvHardRaw));
+            can_tx_post(UdvTx::build_brake_over_limit(in.brake_raw > ci.cal.brake_dv_hard));
             // 0x511 R2D confirm: repeated at 100 ms (loss-robust) with the DV
             // latch as the value -- uDV keys on byte0 != 0.
             can_tx_post(UdvTx::build_r2d_confirm(out.dv_mode));
@@ -180,12 +185,12 @@ extern "C" void ecu_control_task_run(void *argument) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
-            can_tx_post(PitDiag::build_pedals(in));
+            can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh));
             can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness (#148)
             can_tx_post(PitDiag::build_fwinfo());
-            can_tx_post(PitDiag::build_brake(in));
+            can_tx_post(PitDiag::build_brake(in, ci.cal));
 #if defined(ECU_DEBUG_INV_BRIDGE)
             // DEBUG: FDCAN1 (inverter bus) TX health. 0x57F =
             // [TxErrCnt, RxErrCnt, LastErrorCode, flags(b0=busoff,b1=errpassive,b2=warn), activity].

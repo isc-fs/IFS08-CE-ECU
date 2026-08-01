@@ -76,4 +76,20 @@ std::uint8_t validate_cal(const PedalCal& c) noexcept {
     return flags;
 }
 
+std::uint8_t brake_pct(std::uint16_t raw, const PedalCal& c) noexcept {
+    // Calibrated: straight span map, same shape as apps_pct.
+    if (c.brake_rest != 0u && c.brake_pressed > c.brake_rest) {
+        if (raw <= c.brake_rest) return 0u;
+        if (raw >= c.brake_pressed) return 100u;
+        return static_cast<std::uint8_t>(
+            (static_cast<std::uint32_t>(raw - c.brake_rest) * 100u) /
+            static_cast<std::uint32_t>(c.brake_pressed - c.brake_rest));
+    }
+    // Uncalibrated fallback: legacy full-range scaling, bug and all, so this
+    // change is a no-op until a rest point exists.
+    if (raw >= CalAdcMax) return 100u;
+    return static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(raw) * 100u) / CalAdcMax);
+}
+
 }  // namespace ecu

@@ -81,6 +81,17 @@ inline constexpr std::uint16_t CalAdcMax = 4095;   // 12-bit
 // post-commit verification sweep; see #169.
 [[nodiscard]] std::uint8_t validate_cal(const PedalCal& c) noexcept;
 
+// Brake travel as a percentage, 0..100.
+//
+// Uses the CALIBRATED span (brake_rest..brake_pressed) when a rest point has
+// been captured. Until then brake_rest is 0 and this falls back to the legacy
+// full-12-bit-range scaling, which is what shipped before and is why a released
+// brake reads about 14 % in the pit tool today (raw ~560 of 4095). That number
+// cannot be fixed without measuring rest -- scaling to a span nobody has
+// measured would just be a different wrong answer -- so it stays until an
+// operator captures BRAKE_REST (#169).
+[[nodiscard]] std::uint8_t brake_pct(std::uint16_t raw, const PedalCal& c) noexcept;
+
 }  // namespace ecu
 
 #endif  // PEDAL_CAL_HPP_
