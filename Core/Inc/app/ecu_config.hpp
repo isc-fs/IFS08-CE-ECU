@@ -66,6 +66,24 @@ inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 
 // Captured by the operator calibration wizard (#169); once non-zero it also
 // enables the brake-span validation rule.
 inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasured
+// Brake pressure sensor: Variohm EuroSensor EPT1400 (docs/EPT1400_pressure_sensor.pdf),
+// ratiometric 0.5 V at zero pressure to 4.5 V at full scale. The board divider
+// ahead of the ADC is known (R8 1k series, R9 2k shunt = 2/3), so pressure is an
+// ABSOLUTE map from raw counts and needs no calibration -- see pedal_cal.hpp.
+//
+// FULL-SCALE RANGE from the order code (EPT1400-K-04000-B-...): 40 bar.
+// This is the one value the maths cannot derive; everything else follows from
+// the datasheet and the divider. 0 would mean unknown and suppress the reading.
+//
+// At 40 bar the scale is 82.7 counts/bar, which finally makes the three brake
+// thresholds reviewable in physical units:
+//   BrakeArmRaw      750 ->  4.1 bar   light press, arms R2D
+//   BrakeDvHardRaw  2500 -> 25.2 bar   DV R2D gate + the 0x505 verdict to uDV
+//   BrakePressedRaw 3000 -> 31.3 bar   EV.2.3 brake+throttle cut
+// Those are the inherited IFS06 numbers -- now at least judgeable rather than
+// opaque. 4.1 bar to arm and ~31 bar for "brake pressed" are plausible; the
+// 25.2 bar DV gate still wants checking against what the EBS actually holds.
+inline constexpr uint16_t BrakeSensorFullScaleBar = 40;  // EPT1400 order code: 40 bar (04000)
 inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
