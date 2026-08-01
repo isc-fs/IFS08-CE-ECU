@@ -62,12 +62,17 @@ WaitStartBrake    →  MANUAL: (start_button && brake_raw > BrakeArmRaw)
                      el modo para todo el ciclo de marcha. Manual tiene precedencia.
 R2dDelay          →  (RTDS R2dSoundMs = 2000 ms)
 WaitInvStandby    →  (inv_state == InvReadyState=4)
-                     Comanda Ready(0x04) INCONDICIONALMENTE, reporte lo que reporte el
-                     inversor (incl. OFF/SHUTDOWN): el manual W90 §9.1 hace
-                     OFF --(Ready)--> READY en una transición directa. NO volver a hacerlo
-                     reactivo: #144 mandó Off(0x01) a un inversor apagado, no arregló el
-                     TS-off y se revirtió en #155. El fallo latcheado (10/11) sí se
-                     sobrescribe con su reset word en el bloque reactivo de abajo. Ver #148.
+                     Sube el inversor según lo que reporte (#168, captura en banco
+                     2026-07-29 con L1/L2 limpias y el inversor parado en Shutdown
+                     ignorando Ready a 100 Hz):
+                       13 Shutdown → Off(0x01) solo          (legacy case 13)
+                        0 Off      → Off(0x01) y LUEGO Ready(0x04) en el MISMO ciclo
+                        resto      → Ready(0x04) directo     (Standby(3) etc.)
+                     NO es volver a #144: aquel mandaba Off EN LUGAR DE Ready y nunca
+                     enviaba Ready, así que no podía subir nunca; aquí Ready se sigue
+                     mandando siempre para el estado 0, sólo que precedido del Off.
+                     El fallo latcheado (10/11) sigue sobrescribiéndose con su reset
+                     word + Off + Flt_Clear en el bloque reactivo de abajo. Ver #148.
 Active            →  torque runtime; si !ok_precharge → vuelve a Precharge
                      En DV el torque viene del 0x507 (NUNCA fallback a APPS; stale → 0).
 AmsError          →  entrada desde CUALQUIER estado si in.ams_error (latcheado);
@@ -75,7 +80,11 @@ AmsError          →  entrada desde CUALQUIER estado si in.ams_error (latcheado
 ```
 
 **Recuperación de fallo del inversor — reactiva, en cualquier estado de marcha:**
-`inv_state` 11 (hard fault) → `0x0D`, 10 (soft fault) → `0x13`; suprimida en `AmsError`.
+`inv_state` 11 (hard fault) → `0x0D` + `Off`, 10 (soft fault) → `0x13` + `0x0D` + `Off`,
+con **`Flt_Clear`** (0x360 byte2 bit7) pulsado en la ÚLTIMA palabra. La reset word sola
+NO limpia un fallo latcheado — el manual §9.3 dice que lo que reinicia un FAULT es ir a
+OFF, y la VCU IFS07 que recuperaba sin power cycle mandaba justo esa ráfaga (#148).
+Suprimida en `AmsError`.
 El inversor puede arrancar **latcheado** en hard fault, así que esto corre también antes
 de `Active` o la FSM se atasca en `WaitInvStandby`.
 
@@ -146,6 +155,9 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING; `brake_pressure` está **hardcodeado a 0** hoy) |
 | 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) |
 | 0x707 | PitDiag_dv       | `dv_r2d_req` · `brake_over_limit` · `r2d_confirm` · torque uDV — diagnóstico del modo driverless |
+| 0x7E2 | PitCal_cmd (RX)  | Sesión de calibración de pedales: comando + punto de captura + guard `0xCA11B0DE` (CRC-32 del set en `COMMIT`) |
+| 0x7E3 | PitCal_status    | Estado de sesión · último cmd · result · máscara de capturas · flags de validación |
+| 0x7E4 / 0x7E5 | PitCal_apps / PitCal_brake | Lectura de los valores (almacenados o staged) tras `READ_STORED` / `READ_STAGED` |
 | 0x708 | PitDiag_inv_faults | Capas de fallo **L1 `PwrStg`** (9 bits) y **L2 `EMCtrl`** (8 bits) del 0x461, con nombre bit a bit + el lado **comandado** (`cmd_follow_n`, `cmd_flt_clear`). El DEM (L3) por sí solo no distingue un latch limpiable de una condición L1/L2 viva que lo sostiene (#148) |
 
 > **`0x704` se emite siempre (ungated)** desde `DiagTask`, fuera del gate `0x7E0`, para que
@@ -215,6 +227,35 @@ re-medirse en el coche montado con sensores reales antes de cualquier marcha**.
 > (2026-06-27); **`BrakePressedRaw` (EV.2.3) y `BrakeDvHardRaw` (R2D driverless) siguen
 > `COMMISSION`** — sin calibrar. Ver [`docs/commissioning.md`](docs/commissioning.md).
 
+### Calibración de pedales en RUNTIME (#169)
+
+Los siete valores de pedales (`Apps1/2AdcMin/Max`, `BrakeRest/Arm/DvHard/PressedRaw`)
+**ya no son constexpr**: viven en `ecu::PedalCal` y se cargan al arrancar desde el
+sector NVM del bootloader (sector 7, `0x080E0000` — **fuera de la región de
+aplicación**, así que sobreviven a un reflash). Los valores de `ecu_config.hpp`
+son sólo los DEFAULTS.
+
+- Se pasan al núcleo puro por `CtrlInputs::cal`, no por un global, para que
+  `Controller::step()` siga siendo función pura de sus argumentos y el SIL pueda
+  variarlos por test.
+- `validate_cal()` (puro, en el SIL) gatea **tanto** el commit por CAN **como** la
+  carga desde flash: un registro que no se podría haber comiteado tampoco se
+  acepta desde almacenamiento.
+- Registro ausente, roto, de versión desconocida o inválido → **defaults**, y se
+  anuncia en `0x704` `cal_status` (**ungated**). Una calibración ignorada en
+  silencio es indistinguible de una aplicada; eso es lo que evita ese campo.
+- Escritura **sólo append**, nunca borrado ni compactación: programar una flash
+  word son ~100 µs (0,02 % del presupuesto IWDG de 500 ms); un borrado de sector
+  serían cientos de ms. Si el sector se llena se **rechaza** — compactar es
+  trabajo del bootloader al arrancar. No implementar la compactación es también
+  lo que garantiza que no podemos corromper las claves del propio BL.
+- Un commit válido se aplica **en caliente** (apply-on-commit); es seguro porque
+  la sesión sólo abre con el coche quieto (TS abajo, fuera de `Active`, par 0,
+  rpm 0).
+- ⚠️ Las constantes del bootloader están **duplicadas** en `pedal_cal_nvm.hpp`
+  (no hay header compartido). Ver el aviso en ese fichero y diffear contra
+  `bl_memmap.h` / `bl_nvm.h` en cualquier subida del bootloader.
+
 **Procedimiento:** leer `apps1_raw` / `apps2_raw` / `brake_raw` del stream pit-diag `0x701`
 (o por SWD) en reposo y a fondo. El umbral de armado de freno debe ser ≈10 % del recorrido.
 `pct = clamp((raw - min) * 100 / (max - min), 0, 100)`. Procedimiento completo, y los
@@ -280,6 +321,10 @@ ficheros).
 | `Core/Src/app/can_tx_task.cpp` | Único punto TX del FDCAN; selecciona bus por `frame.bus`. |
 | `Core/Src/app/diag_task.cpp` | `0x704` health cada 1 s, separado de control. |
 | `Core/Src/app/app_init_task.cpp` | Bring-up FDCAN1/2 one-shot (fix #48). |
+| `Core/Inc/app/pedal_cal.hpp` · `Core/Src/app/pedal_cal.cpp` | `PedalCal` runtime + `validate_cal()` + `brake_pct()`. Puro, en el SIL. |
+| `Core/Src/app/pedal_cal_nvm.cpp` | Parseo del registro en el sector NVM del BL + helpers de escritura (slot, seq, entry). Puro. |
+| `Core/Src/app/pedal_cal_flash.cpp` | La única parte con HAL: programa una flash word. Fuera del SIL. |
+| `Core/Src/app/cal_session.cpp` | Máquina de estados de la sesión de calibración (0x7E2). Pura, en el SIL. |
 | `Core/Src/app/io_signals.cpp` | ADC3 (freno, APPS1/2) + GPIO (botón, RTDS, LEDs). |
 | `Core/Src/app/inverter.cpp` | Adaptador inversor NX/EMC: setpoints 0x360/0x362, decode 0x461/63/66. |
 | `Core/Src/app/vehicle_service.cpp` | Estado RX compartido (snapshot por control). |

@@ -11,40 +11,119 @@ over CAN through the pit-diag stream — no UART, no SWD.
 - A CAN tool on the ACU bus (the pit tool, or `candump`/`cansend` decoding against
   [`docs/dbc/ecu.dbc`](dbc/ecu.dbc)).
 - Pit-diag enabled: send **`0x7E0`** with payload **`DE AD BE EF`** (bytes 0–3).
-  The ECU acks `0x7E1 = 1` and streams `0x700`–`0x707`. Disable with `0x7E0 = 0`.
-  (`0x706` = inverter temps, `0x707` = DV diagnostics. `0x704` health is **ungated** —
-  it streams from `DiagTask` even with pit-diag off.)
+  The ECU acks `0x7E1 = 1` and streams `0x700`–`0x708`. Disable with `0x7E0 = 0`.
+  (`0x706` = inverter temps, `0x707` = DV diagnostics, `0x708` = inverter L1/L2
+  fault layers. `0x704` health is **ungated** — it streams from `DiagTask` even
+  with pit-diag off.)
 
 ---
 
-## 1. APPS calibration (`Apps1/2AdcMin/Max`)
+## 1. Pedal calibration (APPS + brake)
 
-The pedal travel maps raw ADC → torque %. The endpoints are board- and
-pedal-specific.
+Calibration is **runtime data** (#169). It lives in the bootloader NVM sector,
+survives a power cycle **and a firmware reflash**, and can be set over CAN
+without rebuilding anything.
 
-**Read:** with pit-diag on, watch **`0x701` PitDiag_pedals** — `apps1_raw`,
-`apps2_raw` (12-bit ADC). `apps1_pct`/`apps2_pct` show the *current* (placeholder)
-mapping.
+Two ways to do it. Use the wizard when it exists; the manual route is the
+fallback and is what to use today.
 
-**Measure:**
-1. **Rest (0 %):** pedal fully released → record steady `apps1_raw → Apps1AdcMin`,
-   `apps2_raw → Apps2AdcMin`.
-2. **Full (100 %):** pedal to the mechanical stop → record `apps1_raw → Apps1AdcMax`,
-   `apps2_raw → Apps2AdcMax`.
-3. **Sanity:** both channels move together (the dual-APPS / T.11.8.9 redundancy).
-   Keep the convention `*AdcMin` = rest, `*AdcMax` = full — the firmware handles the
-   span direction.
-4. **Margin:** set `*AdcMin` a hair *above* the true rest reading so a released
-   pedal lands at exactly 0 %, not a value that clamps; leave headroom below `*AdcMax`.
+### Is a calibration actually in force?
+
+Read **`0x704` byte 5 bits 4–5** (`cal_status`) — **ungated**, so this works
+without arming pit-diag:
+
+| Value | Meaning |
+|---|---|
+| `Defaults` | nothing stored; running the compile-time values |
+| `Loaded` | a stored calibration is in force |
+| `InvalidFellBack` | a record was found and **rejected**; running defaults |
+| `BadVersionFellBack` | record from an unknown layout; running defaults |
+
+`InvalidFellBack` is the one that matters: the ECU is deliberately ignoring a
+stored calibration. Do not drive on it assuming your numbers applied.
+
+### 1a. With MingoCAN (preferred — requires isc-fs/can-flasher#534)
+
+> **Not available yet.** The ECU side is complete; the MingoCAN client is not
+> built. Until #534 ships, use 1b.
+
+Car on stands, **wheels off the ground**, LV on, **TS off**. The ECU refuses to
+open a session unless the tractive system is down, the FSM is not in `Active`,
+commanded torque is zero and the motor is stopped — and it says which of those
+failed.
+
+The wizard walks five captures: accelerator released, accelerator at the
+mechanical stop, **accelerator at mid travel**, brake released, brake pressed
+firmly. It then shows old-vs-new for every value, you confirm, and it commits.
+
+**The mid-travel capture is not optional padding.** Rest and full endpoints
+cannot detect what T.11.8.9 guards against — both channels normalise to 0–100 %
+by construction, so they agree at the endpoints however badly they diverge in
+between. Mid travel is the only place channel agreement is really measured.
+
+A valid commit applies **immediately** — no reset. Sweep both pedals afterwards
+and confirm `apps1_pct`/`apps2_pct` on `0x701` read 0 at rest and 100 at full.
+
+### 1b. Manually (works today)
+
+**Read:** with pit-diag armed, watch **`0x701 PitDiag_pedals`** — `apps1_raw`,
+`apps2_raw`, `brake_raw` (12-bit).
+
+**Measure**, letting each reading settle:
+
+| Pedal position | Record | Into |
+|---|---|---|
+| Accelerator released | `apps1_raw`, `apps2_raw` | `Apps1AdcMin`, `Apps2AdcMin` |
+| Accelerator at the stop | `apps1_raw`, `apps2_raw` | `Apps1AdcMax`, `Apps2AdcMax` |
+| Brake released | `brake_raw` | `BrakeRestRaw` |
+| Brake pressed firmly | `brake_raw` | `BrakePressedRaw` |
+
+Then set the two intermediate brake thresholds from the measured span — this is
+what the wizard does automatically, and it is what finally retires the IFS06
+placeholders:
+
+```
+span          = BrakePressedRaw - BrakeRestRaw
+BrakeArmRaw   = BrakeRestRaw + span * 10 / 100    # brake-to-arm for R2D
+BrakeDvHardRaw= BrakeRestRaw + span * 60 / 100    # DV R2D gate, and the 0x505
+                                                  # verdict sent to the uDV
+```
+
+> ⚠️ `BrakeDvHardRaw` is broadcast to the uDV as this ECU's verdict on whether
+> the EBS is really braking. Sanity-check 60 % against what the EBS actually
+> produces before any driverless running.
+
+**Margin:** set each `*AdcMin` a little **above** the true rest reading so a
+released pedal lands at exactly 0 %, and leave headroom below `*AdcMax`. Note
+this costs pedal travel — the current +14/+13 count insets are about 1.6 % of
+span, which is part of why torque onset sits above the nominal deadband.
+
+**Sanity:** both APPS channels must track each other across the whole sweep, not
+just at the ends. Watch `apps1_pct` and `apps2_pct` together through a slow
+sweep; more than a few percent apart at mid travel means one channel is
+mis-calibrated or a sensor is non-linear, and T.11.8.9 will cut torque in
+service.
 
 **Apply + verify:**
-1. Set the four constants in `Core/Inc/app/ecu_config.hpp`.
-2. Rebuild (`cmake --build build-fw`) and flash over CAN
-   (`can-flasher … --address 0x08020000 --verify-after --jump`).
-   **Confirm BL recovery first** (`0x002`/`0xB007AD12` round-trip); never power-cut
-   mid-write.
-3. Re-enable pit-diag, watch `0x701`: `apps1_pct`/`apps2_pct` read **0 % at rest,
-   100 % at full**, tracking within 10 % across the sweep (no T.11.8.9 false-trip).
+1. Set the constants in `Core/Inc/app/ecu_config.hpp`.
+2. Rebuild and flash over CAN. **Confirm BL recovery first**
+   (`0x002`/`0xB007AD12` round-trip); never power-cut mid-write.
+3. Re-arm pit-diag and sweep: `apps1_pct`/`apps2_pct` read **0 % at rest, 100 %
+   at full**, tracking within 10 % throughout, and `brake_pct` on `0x705` reads
+   **0 with the brake released** (it reads ~13 % until `BrakeRestRaw` is set —
+   the percentage falls back to full-ADC-range scaling while the span is
+   unknown).
+
+### What is NOT calibratable
+
+The deadbands, the FSAE plausibility percentages (`Ev23*`, `AppsDisagree*`) and
+every timing stay compile-time. They are design decisions, not per-car
+measurements, and an operator must not be able to move them.
+
+`brake_pressure` on `0x705` is still **hardcoded to 0**. Reporting real bar needs
+the S_BRAKE sensor transfer function (part number, range, output span, any
+divider ahead of the 3V3 ADC), which we do not have. Calibration gives you a
+correct percentage and correct thresholds, not engineering units.
 
 ---
 
