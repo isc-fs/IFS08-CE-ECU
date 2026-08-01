@@ -96,6 +96,46 @@ void encode_cal_record(const PedalCal& c, std::uint8_t out[CalRecordLen]) noexce
 // images, so its existing helper works unmodified.
 [[nodiscard]] std::uint32_t cal_crc32(const PedalCal& c) noexcept;
 
+// ---- write path (step 5) --------------------------------------------------
+//
+// APPEND ONLY. We program one 32-byte flash word into the first erased slot and
+// never erase, never compact. Three reasons, all load-bearing:
+//
+//  1. WATCHDOG. Programming one flash word takes ~100 us; erasing a 128 KB
+//     sector takes hundreds of ms to seconds. ControlTask is the sole IWDG
+//     kicker on a 500 ms budget (IWDG_PRESCALER_32, reload 500), so a word
+//     program is 0.02 % of it and an erase would blow it outright.
+//  2. CORRUPTION. Compaction is the part of bl_nvm that rewrites the WHOLE
+//     sector, including the bootloader's own keys and the app-metadata word.
+//     Not implementing it means we cannot get it wrong.
+//  3. SINGLE BANK. The H733 has one flash bank, so a program stalls instruction
+//     fetch. 100 us is invisible; an erase would freeze the car.
+//
+// If the region fills we REFUSE rather than compacting -- compaction stays the
+// bootloader's job, which it can do at boot with nothing else running. With
+// ~4000 slots and a handful of calibrations a season this is a theoretical
+// path, not a practical one.
+
+enum class CalWrite : std::uint8_t {
+    Ok = 0,
+    Full = 1,          // no erased slot left; needs a bootloader-side compaction
+    HardwareFail = 2,  // HAL_FLASH_Program reported an error
+    VerifyFail = 3,    // programmed, but reading it back did not match
+};
+
+// Find where the next entry goes and what sequence number it needs.
+// Pure: takes the mapped region, returns a byte offset and the seq to use
+// (highest seen across ALL keys, plus one -- the store is globally ordered).
+// Returns false if there is no erased slot left.
+[[nodiscard]] bool find_cal_write_slot(const void* nvm_base, std::uint32_t nvm_size,
+                                       std::uint32_t* out_offset,
+                                       std::uint32_t* out_seq) noexcept;
+
+// Build the full 32-byte bl_nvm entry for a calibration. Pure, so the SIL suite
+// pins the on-flash layout without touching hardware.
+void build_cal_entry(const PedalCal& c, std::uint32_t seq,
+                     std::uint8_t out[CalNvmEntrySize]) noexcept;
+
 }  // namespace ecu
 
 #endif  // PEDAL_CAL_NVM_HPP_

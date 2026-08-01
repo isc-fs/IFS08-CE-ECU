@@ -16,6 +16,7 @@
 #include "app/inverter.hpp"
 #include "app/io_signals.hpp"
 #include "app/cal_session.hpp"
+#include "app/pedal_cal_flash.hpp"
 #include "app/pedal_cal_nvm.hpp"
 #include "app/pit_diag.hpp"
 #include "app/udv_tx.hpp"
@@ -161,16 +162,24 @@ extern "C" void ecu_control_task_run(void *argument) {
                 if (cso.commit_requested) {
                     // APPLY FIRST, then persist. The operator is standing at the
                     // car and will verify by sweeping the pedals, so the live
-                    // values must be the ones they just committed.
+                    // values must be the ones they just committed. Applying
+                    // before the write also means a flash failure leaves the
+                    // calibration usable for this session rather than losing
+                    // the operator's work outright -- they are told it did not
+                    // persist and can retry.
                     cal = cso.to_commit;
-                    // Persistence is step 5. Until it lands the calibration is
-                    // live for THIS power cycle only, and saying so is the
-                    // honest answer -- silently applying something that
-                    // evaporates on the next boot is exactly the confusion the
-                    // 0x704 cal_status announcement exists to prevent.
-                    cal_session.note_persist_failed();
-                    cso.state  = CalSessionState::Error;
-                    cso.result = CalResult::NvmWriteFailed;
+                    const CalWrite w = persist_cal(cso.to_commit);
+                    if (w == CalWrite::Ok) {
+                        // Durable. Reflect it in the boot-status field too, so
+                        // 0x704 stops advertising whatever the last BOOT found
+                        // and starts telling the truth about what is stored.
+                        g_cal_load_status = static_cast<std::uint8_t>(CalLoad::Loaded);
+                        cso.state = CalSessionState::Committed;
+                    } else {
+                        cal_session.note_persist_failed();
+                        cso.state  = CalSessionState::Error;
+                        cso.result = CalResult::NvmWriteFailed;
+                    }
                 }
             } else if (cal_session.tick(cs)) {
                 emit = true;                       // session timed out
