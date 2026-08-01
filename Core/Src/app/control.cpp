@@ -49,8 +49,8 @@ void Controller::enter_(CtrlState s, uint32_t now_ms) noexcept {
 CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // ---- pedal % + torque + plausibility (computed every tick, even before
     //      Active, so the latches track and pit-diag shows live verdicts) ----
-    const uint8_t a1 = apps_pct(in.apps1_raw, Apps1AdcMin, Apps1AdcMax);
-    const uint8_t a2 = apps_pct(in.apps2_raw, Apps2AdcMin, Apps2AdcMax);
+    const uint8_t a1 = apps_pct(in.apps1_raw, in.cal.apps1_min, in.cal.apps1_max);
+    const uint8_t a2 = apps_pct(in.apps2_raw, in.cal.apps2_min, in.cal.apps2_max);
 
     uint8_t torque = 0;
     if (a1 > AppsAgreementPct && a2 > AppsAgreementPct) {
@@ -61,9 +61,9 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
 
     // EV.2.3 brake+throttle plausibility (latches; clears only when the pedal
     // returns below the reset threshold with the brake released).
-    if (in.brake_raw > BrakePressedRaw && torque > Ev23SetPct) {
+    if (in.brake_raw > in.cal.brake_pressed && torque > Ev23SetPct) {
         ev23_latched_ = true;
-    } else if (in.brake_raw < BrakePressedRaw && torque < Ev23ResetPct) {
+    } else if (in.brake_raw < in.cal.brake_pressed && torque < Ev23ResetPct) {
         ev23_latched_ = false;
     }
 
@@ -126,9 +126,9 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         // WHILE the EBS holds hard braking, verified on our own brake sensor
         // (brake_raw > BrakeDvHardRaw) -- no start button in DV. The two are
         // physically exclusive (driver seated vs ASMS on / AS mission running).
-        if (in.start_button && in.brake_raw > BrakeArmRaw) {
+        if (in.start_button && in.brake_raw > in.cal.brake_arm) {
             enter_(CtrlState::R2dDelay, now_ms);
-        } else if (in.dv_r2d_req && in.brake_raw > BrakeDvHardRaw) {
+        } else if (in.dv_r2d_req && in.brake_raw > in.cal.brake_dv_hard) {
             enter_(CtrlState::R2dDelay, now_ms);
             dv_latched_ = true;   // after enter_ (which clears it for pre-R2D targets)
         }

@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "app/ecu_config.hpp"
+#include "app/pedal_cal.hpp"
 
 namespace ecu {
 
@@ -74,6 +75,11 @@ struct CtrlInputs {
     bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
     bool     dv_fresh = false;           // 0x507 stream fresh (UdvCmdStaleMs)
     uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
+    // Pedal calibration, carried IN rather than read from a global so step()
+    // stays a pure function of its arguments and the SIL suite can vary it.
+    // Defaults reproduce the values that used to be constexpr, so an ECU with
+    // no stored calibration behaves exactly as before (#169).
+    PedalCal cal{};
 };
 
 struct CtrlOutput {

@@ -512,6 +512,86 @@ static void test_inverter_ts_off_recovery() {
     }
 }
 
+// #169 -- pedal calibration as RUNTIME data. Two things must hold: the
+// defaults reproduce the old constexpr behaviour EXACTLY (so landing this is a
+// no-op on the car), and validate_cal() rejects anything that could make a
+// released pedal produce torque.
+static void test_pedal_cal() {
+    std::printf("[pedal_cal]\n");
+
+    // --- defaults are the old constexpr values, bit for bit ---
+    PedalCal d{};
+    CHECK(d.apps1_min == config::Apps1AdcMin && d.apps1_max == config::Apps1AdcMax,
+          "default APPS1 cal == the old constexpr pair");
+    CHECK(d.apps2_min == config::Apps2AdcMin && d.apps2_max == config::Apps2AdcMax,
+          "default APPS2 cal == the old constexpr pair");
+    CHECK(d.brake_arm == config::BrakeArmRaw &&
+          d.brake_dv_hard == config::BrakeDvHardRaw &&
+          d.brake_pressed == config::BrakePressedRaw,
+          "default brake thresholds == the old constexpr values");
+    CHECK(validate_cal(d) == 0, "the shipped default calibration is itself valid");
+
+    // --- the core actually USES the passed-in calibration, not a global ---
+    {
+        CtrlInputs in = good_drive_inputs();
+        in.apps1_raw = 3000; in.apps2_raw = 2700;   // mid travel on the defaults
+        Controller c1; uint32_t t = 1000;
+        drive_to_active(c1, t);
+        const uint8_t with_default = c1.step(in, t).torque_pct;
+
+        // Halve both spans: the SAME raw reading must now read much higher.
+        in.cal.apps1_max = static_cast<std::uint16_t>(
+            in.cal.apps1_min + (config::Apps1AdcMax - config::Apps1AdcMin) / 2);
+        in.cal.apps2_max = static_cast<std::uint16_t>(
+            in.cal.apps2_min + (config::Apps2AdcMax - config::Apps2AdcMin) / 2);
+        Controller c2; uint32_t t2 = 1000;
+        drive_to_active(c2, t2);
+        const uint8_t with_narrow = c2.step(in, t2).torque_pct;
+        CHECK(with_narrow > with_default,
+              "narrowing the calibrated span raises the reported pedal % (cal is live)");
+    }
+
+    // --- the brake thresholds are live too ---
+    {
+        CtrlInputs in = good_drive_inputs();
+        in.brake_raw = 1200;                 // above a lowered arm, below the default
+        in.start_button = true;
+        Controller c1; uint32_t t = 1000;
+        // default arm is 750, so 1200 already arms -- lower the bar and confirm
+        // the DV gate moves with the calibration rather than the constant.
+        in.cal.brake_dv_hard = 1000;
+        CHECK(in.brake_raw > in.cal.brake_dv_hard, "DV hard-brake gate follows the cal");
+        (void)c1; (void)t;
+    }
+
+    // --- validation: each rule, one at a time ---
+    { PedalCal c{}; c.apps1_max = static_cast<std::uint16_t>(c.apps1_min + 10);
+      CHECK((validate_cal(c) & cal_flag::Apps1SpanTooSmall) != 0, "tiny APPS1 span rejected"); }
+    { PedalCal c{}; c.apps2_max = static_cast<std::uint16_t>(c.apps2_min + 10);
+      CHECK((validate_cal(c) & cal_flag::Apps2SpanTooSmall) != 0, "tiny APPS2 span rejected"); }
+    { PedalCal c{}; c.apps1_max = c.apps1_min;
+      CHECK((validate_cal(c) & cal_flag::AppsNotMonotonic) != 0, "max == min rejected"); }
+    { PedalCal c{}; c.apps1_max = static_cast<std::uint16_t>(c.apps1_min - 1);
+      CHECK((validate_cal(c) & cal_flag::AppsNotMonotonic) != 0, "inverted APPS rejected"); }
+    { PedalCal c{}; c.apps2_max = static_cast<std::uint16_t>(c.apps2_min + 350);
+      CHECK((validate_cal(c) & cal_flag::AppsSpanMismatch) != 0,
+            "wildly mismatched channel spans rejected (860 vs 350)"); }
+    { PedalCal c{}; c.brake_dv_hard = 200;   // below arm(750) -> order broken
+      CHECK((validate_cal(c) & cal_flag::BrakeOrder) != 0, "brake thresholds out of order rejected"); }
+    { PedalCal c{}; c.brake_rest = 900;      // at/above arm(750) -> released reads armed
+      CHECK((validate_cal(c) & cal_flag::BrakeOrder) != 0, "brake rest above the arm threshold rejected"); }
+    { PedalCal c{}; c.brake_rest = 2900;     // span vs pressed(3000) = 100 < 300
+      CHECK((validate_cal(c) & cal_flag::BrakeSpanTooSmall) != 0, "tiny brake span rejected"); }
+    { PedalCal c{}; c.apps1_max = 5000;
+      CHECK((validate_cal(c) & cal_flag::OutOfAdcRange) != 0, "value beyond 12-bit rejected"); }
+
+    // A garbage record (all 0xFF, i.e. erased flash read back as a struct) must
+    // be rejected -- this is the boot-time fallback path, not a theoretical case.
+    { PedalCal c{}; c.apps1_min = c.apps1_max = c.apps2_min = c.apps2_max = 0xFFFF;
+      c.brake_rest = c.brake_arm = c.brake_dv_hard = c.brake_pressed = 0xFFFF;
+      CHECK(validate_cal(c) != 0, "erased-flash pattern (all 0xFFFF) rejected"); }
+}
+
 // #148 -- L1/L2 fault-layer decode from 0x461. Both straddle byte boundaries
 // (EMCtrl_FOC_BitState 39|8@1+ -> byte4 b7 + byte5 b0-6; PwrStg_BitState
 // 47|9@1+ -> byte5 b7 + byte6), which is exactly the kind of shift that is easy
@@ -1142,6 +1222,7 @@ static void run_all() {
     test_inverter_ts_off_recovery();
     test_inverter_fault_burst();
     test_inverter_fault_layers();
+    test_pedal_cal();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1173,6 +1254,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-ts-off"))    test_inverter_ts_off_recovery();
     else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
+    else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

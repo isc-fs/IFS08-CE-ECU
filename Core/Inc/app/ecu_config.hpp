@@ -61,6 +61,11 @@ inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 
 inline constexpr uint16_t Apps2AdcMin          = 2345;  // bench-cal (rest 2332 + margin)
 inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 - headroom)
 
+// Brake reading with the pedal fully released. NEVER MEASURED -- 0 means
+// "span unknown", which keeps brake_pct on its legacy full-ADC-range scaling.
+// Captured by the operator calibration wizard (#169); once non-zero it also
+// enables the brake-span validation rule.
+inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasured
 inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
