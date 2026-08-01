@@ -15,6 +15,7 @@
 #include "app/ecu_config.hpp"
 #include "app/inverter.hpp"
 #include "app/io_signals.hpp"
+#include "app/pedal_cal_nvm.hpp"
 #include "app/pit_diag.hpp"
 #include "app/udv_tx.hpp"
 #include "app/vehicle_service.hpp"
@@ -33,10 +34,19 @@ extern "C" void ecu_control_task_run(void *argument) {
 
     Controller ctrl;
     IoSignals  io;
-    // The ACTIVE pedal calibration. Compile-time defaults for now; step 3 of
-    // #169 loads it from the bootloader NVM here (validated, falling back to
-    // these defaults if the stored record is absent or fails validate_cal()).
-    PedalCal   cal{};
+    // The ACTIVE pedal calibration, loaded ONCE at task start from the
+    // bootloader NVM sector (#169). load_cal_from_nvm never fails: absent,
+    // torn, unknown-version or invalid records all return the compile-time
+    // defaults, because refusing to drive over a bad calibration would be worse
+    // than running the values the car shipped with. The outcome is latched into
+    // a global so the diagnostic stream can announce a silent fallback -- an
+    // operator MUST be able to tell "my calibration is live" from "the ECU
+    // quietly ignored it".
+    const CalLoadResult cal_load =
+        load_cal_from_nvm(reinterpret_cast<const void*>(CalNvmBase), CalNvmSize);
+    const PedalCal cal = cal_load.cal;
+    g_cal_load_status  = static_cast<std::uint8_t>(cal_load.status);
+    g_cal_load_flags   = cal_load.flags;
     auto&      vs       = VehicleService::instance();
     uint32_t   last_pit = 0;
     uint32_t   last_udv = 0;

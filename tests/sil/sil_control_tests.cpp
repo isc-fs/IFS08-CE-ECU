@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include "app/control.hpp"
+#include "app/pedal_cal_nvm.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
 #include "app/inverter.hpp"      // inverter setpoint encoders (0x360/0x362)
@@ -613,6 +614,137 @@ static void test_pedal_cal() {
     { PedalCal c{}; c.apps1_min = c.apps1_max = c.apps2_min = c.apps2_max = 0xFFFF;
       c.brake_rest = c.brake_arm = c.brake_dv_hard = c.brake_pressed = 0xFFFF;
       CHECK(validate_cal(c) != 0, "erased-flash pattern (all 0xFFFF) rejected"); }
+}
+
+// #169 step 3 -- reading the calibration out of the bootloader NVM sector.
+// Flash is memory mapped, so the scanner takes a plain pointer and the suite can
+// drive it against a synthetic sector in RAM. Every path here is a real failure
+// mode of a log-structured store on a car that loses power at inconvenient
+// moments, not a hypothetical.
+namespace {
+
+// One 32-byte bl_nvm entry, laid out byte by byte to match the bootloader:
+//   0..1 magic LE, 2..3 key LE, 4 len, 5 res_a, 6..7 res_b, 8..11 seq LE, 12.. value
+void put_entry(std::uint8_t* slot, std::uint16_t magic, std::uint16_t key,
+               std::uint8_t len, std::uint32_t seq, const std::uint8_t* value) {
+    for (int i = 0; i < 32; ++i) slot[i] = 0xFF;          // erased flash
+    slot[0] = static_cast<std::uint8_t>(magic & 0xFF);
+    slot[1] = static_cast<std::uint8_t>(magic >> 8);
+    slot[2] = static_cast<std::uint8_t>(key & 0xFF);
+    slot[3] = static_cast<std::uint8_t>(key >> 8);
+    slot[4] = len;
+    slot[5] = 0; slot[6] = 0; slot[7] = 0;
+    slot[8]  = static_cast<std::uint8_t>(seq & 0xFF);
+    slot[9]  = static_cast<std::uint8_t>((seq >> 8) & 0xFF);
+    slot[10] = static_cast<std::uint8_t>((seq >> 16) & 0xFF);
+    slot[11] = static_cast<std::uint8_t>((seq >> 24) & 0xFF);
+    if (value) for (std::size_t i = 0; i < CalRecordLen; ++i) slot[12 + i] = value[i];
+}
+
+}  // namespace
+
+static void test_pedal_cal_nvm() {
+    std::printf("[pedal_cal_nvm]\n");
+
+    constexpr std::uint32_t kSlots = 8;
+    std::uint8_t sector[kSlots * 32];
+    auto erase_all = [&] { for (auto& b : sector) b = 0xFF; };
+
+    PedalCal good{};
+    good.apps1_min = 2500; good.apps1_max = 3400;
+    good.apps2_min = 2300; good.apps2_max = 3000;
+    good.brake_rest = 560; good.brake_arm = 800;
+    good.brake_dv_hard = 2400; good.brake_pressed = 3100;
+    CHECK(validate_cal(good) == 0, "the fixture calibration is itself valid");
+    std::uint8_t rec[CalRecordLen];
+    encode_cal_record(good, rec);
+
+    // --- virgin flash: everything 0xFF -> defaults, and it must NOT be an error ---
+    erase_all();
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Defaults, "erased sector -> Defaults (normal first boot)");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and the defaults come through");
+    }
+
+    // --- a single good record ---
+    erase_all();
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "stored record loads");
+        CHECK(r.cal.apps1_min == 2500 && r.cal.brake_pressed == 3100, "round-trips exactly");
+    }
+
+    // --- append-only: the NEWEST record wins, even though it is later in the
+    //     region. Scanning must not stop at the first hit. ---
+    erase_all();
+    PedalCal older = good; older.apps1_min = 1111;
+    std::uint8_t rec_old[CalRecordLen]; encode_cal_record(older, rec_old);
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 5, rec_old);
+    put_entry(sector + 3 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 9, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "multiple records load");
+        CHECK(r.cal.apps1_min == 2500, "highest seq wins, not the first slot found");
+    }
+
+    // --- other vendors' keys are ignored, including the bootloader's own ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, 0x0001, 1, 50, rec);   // BL node id, huge seq
+    put_entry(sector + 1 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 2, rec);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "our key is found alongside bootloader keys");
+        CHECK(r.cal.apps1_min == 2500, "a bootloader key with a higher seq does not win");
+    }
+
+    // --- a torn write (bad magic) is skipped and the previous record survives.
+    //     This is the power-cut-mid-write case the store is designed for. ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    put_entry(sector + 1 * 32, 0x0000,      CalNvmKey, CalRecordLen, 99, rec_old);  // torn
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Loaded, "torn entry skipped");
+        CHECK(r.cal.apps1_min == 2500, "the previous good record still wins after a torn write");
+    }
+
+    // --- a stored record that fails validation must NOT be applied. Corrupt
+    //     flash must not become a way around the safety rules. ---
+    erase_all();
+    PedalCal bad = good; bad.apps1_max = bad.apps1_min;   // zero span
+    std::uint8_t rec_bad[CalRecordLen]; encode_cal_record(bad, rec_bad);
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec_bad);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Invalid, "invalid stored record reported as Invalid");
+        CHECK(r.flags != 0, "...with the failing rule attached");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and the DEFAULTS are used, not the bad values");
+    }
+
+    // --- an unknown record version falls back rather than misparsing ---
+    erase_all();
+    std::uint8_t rec_v9[CalRecordLen]; encode_cal_record(good, rec_v9); rec_v9[0] = 9;
+    put_entry(sector, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec_v9);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::BadVersion, "unknown record version reported");
+        CHECK(r.cal.apps1_min == config::Apps1AdcMin, "...and defaults are used");
+    }
+
+    // --- a tombstone (len 0) deletes the calibration -> defaults ---
+    erase_all();
+    put_entry(sector + 0 * 32, CalNvmMagic, CalNvmKey, CalRecordLen, 1, rec);
+    put_entry(sector + 1 * 32, CalNvmMagic, CalNvmKey, 0, 2, nullptr);
+    {
+        const CalLoadResult r = load_cal_from_nvm(sector, sizeof(sector));
+        CHECK(r.status == CalLoad::Defaults, "a newer tombstone drops back to defaults");
+    }
+
+    // --- degenerate inputs must not read out of bounds ---
+    CHECK(load_cal_from_nvm(nullptr, 4096).status == CalLoad::Defaults, "null base is safe");
+    CHECK(load_cal_from_nvm(sector, 4).status == CalLoad::Defaults, "region smaller than one entry is safe");
 }
 
 // #148 -- L1/L2 fault-layer decode from 0x461. Both straddle byte boundaries
@@ -1246,6 +1378,7 @@ static void run_all() {
     test_inverter_fault_burst();
     test_inverter_fault_layers();
     test_pedal_cal();
+    test_pedal_cal_nvm();
     test_inverter_rx();
     test_dv_mode();
     test_udv_rx();
@@ -1278,6 +1411,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-fault-burst")) test_inverter_fault_burst();
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
+    else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
     else if (!std::strcmp(m, "--test-inverter-rx"))        test_inverter_rx();
     else if (!std::strcmp(m, "--test-udv"))              { test_udv_rx(); test_udv_tx(); }
     else if (!std::strcmp(m, "--test-dv-mode"))            test_dv_mode();

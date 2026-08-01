@@ -48,6 +48,14 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
     /* byte5: reset_cause narrowed to 3 bits (b0-b2); stub_brake at b3 (#137) */
     FIELD_LE_BITS (reset_cause,      uint8_t, 40, 3, 1, 0, "enum")
     FIELD_LE_BITS (stub_brake,       uint8_t, 43, 1, 1, 0, "bit")
+    /* byte5 b4-b5: how the pedal calibration was loaded at boot (#169).
+     * UNGATED on purpose -- it rides this frame rather than the pit-diag
+     * stream so an operator can see, without arming anything, whether the
+     * calibration they committed is actually live or whether the ECU fell back
+     * to compile-time defaults. A silently-ignored calibration is
+     * indistinguishable from an applied one, which is the confusion this
+     * exists to prevent. The per-rule reason lives on the 0x7E3 session frame. */
+    FIELD_LE_BITS (cal_status,       uint8_t, 44, 2, 1, 0, "enum")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)
@@ -55,6 +63,10 @@ CAN_MSG_END(PitDiag_health)
 /* Enum value tables (DBC VAL_). reset_cause mirrors ecu::ResetCause, last_fault
  * ecu::FaultCode. Host dbc_dump build only (ECU_DSL_VALUES_PASS). */
 #ifdef ECU_DSL_VALUES_PASS
+CAN_VAL(PitDiag_health, cal_status, 0, "Defaults")
+CAN_VAL(PitDiag_health, cal_status, 1, "Loaded")
+CAN_VAL(PitDiag_health, cal_status, 2, "InvalidFellBack")
+CAN_VAL(PitDiag_health, cal_status, 3, "BadVersionFellBack")
 CAN_VAL(PitDiag_health, reset_cause, 0, "Unknown")
 CAN_VAL(PitDiag_health, reset_cause, 1, "PowerOn")
 CAN_VAL(PitDiag_health, reset_cause, 2, "Pin")

@@ -175,6 +175,8 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     // the bus so a bring-up image can't pass for a flight one. ALL ZERO on flight.
     // stub_no_ams is the load-bearing one -- it forces ok_precharge, which is what
     // 0x504 VCU_ts_active reports to the uDV, so set => TS-active here is FAKE.
+    // Boot-time calibration outcome (#169) -- see the .def for why it is here.
+    h.cal_status       = static_cast<std::uint8_t>(g_cal_load_status & 0x03u);
     h.stub_no_ams      = config::StubNoAms ? 1u : 0u;
     h.stub_no_inverter = config::StubNoInverter ? 1u : 0u;
     h.stub_start       = config::StubStart ? 1u : 0u;
