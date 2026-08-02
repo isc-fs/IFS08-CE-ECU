@@ -180,6 +180,14 @@ BO_ 1799 PitDiag_dv: 8 VCU
  SG_ dv_torque_pct : 8|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ motor_rpm_mech : 16|16@1- (1,0) [0|0] "rpm" Vector__XXX
 
+BO_ 1801 PitDiag_cell: 8 VCU
+ SG_ raw_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ est_ocv_mV : 23|16@0+ (1,0) [0|0] "mV" Vector__XXX
+ SG_ comp_mV : 39|16@0- (1,0) [0|0] "mV" Vector__XXX
+ SG_ cap_pct : 48|8@1+ (1,0) [0|0] "%" Vector__XXX
+ SG_ compensated : 56|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ raw_floor : 57|1@1+ (1,0) [0|0] "bit" Vector__XXX
+
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -259,6 +267,7 @@ BA_ "GenMsgCycleTime" BO_ 1800 100;
 BA_ "GenMsgCycleTime" BO_ 1795 100;
 BA_ "GenMsgCycleTime" BO_ 1796 1000;
 BA_ "GenMsgCycleTime" BO_ 1799 100;
+BA_ "GenMsgCycleTime" BO_ 1801 100;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;
