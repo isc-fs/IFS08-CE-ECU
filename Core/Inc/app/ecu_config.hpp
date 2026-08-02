@@ -143,14 +143,37 @@ inline constexpr uint8_t  Ev23SetPct           = 25;    // EV.2.3: brake + torqu
 inline constexpr uint8_t  Ev23ResetPct         = 5;     // EV.2.3: clears when torque<this (brake released)
 
 // ---- Low-cell-voltage torque derate ---------------------------------------
-// factor = 1.0 at knee, smoothly down to ~0.05 at floor, then flat 0.05 below.
-inline constexpr uint16_t CellVDerateKneeMv    = 3500;  // at/above: no derate
-inline constexpr uint16_t CellVDerateFloorMv   = 2800;  // below: flat floor factor
-inline constexpr double   CellVDerateSlope     = 1.357; // factor = (slope*mV - intercept)/scale
-inline constexpr double   CellVDerateIntercept = 3750.0;
-inline constexpr double   CellVDerateScale     = 1000.0;
-inline constexpr double   CellVDerateFloorFactor = 0.05;
+// Linear ramp: 100 % at/above the knee, down to CellVDerateFloorPct at the
+// floor, flat below. The ramp is DERIVED from the three numbers below -- it used
+// to carry a hand-fitted slope/intercept pair (1.357 / 3750.0) valid only for
+// the exact 3500/2800 knee/floor it was fitted to, so moving a threshold left
+// the curve silently wrong. Now the thresholds are the only tunables.
+//
+// KNEE = 2800, not 3500. The old 3500 mV knee fired during NORMAL driving: a
+// healthy pack sags well past 3500 mV under race current, so the derate was
+// effectively always active and the car ran permanently scaled back. This is
+// end-of-pack protection, not a load limiter. Bounding power is the EV 2.2.1
+// envelope's job (#177); this only has to keep the last of the pack from being
+// pulled under the AMS cut.
+inline constexpr uint16_t CellVDerateKneeMv    = 2800;  // at/above: no derate
+// COMMISSION: must sit at or above the AMS undervoltage cut, which lives in the
+// AMS firmware and is NOT visible from this repo. 2500 mV is the usual Li-ion
+// NMC discharge floor; confirm against the AMS config and the cell datasheet
+// before any endurance run. Too low and the AMS opens the AIRs mid-corner with
+// the car still at 5 % torque instead of coasting down.
+inline constexpr uint16_t CellVDerateFloorMv   = 2500;  // at/below: flat floor pct
+inline constexpr uint8_t  CellVDerateFloorPct  = 5;     // limp-home, deliberately non-zero
 inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
+
+// The ramp divides by (knee - floor) and computes (100 - floor_pct) unsigned.
+// Both are silent catastrophes if a future edit inverts the thresholds, and the
+// whole point of deriving the curve is that the thresholds are now editable.
+static_assert(CellVDerateFloorMv < CellVDerateKneeMv,
+              "cell derate floor must be below the knee (the ramp divides by their span)");
+static_assert(CellVDerateFloorPct <= 100,
+              "cell derate floor pct is a percentage");
+static_assert(CellVDefaultMv >= CellVDerateKneeMv,
+              "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
 
 // ---- Motor ------------------------------------------------------------------
 // The inverter reports EMachine_Speed_erpm (0x463) -- ELECTRICAL rpm. Mechanical

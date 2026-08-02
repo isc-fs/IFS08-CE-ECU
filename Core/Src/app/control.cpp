@@ -20,17 +20,27 @@ uint8_t apps_pct(uint16_t raw, uint16_t adc_min, uint16_t adc_max) noexcept {
 
 namespace {
 
-// Low-cell-voltage torque derate: factor 1.0 at/above the knee, smoothly down
-// to ~floor at the floor voltage, flat below. (Legacy intent -- it computed
+// Low-cell-voltage torque derate: 100 % at/above the knee, linearly down to
+// CellVDerateFloorPct at the floor, flat below. (Legacy intent -- it computed
 // this into torque_limitado but transmitted the unlimited value.)
+//
+// Integer throughout. The old form multiplied by a double built from a
+// hand-fitted slope/intercept; the fit only held for the knee/floor pair it was
+// derived from, and truncating the product also cost a whole point of torque
+// just below the knee (100 * 0.9995 -> 99). Interpolating between the endpoints
+// instead makes the curve follow the thresholds by construction and lands
+// exactly on 100 at the knee.
 uint8_t derate_for_cell_voltage(uint8_t torque, uint16_t v_mV) noexcept {
     if (v_mV >= CellVDerateKneeMv) return torque;
-    double factor = (v_mV > CellVDerateFloorMv)
-        ? (CellVDerateSlope * v_mV - CellVDerateIntercept) / CellVDerateScale
-        : CellVDerateFloorFactor;
-    if (factor < 0.0) factor = 0.0;
-    if (factor > 1.0) factor = 1.0;
-    return static_cast<uint8_t>(static_cast<double>(torque) * factor);
+
+    uint32_t factor_pct = CellVDerateFloorPct;
+    if (v_mV > CellVDerateFloorMv) {
+        const uint32_t span  = CellVDerateKneeMv - CellVDerateFloorMv;
+        const uint32_t above = static_cast<uint32_t>(v_mV - CellVDerateFloorMv);
+        factor_pct = CellVDerateFloorPct +
+                     (100u - CellVDerateFloorPct) * above / span;
+    }
+    return static_cast<uint8_t>(static_cast<uint32_t>(torque) * factor_pct / 100u);
 }
 
 }  // namespace

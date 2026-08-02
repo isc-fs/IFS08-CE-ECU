@@ -258,10 +258,56 @@ static void test_cell_v_derate() {
     drive_to_active(c, t);
 
     CtrlInputs in = good_drive_inputs();
-    in.v_cell_min_mV = CellVDerateFloorMv;
-    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.torque_pct < 100, "low cell voltage derates torque");
-    CHECK(o.torque_pct > 0,   "floor derate stays non-zero (factor ~0.05)");
+
+    // Full pedal at each interesting voltage. good_drive_inputs() asks for 100 %,
+    // so torque_pct IS the derate factor in percent and the curve is readable
+    // straight off the output.
+    auto at = [&](uint16_t mv) {
+        in.v_cell_min_mV = mv;
+        const CtrlOutput o = c.step(in, t);
+        t += ControlPeriodMs;
+        return o.torque_pct;
+    };
+
+    // ---- the knee is 2800, NOT 3500 (#177) --------------------------------
+    // The regression this pins: a healthy pack under race current routinely
+    // sits in the low 3000s, and the old 3500 knee derated it the whole time.
+    // Anything at or above 2800 must pass through completely untouched.
+    CHECK(CellVDerateKneeMv == 2800, "cell derate knee is 2800 mV");
+    CHECK(at(3600) == 100, "3600 mV -> no derate");
+    CHECK(at(3200) == 100, "3200 mV -> no derate (was 59 % under the old 3500 knee)");
+    CHECK(at(3000) == 100, "3000 mV -> no derate (was 32 % under the old 3500 knee)");
+    CHECK(at(2900) == 100, "2900 mV -> no derate (was 18 % under the old 3500 knee)");
+    CHECK(at(CellVDerateKneeMv) == 100, "exactly at the knee -> no derate");
+    // One mV under the knee must not fall off a cliff: the derived ramp starts
+    // at 100 there. The old double form truncated to 99 just below the knee.
+    CHECK(at(CellVDerateKneeMv - 1) >= 99, "just under the knee -> ~100, no step");
+
+    // ---- the ramp is linear between knee and floor ------------------------
+    const uint8_t mid = at((CellVDerateKneeMv + CellVDerateFloorMv) / 2u);
+    const uint8_t expect_mid = static_cast<uint8_t>(
+        CellVDerateFloorPct + (100u - CellVDerateFloorPct) / 2u);
+    CHECK(mid >= expect_mid - 1 && mid <= expect_mid + 1, "midpoint sits on the linear ramp");
+    CHECK(at(2700) > at(2600), "ramp is monotonically decreasing");
+    CHECK(at(2600) > at(CellVDerateFloorMv), "ramp still falling near the floor");
+
+    // ---- floor ------------------------------------------------------------
+    CHECK(at(CellVDerateFloorMv) == CellVDerateFloorPct, "at the floor -> floor pct exactly");
+    CHECK(at(CellVDerateFloorMv - 100) == CellVDerateFloorPct, "below the floor -> flat");
+    CHECK(at(0) == CellVDerateFloorPct, "0 mV (nonsense reading) -> floor, not a divide blow-up");
+    CHECK(CellVDerateFloorPct > 0, "floor is a limp-home, never a torque cut");
+
+    // ---- the derate scales demand, so partial pedal scales too ------------
+    // Documents the CURRENT structure honestly: this is a gain, not a cap.
+    // Restructuring it into min(torque, cap) is the follow-up in #177, and this
+    // check is what will fail first when that lands.
+    in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
+                   (in.cal.apps1_max - in.cal.apps1_min) / 2);
+    in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
+                   (in.cal.apps2_max - in.cal.apps2_min) / 2);
+    const uint8_t half_at_floor = at(CellVDerateFloorMv);
+    CHECK(half_at_floor < CellVDerateFloorPct + 1,
+          "half pedal at the floor is scaled too (gain, not cap)");
 }
 
 // Bootloader CAN trigger match (pure -- the recovery path home). Exact frame:
