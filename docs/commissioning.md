@@ -116,7 +116,7 @@ service.
 
 ### What is NOT calibratable
 
-The deadbands, the FSAE plausibility percentages (`Ev23*`, `AppsDisagree*`) and
+The deadbands, the FSAE plausibility percentages (`AppsDisagree*`) and
 every timing stay compile-time. They are design decisions, not per-car
 measurements, and an operator must not be able to move them.
 
@@ -135,11 +135,75 @@ That also makes the three brake thresholds reviewable in physical units:
 |---|---|---|---|
 | `BrakeArmRaw` | 750 | 4.1 bar | R2D arm (light press) |
 | `BrakeDvHardRaw` | 2500 | 25.2 bar | DV R2D + the `0x505` verdict to the uDV |
-| `BrakePressedRaw` | 3000 | 31.3 bar | EV.2.3 brake+throttle cut |
+| `BrakePressedRaw` | 3000 | 31.3 bar | brake full travel — top of the `brake_pct` scale |
 
 > ⚠️ A released-pedal reading of ~560 counts is **1.8 bar**, not 0. That is either
 > genuine residual pressure in the system or sensor offset, and it shifts every
 > reported pressure by the same amount. Worth resolving on the car.
+
+---
+
+## 1c. Pack internal resistance (`CellIrMilliOhm`) — needs one acceleration run
+
+The low-cell derate does **not** run on the voltage the AMS reports. It runs on
+an estimated open-circuit voltage:
+
+```
+v_ocv = v_cell_min + I_pack × R_cell
+```
+
+Why: a cell's terminal voltage under load mostly measures how hard you are
+accelerating, not how empty the pack is. At 300 A and 1 mΩ each series element
+sags 300 mV, so a healthy cell resting at 3.0 V reads 2.7 V at the end of the
+straight and recovers the instant the driver lifts. Derating on that makes the
+derate a function of throttle, and closes an undamped loop — cut torque, current
+falls, voltage recovers, derate lifts, sag returns. Adding the ohmic drop back
+cancels it by construction.
+
+`CellIrMilliOhm` is the only number in that expression that has to come from the
+car. **No dyno required** — one acceleration run is enough.
+
+1. Enable the pit-diag stream (`0x7E0` = `0xDEADBEEF`).
+2. Log `0x709` `PitDiag_cell` through one full-throttle acceleration.
+3. Plot `raw_mV` and `est_ocv_mV` on the same axes.
+
+| What the trace does | Meaning | Action |
+|---|---|---|
+| `raw_mV` dips hard, `est_ocv_mV` **flat** | correct | done |
+| `est_ocv_mV` still dips under load | under-compensating | **raise** `CellIrMilliOhm` |
+| `est_ocv_mV` humps upward under load | over-compensating | **lower** it |
+
+`comp_mV` on the same frame shows how much correction is being applied, so the
+two effects can be read apart rather than inferred from the sum.
+`tools/packlog.py` fits the same number off a log if you would rather not eyeball it.
+
+> ⚠️ **Shipped at 1 mΩ, deliberately low.** Under-compensating leaves some sag in
+> the estimate and derates *earlier* — the safe direction. Over-compensating
+> hides a genuinely empty pack. Do not raise it above what the trace supports.
+
+Three guards exist because compensation is the one correction that makes the
+pack look *healthier*, and all three fail towards derating sooner:
+
+- `0x135` stale (>200 ms) → no compensation at all, derate on the raw voltage.
+  Visible as `compensated = 0` on `0x709`.
+- The correction is clamped to `CellIrCompMaxMv` (500 mV).
+- A **raw** cell at/below `CellVRawFloorMv` (2400 mV) goes straight to the floor
+  derate whatever the estimate says. Visible as `raw_floor = 1`.
+
+### The curve itself
+
+| min cell (estimated OCV) | torque cap |
+|---|---|
+| ≥ 2800 mV | 100% |
+| 2700 | 68% |
+| 2600 | 36% |
+| ≤ 2500 | 5% (limp-home) |
+
+> ⚠️ `CellVDerateFloorMv` (2500 mV) is **`COMMISSION`**: it must sit at or above
+> the AMS undervoltage cut, which lives in the AMS firmware and is not visible
+> from this repo. If the AMS opens above 2500 mV the AIRs drop with the car still
+> commanding 5% torque instead of coasting down. Confirm it against the AMS
+> config and the cell datasheet before any endurance run.
 
 ---
 
@@ -162,11 +226,11 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
 
 - **`config::StubBrakeRaw`** — a nonzero value is injected as `brake_raw` instead of
   reading the ADC. Set it ABOVE the threshold you need: `BrakeArmRaw` (750) for manual
-  R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700), and BELOW `BrakePressedRaw`
-  (3000) to stay clear of the EV.2.3 cut. `0` = read the real ADC (flight).
-  > ⚠ Staying below `BrakePressedRaw` only matters for a **manual** R2D test. On the **DV**
-  > path EV.2.3 does not gate torque at all (the EBS legitimately holds brake pressure while
-  > uDV commands accel), so it is not something you can "dodge" there — see `control.cpp`.
+  R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700). `0` = read the real ADC
+  (flight).
+  > There is no longer an upper bound to respect. The EV.2.3 brake+throttle cut that
+  > used to trip above `BrakePressedRaw` was deleted along with the rule in FS-Rules
+  > 2024 (#177), so brake pressure no longer gates torque in either mode.
 - **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
   ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
   (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
@@ -188,8 +252,8 @@ alone, press the real start button; `StubStart` alone, press the real brake.)
 
 **⚠ Never flash an image with `StubBrakeRaw != 0` / `StubStart = true` to drive.**
 
-`BrakeArmRaw` was calibrated on the car (2026-06-27, `750`). **`BrakePressedRaw` (3000, the
-EV.2.3 threshold) and `BrakeDvHardRaw` (2500, the DV R2D gate) are still `COMMISSION`** —
+`BrakeArmRaw` was calibrated on the car (2026-06-27, `750`). **`BrakePressedRaw` (3000,
+brake full travel) and `BrakeDvHardRaw` (2500, the DV R2D gate) are still `COMMISSION`** —
 recalibrate both once the line is purged, reading `0x701 brake_raw` via pit-diag.
 
 > ⚠ Read `brake_raw` on **`0x701`**, not `0x705`: `PitDiag_brake`'s `brake_pressure` is
@@ -263,8 +327,7 @@ the DV trigger:
 
 **Brake** — the DV R2D gate needs `brake_raw > BrakeDvHardRaw` (2500):
 - If the **real EBS presses** the brake above 2500, leave `StubBrakeRaw = 0` (real ADC).
-- Otherwise set `StubBrakeRaw` above 2500 (and below `BrakePressedRaw` 3000, to dodge
-  EV.2.3) — e.g. `2700`.
+- Otherwise set `StubBrakeRaw` above 2500 — e.g. `2700`.
 
 > **⚠ SAFETY.** No AMS, no inverter handshake — the same envelope as §3 (PSU limits + torque
 > cap + car on stands). Keep `TorqueCap` low for on-stands work; **`100` for flight only**.

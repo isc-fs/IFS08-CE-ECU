@@ -39,8 +39,8 @@ void IoSignals::read(IoInputs& out) noexcept {
     // injects it as the brake reading (enable AND value both in ecu_config.hpp);
     // 0 reads the real ADC (flight). Because StubBrakeRaw is constexpr this folds
     // at compile time — a StubBrakeRaw==0 build carries only the ADC read. Set it
-    // ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW BrakePressedRaw
-    // (3000) to dodge the EV.2.3 cut (bench: 2700). NEVER nonzero for flight.
+    // ABOVE BrakeDvHardRaw (2500) to arm the DV R2D (bench: 2700). NEVER
+    // nonzero for flight.
     if constexpr (config::StubBrakeRaw != 0u) {
         out.brake_raw = config::StubBrakeRaw;
     } else {

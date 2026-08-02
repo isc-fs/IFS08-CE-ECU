@@ -22,7 +22,7 @@ Origen en codigo:
 ## Flujo
 
 1. `TelemetryTask` hace snapshot de `VehicleService` (+ lee los `g_last_*`
-   que `ControlTask` mirror-ea cada 10 ms: pedales, boton, flags EV.2.3/T11.8.9)
+   que `ControlTask` mirror-ea cada 10 ms: pedales, boton, flag T11.8.9)
 2. construye las 18 tramas CAN3 de dashboard
 3. las encola en `can_tx_queue` con `can_tx_post()`
 4. `CanTxTask` las transmite por `FDCAN3`
@@ -45,7 +45,7 @@ DLC: `8`
 |---|---|---|
 | 0 | `inv_state` | `VehicleState.inv_state` |
 | 1 | `torque_pct` | `g_last_torque_pct` |
-| 2 | `fault_bits` | bit0 `g_last_ev_2_3`, bit1 `g_last_t11_8_9` (mirror de `CtrlOutput.ev_2_3`/`t11_8_9`) |
+| 2 | `fault_bits` | bit0 **RESERVADO** (siempre 0), bit1 `g_last_t11_8_9` (mirror de `CtrlOutput.t11_8_9`) |
 | 3 | `ok_precarga` | `VehicleState.ok_precharge` |
 | 4 | `boton_arranque` | `g_last_start_button` (mirror de `IoInputs.start_button`) |
 | 5 | reservado | `0` |
@@ -53,8 +53,12 @@ DLC: `8`
 
 `fault_bits`:
 
-- bit 0: `EV.2.3` (freno+acelerador implausible, latcheado)
-- bit 1: `T11.8.9` (disagreement APPS1/APPS2 > 100 ms)
+- bit 0: **RESERVADO — siempre 0.** Llevaba `EV.2.3` (freno+acelerador
+  implausible). La regla se eliminó en FS-Rules 2024 y el corte con ella (#177).
+  El bit **no se ha reutilizado ni se ha desplazado el layout**: el decoder del
+  dashboard es de otro equipo y un bit renumerado se malinterpreta en silencio.
+- bit 1: `T11.8.9` (disagreement APPS1/APPS2 > 100 ms) — **sin cambios**, sigue
+  siendo obligatoria
 
 ### `0x511` - pedales y freno
 

@@ -18,7 +18,6 @@ uint16_t g_last_apps1_raw = 0;
 uint16_t g_last_apps2_raw = 0;
 uint16_t g_last_brake_raw = 0;
 uint8_t  g_last_start_button = 0;
-uint8_t  g_last_ev_2_3 = 0;
 uint8_t  g_last_t11_8_9 = 0;
 }
 

@@ -79,21 +79,25 @@ inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasure
 // thresholds reviewable in physical units:
 //   BrakeArmRaw      750 ->  4.1 bar   light press, arms R2D
 //   BrakeDvHardRaw  2500 -> 25.2 bar   DV R2D gate + the 0x505 verdict to uDV
-//   BrakePressedRaw 3000 -> 31.3 bar   EV.2.3 brake+throttle cut
+//   BrakePressedRaw 3000 -> 31.3 bar   brake full travel (brake_pct 100 %)
 // Those are the inherited IFS06 numbers -- now at least judgeable rather than
 // opaque. 4.1 bar to arm and ~31 bar for "brake pressed" are plausible; the
 // 25.2 bar DV gate still wants checking against what the EBS actually holds.
 inline constexpr uint16_t BrakeSensorFullScaleBar = 40;  // EPT1400 order code: 40 bar (04000)
 inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
-inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
+// Brake FULL TRAVEL, the top of the brake_pct scale. It used to also gate the
+// EV.2.3 brake+throttle cut; that rule was deleted in FS-Rules 2024 and the cut
+// with it, so this is now purely a scaling endpoint and no longer arms anything.
+inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: brake full travel
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
 // a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
 inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
 // BRING-UP brake stub, controlled by THIS value (no build flag): != 0 makes
 // io_signals inject it as brake_raw instead of reading the ADC; 0 = real ADC
-// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW
-// BrakePressedRaw (3000) to dodge the EV.2.3 cut (bench: 2700). MUST be 0 for
+// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D (bench: 2700).
+// It no longer has to stay below BrakePressedRaw -- the EV.2.3 cut that used to
+// trip there was deleted with the rule in FS-Rules 2024. MUST be 0 for
 // flight — folds away at compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
@@ -139,18 +143,74 @@ inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 inline constexpr uint8_t  TorqueCap            = 100;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
-inline constexpr uint8_t  Ev23SetPct           = 25;    // EV.2.3: brake + torque>this -> latch
-inline constexpr uint8_t  Ev23ResetPct         = 5;     // EV.2.3: clears when torque<this (brake released)
 
 // ---- Low-cell-voltage torque derate ---------------------------------------
-// factor = 1.0 at knee, smoothly down to ~0.05 at floor, then flat 0.05 below.
-inline constexpr uint16_t CellVDerateKneeMv    = 3500;  // at/above: no derate
-inline constexpr uint16_t CellVDerateFloorMv   = 2800;  // below: flat floor factor
-inline constexpr double   CellVDerateSlope     = 1.357; // factor = (slope*mV - intercept)/scale
-inline constexpr double   CellVDerateIntercept = 3750.0;
-inline constexpr double   CellVDerateScale     = 1000.0;
-inline constexpr double   CellVDerateFloorFactor = 0.05;
+// Linear ramp: 100 % at/above the knee, down to CellVDerateFloorPct at the
+// floor, flat below. The ramp is DERIVED from the three numbers below -- it used
+// to carry a hand-fitted slope/intercept pair (1.357 / 3750.0) valid only for
+// the exact 3500/2800 knee/floor it was fitted to, so moving a threshold left
+// the curve silently wrong. Now the thresholds are the only tunables.
+//
+// KNEE = 2800, not 3500. The old 3500 mV knee fired during NORMAL driving: a
+// healthy pack sags well past 3500 mV under race current, so the derate was
+// effectively always active and the car ran permanently scaled back. This is
+// end-of-pack protection, not a load limiter. Bounding power is the EV 2.2.1
+// envelope's job (#177); this only has to keep the last of the pack from being
+// pulled under the AMS cut.
+inline constexpr uint16_t CellVDerateKneeMv    = 2800;  // at/above: no derate
+// COMMISSION: must sit at or above the AMS undervoltage cut, which lives in the
+// AMS firmware and is NOT visible from this repo. 2500 mV is the usual Li-ion
+// NMC discharge floor; confirm against the AMS config and the cell datasheet
+// before any endurance run. Too low and the AMS opens the AIRs mid-corner with
+// the car still at 5 % torque instead of coasting down.
+inline constexpr uint16_t CellVDerateFloorMv   = 2500;  // at/below: flat floor pct
+inline constexpr uint8_t  CellVDerateFloorPct  = 5;     // limp-home, deliberately non-zero
 inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
+
+// ---- IR compensation (what makes the derate tolerant of accelerations) -----
+// The derate runs on an ESTIMATED open-circuit voltage, not on the loaded
+// reading: v_ocv = v_cell_min + I_pack * R_cell. See cell_derate.hpp for why
+// this is the mechanism and filtering alone cannot substitute for it.
+//
+// *** COMMISSION -- THE ONE VALUE THAT MUST COME FROM THE CAR. ***
+// Per-SERIES-ELEMENT resistance in milliohms (one cell, or one parallel group
+// if the pack is xSyP), including its share of busbar and contact resistance.
+// Shipped low ON PURPOSE: under-compensating leaves some sag in the estimate
+// and derates EARLIER, which is the safe direction. Over-compensating hides a
+// genuinely empty pack.
+//
+// Measure it without a dyno: stream pit-diag, do one acceleration run, plot
+// est_ocv_mV from 0x709. Still dips under load -> raise it. Humps upward ->
+// lower it. Flat -> correct. tools/packlog.py fits the same number off a log.
+// 0 disables compensation entirely (derate on raw loaded voltage, as before).
+inline constexpr uint16_t CellIrMilliOhm       = 1;     // COMMISSION: measure on car
+// Ceiling on the correction, so a current sensor reading nonsense cannot mask
+// an empty pack without limit. 500 A is the EV 2.2.2 cap, so at the shipped
+// 1 mOhm this only binds on an implausible reading.
+inline constexpr uint16_t CellIrCompMaxMv      = 500;
+// Backstop: a RAW loaded cell at/below this derates to the floor regardless of
+// what the compensation claims. Sits under the derate floor -- by here the AMS
+// is about to open the AIRs and coasting down beats being cut mid-corner.
+inline constexpr uint16_t CellVRawFloorMv      = 2400;
+// Trim filter on the compensated estimate, as a right-shift: tau ~= (1 <<
+// shift) * ControlPeriodMs. 7 -> ~1.3 s, long enough to swallow AMS
+// quantisation and a stray frame, far too short to hide a real discharge.
+inline constexpr uint8_t  CellVFilterShift     = 7;
+
+// The ramp divides by (knee - floor) and computes (100 - floor_pct) unsigned.
+// Both are silent catastrophes if a future edit inverts the thresholds, and the
+// whole point of deriving the curve is that the thresholds are now editable.
+static_assert(CellVDerateFloorMv < CellVDerateKneeMv,
+              "cell derate floor must be below the knee (the ramp divides by their span)");
+static_assert(CellVDerateFloorPct <= 100,
+              "cell derate floor pct is a percentage");
+static_assert(CellVDefaultMv >= CellVDerateKneeMv,
+              "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
+static_assert(CellVRawFloorMv <= CellVDerateFloorMv,
+              "the raw backstop must sit under the derate floor -- above it, it would "
+              "pre-empt the ramp and undo the IR compensation it exists to guard");
+static_assert(CellVFilterShift < 24,
+              "filter shift must leave headroom in the q8 accumulator");
 
 // ---- Motor ------------------------------------------------------------------
 // The inverter reports EMachine_Speed_erpm (0x463) -- ELECTRICAL rpm. Mechanical
@@ -215,6 +275,10 @@ inline constexpr const char* GpsPmtkUpdateRate = "PMTK220,200";
 
 // ---- Freshness / staleness (ms) -------------------------------------------
 inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuStale window
+// 0x135 currents, tracked separately from the AMS block (see VehicleState).
+// The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
+// compensation gives up and the derate falls back to raw loaded voltage.
+inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
 inline constexpr uint32_t UdvCmdStaleMs        = 100;   // 0x507 accel stream stale -> DV torque 0 (never APPS)
 inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request considered current

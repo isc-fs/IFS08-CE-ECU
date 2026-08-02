@@ -219,7 +219,8 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             if (f.dlc < 4) return false;
             state_.current_accu_dA = be16_s(&f.data[0]);
             state_.current_dcdc_dA = be16_s(&f.data[2]);
-            state_.last_ams_tick    = f.timestamp_ms;
+            state_.last_ams_tick      = f.timestamp_ms;
+            state_.last_currents_tick = f.timestamp_ms;   // per-signal: see the header
             return true;
         }
         if (f.id == config::AcuTmaxModuleAId) {             // 0x136

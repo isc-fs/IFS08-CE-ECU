@@ -35,7 +35,7 @@ def _decode_snapshot(data: bytes) -> dict:
         'apps2_raw':           _u16(data, 9),
         'brake_raw':           _u16(data, 11),
         'torque_pct':          _u16(data, 13),
-        'ev_2_3':              data[15],
+        'reserved_15':         data[15],
         't11_8_9':             data[16],
         'state':               data[17],
         'ok_precharge':        data[18],
@@ -65,7 +65,7 @@ def _decode_snapshot(data: bytes) -> dict:
 EXPECTED = {
     'tick_ms': 0x11223344, 'seq': 0xABCD, 'start_button': 1,
     'apps1_raw': 2500, 'apps2_raw': 2400, 'brake_raw': 1234, 'torque_pct': 77,
-    'ev_2_3': 1, 't11_8_9': 1, 'state': 5, 'ok_precharge': 1, 'ams_fsm_state': 3,
+    'reserved_15': 0, 't11_8_9': 1, 'state': 5, 'ok_precharge': 1, 'ams_fsm_state': 3,
     'v_cell_min_mV': 3650, 'soc': 87,
     'vmin_modulo': [3600, 3601, 3602, 3603, 3604],
     'vmax_modulo': [3700, 3701, 3702, 3703, 3704],

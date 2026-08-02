@@ -37,6 +37,12 @@ public:
                                  bool start_button) noexcept;   // 0x700
     static CanFrame build_dv(const CtrlOutput& c, const CtrlInputs& in,
                              const VehicleState& v) noexcept;   // 0x707
+    // 0x709 -- the low-cell derate estimator laid open (raw vs IR-compensated
+    // vs filtered). This is the ONLY way CellIrMilliOhm gets commissioned: it
+    // is right when est_ocv_mV stays flat through an acceleration run while
+    // raw_mV sags. Takes the state straight off the controller, which already
+    // computed it this tick.
+    static CanFrame build_cell(const CellDerateState& s) noexcept;
     static CanFrame build_pedals(const IoInputs& io,
                                  const PedalCal& cal) noexcept;  // 0x701
     // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360

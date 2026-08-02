@@ -57,7 +57,7 @@ Five fragments reassemble the **102-byte** snapshot (`5 × 24 = 120 ≥ 102`).
 | 9..10 | apps2_raw | u16 | `g_last_apps2_raw` |
 | 11..12 | brake_raw | u16 | `g_last_brake_raw` |
 | 13..14 | torque_pct | u16 | `g_last_torque_pct` (u8 zero-ext) |
-| 15 | ev_2_3 | u8 | `g_last_ev_2_3` |
+| 15 | **reservado** | u8 | siempre `0` — era `ev_2_3`; EV.2.3 se eliminó en FS-Rules 2024 (#177). El byte se mantiene para que 16+ conserven su offset |
 | 16 | t11_8_9 | u8 | `g_last_t11_8_9` |
 | 17 | state | u8 | `g_last_ctrl_state` (ECU FSM) |
 | 18 | ok_precharge | u8 | `veh.ok_precharge` |

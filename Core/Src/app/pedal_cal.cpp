@@ -63,7 +63,7 @@ std::uint8_t validate_cal(const PedalCal& c) noexcept {
 
     // Threshold ordering. This is load-bearing: brake_arm gates R2D,
     // brake_dv_hard gates the driverless R2D and the 0x505 verdict sent to the
-    // uDV, and brake_pressed gates the EV.2.3 torque cut. Out of order, the
+    // uDV, and brake_pressed is the top of the brake_pct scale. Out of order, the
     // driverless gate could fire before the brake is meaningfully applied.
     if (!(c.brake_arm < c.brake_dv_hard && c.brake_dv_hard < c.brake_pressed)) {
         flags |= cal_flag::BrakeOrder;

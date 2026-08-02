@@ -40,7 +40,6 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     PitDiag_status_t s{};
     s.fsm_state = static_cast<std::uint8_t>(c.state);
     s.inv_state = v.inv_state;
-    s.ev_2_3       = c.ev_2_3 ? 1u : 0u;
     s.t11_8_9      = c.t11_8_9 ? 1u : 0u;
     s.rtds_active  = c.rtds_on ? 1u : 0u;
     s.ok_precharge = v.ok_precharge ? 1u : 0u;
@@ -69,6 +68,19 @@ CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
     std::uint8_t b[PitDiag_dv_DLC];
     encode_PitDiag_dv(d, b);
     return make_acu(PitDiag_dv_ID, b);
+}
+
+CanFrame PitDiag::build_cell(const CellDerateState& s) noexcept {
+    PitDiag_cell_t d{};
+    d.raw_mV      = s.raw_mV;
+    d.est_ocv_mV  = s.est_ocv_mV;
+    d.comp_mV     = s.comp_mV;
+    d.cap_pct     = s.cap_pct;
+    d.compensated = s.compensated ? 1u : 0u;
+    d.raw_floor   = s.raw_floor ? 1u : 0u;
+    std::uint8_t b[PitDiag_cell_DLC];
+    encode_PitDiag_cell(d, b);
+    return make_acu(PitDiag_cell_ID, b);
 }
 
 CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {

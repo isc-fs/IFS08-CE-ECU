@@ -66,6 +66,12 @@ struct VehicleState {
     std::uint16_t vmax_module[5]    = {};     // 0x133/0x134, mV, per module
     std::int16_t  current_accu_dA   = 0;      // 0x135, deciamps (+ = discharge)
     std::int16_t  current_dcdc_dA   = 0;      // 0x135, deciamps
+    // 0x135 gets its OWN timestamp, unlike the rest of the AMS block. The IR
+    // compensation in the low-cell derate reads current_accu_dA, and a
+    // bus-level liveness flag (last_ams_tick, which every AMS frame stamps)
+    // would let a dead 0x135 keep compensating off a value frozen minutes ago
+    // -- masking an empty pack, which is the one direction that is unsafe.
+    std::uint32_t last_currents_tick = 0;     // 0x135 seen
     std::int16_t  tmax_module[5]    = {};     // 0x136/0x137, degC, per module
     std::int16_t  tmax_dcdc         = 0;      // 0x137, degC (AMS-side stub until a real sensor exists)
 };
