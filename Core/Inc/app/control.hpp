@@ -24,6 +24,7 @@
 
 #include <cstdint>
 
+#include "app/cell_derate.hpp"
 #include "app/ecu_config.hpp"
 #include "app/pedal_cal.hpp"
 #include "app/power_limit.hpp"
@@ -70,6 +71,13 @@ struct CtrlInputs {
     bool     ok_precharge = false;       // 0x020
     bool     ams_error = false;          // 0x4A0 fsm_state == AmsFsmError
     uint16_t v_cell_min_mV = 0;          // 0x12C / 0x4A0
+    // Pack current, for the IR compensation that keeps the low-cell derate from
+    // reacting to acceleration sag (cell_derate.hpp). Deciamps, + = discharge.
+    // Freshness is tracked SEPARATELY from ams_fresh: 0x135 is its own frame at
+    // its own cadence, and a bus-level liveness flag would let a dead current
+    // signal keep compensating off a frozen value.
+    int16_t  current_accu_dA = 0;        // 0x135
+    bool     current_fresh = false;      // 0x135 recently received
     // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
     // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
     // and the ECU verifies it on its own brake sensor; no start button in DV.
@@ -137,6 +145,13 @@ public:
     CtrlOutput step(const CtrlInputs& in, uint32_t now_ms) noexcept;
     CtrlState  state() const noexcept { return state_; }
 
+    // The low-cell estimator's working state from the last step(): the raw
+    // reading, the IR correction applied, the resulting OCV estimate and the
+    // cap. Published on pit-diag 0x709 -- R_cell is commissioned by watching
+    // est_ocv_mV stay flat through an acceleration run, which is only possible
+    // if the intermediate values leave the core.
+    const CellDerateState& cell_derate() const noexcept { return cell_derate_; }
+
 private:
     void enter_(CtrlState s, uint32_t now_ms) noexcept;
 
@@ -149,6 +164,11 @@ private:
     // (manual start+brake vs DV 0x510+EBS-brake); cleared on any exit from the
     // drive ladder (enter_ to a pre-R2D state or AmsError). Never swaps live.
     bool      dv_latched_ = false;
+    // IR-compensated low-cell estimator (cell_derate.hpp). Holds filter state,
+    // so it lives with the FSM's other history rather than being rebuilt per
+    // tick -- a filter reconstructed every call is just a passthrough.
+    CellDerate      cell_{};
+    CellDerateState cell_derate_{};
 };
 
 // APPS travel %, clamped 0..100. Exposed for the pit-diag adapter (0x701) and

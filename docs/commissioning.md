@@ -143,6 +143,70 @@ That also makes the three brake thresholds reviewable in physical units:
 
 ---
 
+## 1c. Pack internal resistance (`CellIrMilliOhm`) — needs one acceleration run
+
+The low-cell derate does **not** run on the voltage the AMS reports. It runs on
+an estimated open-circuit voltage:
+
+```
+v_ocv = v_cell_min + I_pack × R_cell
+```
+
+Why: a cell's terminal voltage under load mostly measures how hard you are
+accelerating, not how empty the pack is. At 300 A and 1 mΩ each series element
+sags 300 mV, so a healthy cell resting at 3.0 V reads 2.7 V at the end of the
+straight and recovers the instant the driver lifts. Derating on that makes the
+derate a function of throttle, and closes an undamped loop — cut torque, current
+falls, voltage recovers, derate lifts, sag returns. Adding the ohmic drop back
+cancels it by construction.
+
+`CellIrMilliOhm` is the only number in that expression that has to come from the
+car. **No dyno required** — one acceleration run is enough.
+
+1. Enable the pit-diag stream (`0x7E0` = `0xDEADBEEF`).
+2. Log `0x709` `PitDiag_cell` through one full-throttle acceleration.
+3. Plot `raw_mV` and `est_ocv_mV` on the same axes.
+
+| What the trace does | Meaning | Action |
+|---|---|---|
+| `raw_mV` dips hard, `est_ocv_mV` **flat** | correct | done |
+| `est_ocv_mV` still dips under load | under-compensating | **raise** `CellIrMilliOhm` |
+| `est_ocv_mV` humps upward under load | over-compensating | **lower** it |
+
+`comp_mV` on the same frame shows how much correction is being applied, so the
+two effects can be read apart rather than inferred from the sum.
+`tools/packlog.py` fits the same number off a log if you would rather not eyeball it.
+
+> ⚠️ **Shipped at 1 mΩ, deliberately low.** Under-compensating leaves some sag in
+> the estimate and derates *earlier* — the safe direction. Over-compensating
+> hides a genuinely empty pack. Do not raise it above what the trace supports.
+
+Three guards exist because compensation is the one correction that makes the
+pack look *healthier*, and all three fail towards derating sooner:
+
+- `0x135` stale (>200 ms) → no compensation at all, derate on the raw voltage.
+  Visible as `compensated = 0` on `0x709`.
+- The correction is clamped to `CellIrCompMaxMv` (500 mV).
+- A **raw** cell at/below `CellVRawFloorMv` (2400 mV) goes straight to the floor
+  derate whatever the estimate says. Visible as `raw_floor = 1`.
+
+### The curve itself
+
+| min cell (estimated OCV) | torque cap |
+|---|---|
+| ≥ 2800 mV | 100% |
+| 2700 | 68% |
+| 2600 | 36% |
+| ≤ 2500 | 5% (limp-home) |
+
+> ⚠️ `CellVDerateFloorMv` (2500 mV) is **`COMMISSION`**: it must sit at or above
+> the AMS undervoltage cut, which lives in the AMS firmware and is not visible
+> from this repo. If the AMS opens above 2500 mV the AIRs drop with the car still
+> commanding 5% torque instead of coasting down. Confirm it against the AMS
+> config and the cell datasheet before any endurance run.
+
+---
+
 ## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `StubStart`)
 
 R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on

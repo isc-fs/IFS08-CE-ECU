@@ -71,6 +71,19 @@ CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
     return make_acu(PitDiag_dv_ID, b);
 }
 
+CanFrame PitDiag::build_cell(const CellDerateState& s) noexcept {
+    PitDiag_cell_t d{};
+    d.raw_mV      = s.raw_mV;
+    d.est_ocv_mV  = s.est_ocv_mV;
+    d.comp_mV     = s.comp_mV;
+    d.cap_pct     = s.cap_pct;
+    d.compensated = s.compensated ? 1u : 0u;
+    d.raw_floor   = s.raw_floor ? 1u : 0u;
+    std::uint8_t b[PitDiag_cell_DLC];
+    encode_PitDiag_cell(d, b);
+    return make_acu(PitDiag_cell_ID, b);
+}
+
 CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_pedals_t p{};
     p.apps1_raw = io.apps1_raw;

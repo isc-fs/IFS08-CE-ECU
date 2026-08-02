@@ -165,6 +165,36 @@ inline constexpr uint16_t CellVDerateFloorMv   = 2500;  // at/below: flat floor 
 inline constexpr uint8_t  CellVDerateFloorPct  = 5;     // limp-home, deliberately non-zero
 inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
 
+// ---- IR compensation (what makes the derate tolerant of accelerations) -----
+// The derate runs on an ESTIMATED open-circuit voltage, not on the loaded
+// reading: v_ocv = v_cell_min + I_pack * R_cell. See cell_derate.hpp for why
+// this is the mechanism and filtering alone cannot substitute for it.
+//
+// *** COMMISSION -- THE ONE VALUE THAT MUST COME FROM THE CAR. ***
+// Per-SERIES-ELEMENT resistance in milliohms (one cell, or one parallel group
+// if the pack is xSyP), including its share of busbar and contact resistance.
+// Shipped low ON PURPOSE: under-compensating leaves some sag in the estimate
+// and derates EARLIER, which is the safe direction. Over-compensating hides a
+// genuinely empty pack.
+//
+// Measure it without a dyno: stream pit-diag, do one acceleration run, plot
+// est_ocv_mV from 0x709. Still dips under load -> raise it. Humps upward ->
+// lower it. Flat -> correct. tools/packlog.py fits the same number off a log.
+// 0 disables compensation entirely (derate on raw loaded voltage, as before).
+inline constexpr uint16_t CellIrMilliOhm       = 1;     // COMMISSION: measure on car
+// Ceiling on the correction, so a current sensor reading nonsense cannot mask
+// an empty pack without limit. 500 A is the EV 2.2.2 cap, so at the shipped
+// 1 mOhm this only binds on an implausible reading.
+inline constexpr uint16_t CellIrCompMaxMv      = 500;
+// Backstop: a RAW loaded cell at/below this derates to the floor regardless of
+// what the compensation claims. Sits under the derate floor -- by here the AMS
+// is about to open the AIRs and coasting down beats being cut mid-corner.
+inline constexpr uint16_t CellVRawFloorMv      = 2400;
+// Trim filter on the compensated estimate, as a right-shift: tau ~= (1 <<
+// shift) * ControlPeriodMs. 7 -> ~1.3 s, long enough to swallow AMS
+// quantisation and a stray frame, far too short to hide a real discharge.
+inline constexpr uint8_t  CellVFilterShift     = 7;
+
 // The ramp divides by (knee - floor) and computes (100 - floor_pct) unsigned.
 // Both are silent catastrophes if a future edit inverts the thresholds, and the
 // whole point of deriving the curve is that the thresholds are now editable.
@@ -174,6 +204,11 @@ static_assert(CellVDerateFloorPct <= 100,
               "cell derate floor pct is a percentage");
 static_assert(CellVDefaultMv >= CellVDerateKneeMv,
               "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
+static_assert(CellVRawFloorMv <= CellVDerateFloorMv,
+              "the raw backstop must sit under the derate floor -- above it, it would "
+              "pre-empt the ramp and undo the IR compensation it exists to guard");
+static_assert(CellVFilterShift < 24,
+              "filter shift must leave headroom in the q8 accumulator");
 
 // ---- Motor ------------------------------------------------------------------
 // The inverter reports EMachine_Speed_erpm (0x463) -- ELECTRICAL rpm. Mechanical
@@ -238,6 +273,10 @@ inline constexpr const char* GpsPmtkUpdateRate = "PMTK220,200";
 
 // ---- Freshness / staleness (ms) -------------------------------------------
 inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuStale window
+// 0x135 currents, tracked separately from the AMS block (see VehicleState).
+// The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
+// compensation gives up and the derate falls back to raw loaded voltage.
+inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
 inline constexpr uint32_t UdvCmdStaleMs        = 100;   // 0x507 accel stream stale -> DV torque 0 (never APPS)
 inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request considered current

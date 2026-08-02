@@ -101,12 +101,20 @@ extern "C" void ecu_control_task_run(void *argument) {
             ci.ok_precharge      = true;
             ci.ams_error         = false;
             ci.v_cell_min_mV     = config::CellVDefaultMv;   // healthy default -> no low-cell derate
+            ci.current_accu_dA   = 0;
+            ci.current_fresh     = false;                    // nothing to compensate on a bench PSU
         } else {
             const bool ams_fresh = VehicleService::is_fresh(now, veh.last_ams_tick, config::AmsStaleMs);
             ci.ams_fresh         = ams_fresh;
             ci.ok_precharge      = veh.ok_precharge && ams_fresh;   // stale AMS -> not ok (fail-safe)
             ci.ams_error         = (veh.ams_fsm_state == config::AmsFsmError) && ams_fresh;
             ci.v_cell_min_mV     = veh.v_cell_min_mV;
+            // Own freshness window: 0x135 is 50 ms cyclic and feeds the derate's
+            // IR compensation, which must stop the moment the current signal
+            // does -- not when the whole AMS block goes quiet.
+            ci.current_accu_dA   = veh.current_accu_dA;
+            ci.current_fresh     = VehicleService::is_fresh(now, veh.last_currents_tick,
+                                                            config::AcuCurrentsStaleMs);
         }
         // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
         // and the conditioned 0x507 accel command with its own freshness --
@@ -276,6 +284,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
+            can_tx_post(PitDiag::build_cell(ctrl.cell_derate()));  // 0x709 low-cell estimator
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh));

@@ -251,63 +251,194 @@ static void test_ams_error() {
 }
 
 // Low-cell-voltage derate ("error-voltage" + half of "legacy-compat").
+//
+// Two separate things, tested separately on purpose: the CURVE (a pure
+// mV -> percent function) and the ESTIMATOR that decides which mV to hand it.
+// Conflating them is what made the old single test useless -- it asserted only
+// "less than 100, more than 0", which nearly any curve passes.
 static void test_cell_v_derate() {
     std::printf("[cell_v_derate]\n");
-    Controller c;
-    uint32_t t = 0;
-    drive_to_active(c, t);
-
-    CtrlInputs in = good_drive_inputs();
-
-    // Full pedal at each interesting voltage. good_drive_inputs() asks for 100 %,
-    // so torque_pct IS the derate factor in percent and the curve is readable
-    // straight off the output.
-    auto at = [&](uint16_t mv) {
-        in.v_cell_min_mV = mv;
-        const CtrlOutput o = c.step(in, t);
-        t += ControlPeriodMs;
-        return o.torque_pct;
-    };
 
     // ---- the knee is 2800, NOT 3500 (#177) --------------------------------
     // The regression this pins: a healthy pack under race current routinely
     // sits in the low 3000s, and the old 3500 knee derated it the whole time.
-    // Anything at or above 2800 must pass through completely untouched.
     CHECK(CellVDerateKneeMv == 2800, "cell derate knee is 2800 mV");
-    CHECK(at(3600) == 100, "3600 mV -> no derate");
-    CHECK(at(3200) == 100, "3200 mV -> no derate (was 59 % under the old 3500 knee)");
-    CHECK(at(3000) == 100, "3000 mV -> no derate (was 32 % under the old 3500 knee)");
-    CHECK(at(2900) == 100, "2900 mV -> no derate (was 18 % under the old 3500 knee)");
-    CHECK(at(CellVDerateKneeMv) == 100, "exactly at the knee -> no derate");
+    CHECK(cell_derate_pct(3600) == 100, "3600 mV -> no derate");
+    CHECK(cell_derate_pct(3200) == 100, "3200 mV -> no derate (was 59 % under the old knee)");
+    CHECK(cell_derate_pct(3000) == 100, "3000 mV -> no derate (was 32 % under the old knee)");
+    CHECK(cell_derate_pct(2900) == 100, "2900 mV -> no derate (was 18 % under the old knee)");
+    CHECK(cell_derate_pct(CellVDerateKneeMv) == 100, "exactly at the knee -> no derate");
     // One mV under the knee must not fall off a cliff: the derived ramp starts
-    // at 100 there. The old double form truncated to 99 just below the knee.
-    CHECK(at(CellVDerateKneeMv - 1) >= 99, "just under the knee -> ~100, no step");
+    // at 100 there. The old hand-fitted double form truncated to 99.
+    CHECK(cell_derate_pct(CellVDerateKneeMv - 1) >= 99, "just under the knee -> ~100, no step");
 
     // ---- the ramp is linear between knee and floor ------------------------
-    const uint8_t mid = at((CellVDerateKneeMv + CellVDerateFloorMv) / 2u);
+    const uint8_t mid = cell_derate_pct((CellVDerateKneeMv + CellVDerateFloorMv) / 2u);
     const uint8_t expect_mid = static_cast<uint8_t>(
         CellVDerateFloorPct + (100u - CellVDerateFloorPct) / 2u);
     CHECK(mid >= expect_mid - 1 && mid <= expect_mid + 1, "midpoint sits on the linear ramp");
-    CHECK(at(2700) > at(2600), "ramp is monotonically decreasing");
-    CHECK(at(2600) > at(CellVDerateFloorMv), "ramp still falling near the floor");
+    CHECK(cell_derate_pct(2700) > cell_derate_pct(2600), "ramp is monotonically decreasing");
+    CHECK(cell_derate_pct(2600) > cell_derate_pct(CellVDerateFloorMv), "still falling near the floor");
 
     // ---- floor ------------------------------------------------------------
-    CHECK(at(CellVDerateFloorMv) == CellVDerateFloorPct, "at the floor -> floor pct exactly");
-    CHECK(at(CellVDerateFloorMv - 100) == CellVDerateFloorPct, "below the floor -> flat");
-    CHECK(at(0) == CellVDerateFloorPct, "0 mV (nonsense reading) -> floor, not a divide blow-up");
+    CHECK(cell_derate_pct(CellVDerateFloorMv) == CellVDerateFloorPct, "at the floor -> floor pct");
+    CHECK(cell_derate_pct(CellVDerateFloorMv - 100) == CellVDerateFloorPct, "below the floor -> flat");
+    CHECK(cell_derate_pct(0) == CellVDerateFloorPct, "0 mV -> floor, not a divide blow-up");
     CHECK(CellVDerateFloorPct > 0, "floor is a limp-home, never a torque cut");
+}
 
-    // ---- the derate scales demand, so partial pedal scales too ------------
-    // Documents the CURRENT structure honestly: this is a gain, not a cap.
-    // Restructuring it into min(torque, cap) is the follow-up in #177, and this
-    // check is what will fail first when that lands.
-    in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
-                   (in.cal.apps1_max - in.cal.apps1_min) / 2);
-    in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
-                   (in.cal.apps2_max - in.cal.apps2_min) / 2);
-    const uint8_t half_at_floor = at(CellVDerateFloorMv);
-    CHECK(half_at_floor < CellVDerateFloorPct + 1,
-          "half pedal at the floor is scaled too (gain, not cap)");
+// The IR-compensated estimator: the part that has to tolerate acceleration sag.
+static void test_cell_ir_compensation() {
+    std::printf("[cell_ir_compensation]\n");
+
+    // Settle the estimator on a steady input, the way it is settled on the car
+    // by the time torque is first commanded (it runs from boot, not from Active).
+    auto settle = [](CellDerate& cd, CellDerateInputs in, int ticks) {
+        CellDerateState s{};
+        for (int i = 0; i < ticks; ++i) s = cd.update(in);
+        return s;
+    };
+
+    // ---- THE POINT OF THE WHOLE MODULE ------------------------------------
+    // A cell resting at 3100 mV, pulled to 2800 mV by 3000 dA (300 A) of
+    // acceleration current. Raw voltage says "derate now"; the compensated
+    // estimate says the pack is fine, because it is.
+    {
+        // 3000 mV resting is a pack near the end of a stint but in no trouble;
+        // 300 A of acceleration pulls it to 2700 mV, which the curve derates to
+        // 68 %. That gap IS the bug this module exists to close.
+        const uint16_t rest_mV  = 3000;
+        const int16_t  accel_dA = 3000;
+        // Sag the current would actually produce at the configured resistance.
+        const int32_t  sag      = (accel_dA * static_cast<int32_t>(CellIrMilliOhm)) / 10;
+
+        CellDerate cd;
+        CellDerateInputs cruise{};
+        cruise.v_cell_min_mV = rest_mV;
+        cruise.v_fresh = true;
+        cruise.current_dA = 0;
+        cruise.i_fresh = true;
+        CellDerateState s = settle(cd, cruise, 400);
+        CHECK(s.cap_pct == 100, "cruising at 3100 mV -> no derate");
+        const uint16_t est_cruise = s.est_ocv_mV;
+
+        // Now floor it: the cell sags by exactly I*R and the current appears.
+        CellDerateInputs accel = cruise;
+        accel.v_cell_min_mV = static_cast<uint16_t>(rest_mV - sag);
+        accel.current_dA    = accel_dA;
+        s = settle(cd, accel, 400);
+
+        CHECK(s.compensated, "compensation active with a fresh current signal");
+        CHECK(s.comp_mV == static_cast<int16_t>(sag), "correction equals the ohmic drop");
+        // The estimate must land back on the resting voltage, not the loaded one.
+        const int diff = static_cast<int>(s.est_ocv_mV) - static_cast<int>(est_cruise);
+        CHECK(diff > -15 && diff < 15, "estimate is FLAT through the acceleration");
+        CHECK(s.cap_pct == 100, "acceleration sag alone never derates");
+        // ...whereas the raw reading it replaced would have.
+        CHECK(cell_derate_pct(accel.v_cell_min_mV) < 100,
+              "the same raw voltage WOULD have derated -- this is the regression");
+    }
+
+    // ---- a genuinely empty pack still derates ------------------------------
+    // Same current, but the cell is actually low: compensation shifts the
+    // estimate up by the ohmic drop and no further, so the derate still fires.
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 2450;      // deep, and NOT explained by current
+        in.v_fresh = true;
+        in.current_dA = 500;          // 50 A -> only ~5 mV of correction at 1 mOhm
+        in.i_fresh = true;
+        const CellDerateState s = settle(cd, in, 600);
+        CHECK(s.cap_pct < 100, "a genuinely low cell still derates");
+        CHECK(s.est_ocv_mV < CellVDerateKneeMv, "estimate stays under the knee");
+    }
+
+    // ---- stale current -> no compensation (fail-safe direction) -----------
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 2650;
+        in.v_fresh = true;
+        in.current_dA = 3000;         // large, but...
+        in.i_fresh = false;           // ...0x135 has gone quiet
+        const CellDerateState s = settle(cd, in, 600);
+        CHECK(!s.compensated, "stale 0x135 -> compensation off");
+        CHECK(s.comp_mV == 0, "no correction applied");
+        CHECK(s.cap_pct == cell_derate_pct(2650), "falls back to the raw loaded voltage");
+    }
+
+    // ---- the raw backstop overrides the estimate --------------------------
+    // A current sensor reading absurdly high must not be able to hold the
+    // derate off on a cell that is genuinely on the floor.
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = CellVRawFloorMv - 50;
+        in.v_fresh = true;
+        in.current_dA = 5000;         // 500 A -> clamped correction, still large
+        in.i_fresh = true;
+        const CellDerateState s = settle(cd, in, 600);
+        CHECK(s.raw_floor, "raw backstop fired");
+        CHECK(s.cap_pct == CellVDerateFloorPct, "floor derate regardless of compensation");
+    }
+
+    // ---- the correction is clamped ----------------------------------------
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 3000;
+        in.v_fresh = true;
+        in.current_dA = 32000;        // nonsense: 3200 A
+        in.i_fresh = true;
+        const CellDerateState s = cd.update(in);
+        CHECK(s.comp_mV == static_cast<int16_t>(CellIrCompMaxMv), "correction clamped");
+    }
+
+    // ---- regen pushes the estimate DOWN, not up ---------------------------
+    // Physically right (a cell being charged reads above its OCV) and the
+    // conservative direction for a derate.
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 3000;
+        in.v_fresh = true;
+        in.current_dA = -2000;        // 200 A of regen
+        in.i_fresh = true;
+        const CellDerateState s = cd.update(in);
+        CHECK(s.comp_mV < 0, "regen correction is negative");
+        CHECK(s.est_ocv_mV < 3000, "estimate sits below the terminal voltage under charge");
+    }
+
+    // ---- the filter is SEEDED, not ramped from zero ------------------------
+    // A filter starting at 0 mV would spend its first second reporting an empty
+    // pack and derate the car to the floor every time the AMS link came up.
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 3300;
+        in.v_fresh = true;
+        in.i_fresh = true;
+        const CellDerateState s = cd.update(in);   // the VERY first tick
+        CHECK(s.est_ocv_mV == 3300, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == 100, "no spurious derate on the first tick");
+    }
+
+    // ---- no voltage at all -> no derate, and the filter re-seeds -----------
+    {
+        CellDerate cd;
+        CellDerateInputs in{};
+        in.v_cell_min_mV = 3300;
+        in.v_fresh = true;
+        settle(cd, in, 50);
+        in.v_fresh = false;
+        const CellDerateState s = cd.update(in);
+        CHECK(s.cap_pct == 100, "no 0x12C -> no derate (ok_precharge handles the fault)");
+        in.v_fresh = true;
+        in.v_cell_min_mV = 2900;
+        const CellDerateState s2 = cd.update(in);
+        CHECK(s2.est_ocv_mV == 2900, "filter re-seeds after the dropout, no stale ramp");
+    }
 }
 
 // Bootloader CAN trigger match (pure -- the recovery path home). Exact frame:
@@ -1824,6 +1955,7 @@ static void run_all() {
     test_t11_8_9_window();
     test_ams_error();
     test_cell_v_derate();
+    test_cell_ir_compensation();
     test_bootloader_trigger();
     test_dsl_parity();
     test_inverter();
@@ -1857,8 +1989,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-safety-brake"))       test_ev_2_3();
-    else if (!std::strcmp(m, "--test-error-voltage"))      test_cell_v_derate();
+    else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }
     else if (!std::strcmp(m, "--test-ams-error"))          test_ams_error();
+    else if (!std::strcmp(m, "--test-cell-ir"))            test_cell_ir_compensation();
     else if (!std::strcmp(m, "--test-legacy-compat"))    { test_cell_v_derate(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-plausibility"))     { test_ev_2_3(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();

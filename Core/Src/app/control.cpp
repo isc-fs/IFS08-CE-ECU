@@ -18,33 +18,6 @@ uint8_t apps_pct(uint16_t raw, uint16_t adc_min, uint16_t adc_max) noexcept {
         (static_cast<uint32_t>(raw - adc_min) * 100u) / (adc_max - adc_min));
 }
 
-namespace {
-
-// Low-cell-voltage torque derate: 100 % at/above the knee, linearly down to
-// CellVDerateFloorPct at the floor, flat below. (Legacy intent -- it computed
-// this into torque_limitado but transmitted the unlimited value.)
-//
-// Integer throughout. The old form multiplied by a double built from a
-// hand-fitted slope/intercept; the fit only held for the knee/floor pair it was
-// derived from, and truncating the product also cost a whole point of torque
-// just below the knee (100 * 0.9995 -> 99). Interpolating between the endpoints
-// instead makes the curve follow the thresholds by construction and lands
-// exactly on 100 at the knee.
-uint8_t derate_for_cell_voltage(uint8_t torque, uint16_t v_mV) noexcept {
-    if (v_mV >= CellVDerateKneeMv) return torque;
-
-    uint32_t factor_pct = CellVDerateFloorPct;
-    if (v_mV > CellVDerateFloorMv) {
-        const uint32_t span  = CellVDerateKneeMv - CellVDerateFloorMv;
-        const uint32_t above = static_cast<uint32_t>(v_mV - CellVDerateFloorMv);
-        factor_pct = CellVDerateFloorPct +
-                     (100u - CellVDerateFloorPct) * above / span;
-    }
-    return static_cast<uint8_t>(static_cast<uint32_t>(torque) * factor_pct / 100u);
-}
-
-}  // namespace
-
 void Controller::enter_(CtrlState s, uint32_t now_ms) noexcept {
     state_ = s;
     state_entry_ms_ = now_ms;
@@ -106,8 +79,23 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         torque = in.dv_fresh ? in.dv_torque_pct : 0;
     }
 
-    // Low-cell-voltage derate (applied -- see note above).
-    torque = derate_for_cell_voltage(torque, in.ams_fresh ? in.v_cell_min_mV : CellVDefaultMv);
+    // Low-cell-voltage derate (applied -- see note above). Runs every tick,
+    // including before Active, so the filter is already settled on the real
+    // pack voltage by the time torque is first commanded rather than converging
+    // through the first second of the run.
+    //
+    // The input is an ESTIMATED open-circuit voltage, not the loaded reading:
+    // sag under acceleration is ohmic and transient, and derating on it makes
+    // the derate a function of throttle instead of state of charge. See
+    // cell_derate.hpp.
+    CellDerateInputs cdi{};
+    cdi.v_cell_min_mV = in.v_cell_min_mV;
+    cdi.v_fresh       = in.ams_fresh;
+    cdi.current_dA    = in.current_accu_dA;
+    cdi.i_fresh       = in.current_fresh;
+    cell_derate_ = cell_.update(cdi);
+
+    torque = static_cast<uint8_t>(static_cast<uint32_t>(torque) * cell_derate_.cap_pct / 100u);
 
     // EV 2.2.1 tractive-power envelope (#177). LAST, so nothing downstream can
     // put torque back above it, and feed-forward from measured speed so it
