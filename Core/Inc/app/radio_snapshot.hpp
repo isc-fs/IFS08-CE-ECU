@@ -44,7 +44,10 @@ struct RadioSnapshotInputs {
     std::uint16_t apps2_raw          = 0;   // [9..10]
     std::uint16_t brake_raw          = 0;   // [11..12]
     std::uint8_t  torque_pct         = 0;   // [13..14] (u8 zero-extended)
-    std::uint8_t  ev_2_3             = 0;   // [15]
+    // [15] RESERVED, always 0. Was ev_2_3 until EV.2.3 was deleted in
+    // FS-Rules 2024. The byte stays so [16] onward keep their offsets -- the
+    // ground station decodes this by fixed offset.
+    std::uint8_t  reserved_15        = 0;   // [15]
     std::uint8_t  t11_8_9            = 0;   // [16]
     std::uint8_t  state              = 0;   // [17] ECU FSM state
     std::uint8_t  ok_precharge       = 0;   // [18]

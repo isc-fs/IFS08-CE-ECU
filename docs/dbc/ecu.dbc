@@ -89,7 +89,6 @@ BO_ 2021 PitCal_brake: 8 VCU
 BO_ 1792 PitDiag_status: 8 VCU
  SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ inv_state : 8|8@1+ (1,0) [0|0] "enum" Vector__XXX
- SG_ ev_2_3 : 16|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ t11_8_9 : 17|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ rtds_active : 18|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ ok_precharge : 19|1@1+ (1,0) [0|0] "bit" Vector__XXX

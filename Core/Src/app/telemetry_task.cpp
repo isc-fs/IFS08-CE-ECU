@@ -64,11 +64,14 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     uint8_t d[8] = {};
 
     // 0x510 - status. Bits/bytes match docs/CAN3_MAP.md + DASH's
-    // display_telemetry_can_config.c exactly (byte2 bit0=EV.2.3, bit1=T11.8.9;
+    // display_telemetry_can_config.c exactly (byte2 bit0=RESERVED, bit1=T11.8.9;
     // byte4=start button raw from ControlTask, mirrored via g_last_*).
     d[0] = v.inv_state;
     d[1] = static_cast<uint8_t>(g_last_torque_pct);
-    d[2] = static_cast<uint8_t>((g_last_ev_2_3 ? 0x01u : 0u) | (g_last_t11_8_9 ? 0x02u : 0u));
+    // bit0 is RESERVED, always 0: it carried EV.2.3, deleted in FS-Rules 2024
+    // along with the cut. NOT reclaimed and the layout NOT shifted -- the dash
+    // decoder is owned by another team and a renumbered bit misparses silently.
+    d[2] = static_cast<uint8_t>(g_last_t11_8_9 ? 0x02u : 0u);
     d[3] = v.ok_precharge ? 1u : 0u;
     d[4] = g_last_start_button;
     put_u16(&d[6], seq);
@@ -184,7 +187,6 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
     in.apps2_raw     = g_last_apps2_raw;
     in.brake_raw     = g_last_brake_raw;
     in.torque_pct    = static_cast<uint8_t>(g_last_torque_pct);
-    in.ev_2_3        = g_last_ev_2_3;
     in.t11_8_9       = g_last_t11_8_9;
     in.state         = g_last_ctrl_state;
     in.ok_precharge  = v.ok_precharge ? 1u : 0u;

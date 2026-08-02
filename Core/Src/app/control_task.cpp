@@ -139,7 +139,6 @@ extern "C" void ecu_control_task_run(void *argument) {
         g_last_apps2_raw     = in.apps2_raw;
         g_last_brake_raw     = in.brake_raw;
         g_last_start_button  = in.start_button ? 1u : 0u;
-        g_last_ev_2_3        = out.ev_2_3   ? 1u : 0u;
         g_last_t11_8_9       = out.t11_8_9  ? 1u : 0u;
 
         // --- calibration session (#169) ------------------------------------

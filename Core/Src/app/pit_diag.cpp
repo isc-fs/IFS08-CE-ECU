@@ -40,7 +40,6 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     PitDiag_status_t s{};
     s.fsm_state = static_cast<std::uint8_t>(c.state);
     s.inv_state = v.inv_state;
-    s.ev_2_3       = c.ev_2_3 ? 1u : 0u;
     s.t11_8_9      = c.t11_8_9 ? 1u : 0u;
     s.rtds_active  = c.rtds_on ? 1u : 0u;
     s.ok_precharge = v.ok_precharge ? 1u : 0u;

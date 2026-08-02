@@ -40,7 +40,7 @@ void serialize_radio_snapshot(std::uint8_t out[kRadioSnapshotWireSize],
     put_le16(&out[9],  in.apps2_raw);
     put_le16(&out[11], in.brake_raw);
     put_le16(&out[13], in.torque_pct);                   // u8 zero-extended
-    out[15] = in.ev_2_3;
+    out[15] = 0;   // reserved (was ev_2_3)
     out[16] = in.t11_8_9;
     out[17] = in.state;
     out[18] = in.ok_precharge;

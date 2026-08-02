@@ -79,21 +79,25 @@ inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasure
 // thresholds reviewable in physical units:
 //   BrakeArmRaw      750 ->  4.1 bar   light press, arms R2D
 //   BrakeDvHardRaw  2500 -> 25.2 bar   DV R2D gate + the 0x505 verdict to uDV
-//   BrakePressedRaw 3000 -> 31.3 bar   EV.2.3 brake+throttle cut
+//   BrakePressedRaw 3000 -> 31.3 bar   brake full travel (brake_pct 100 %)
 // Those are the inherited IFS06 numbers -- now at least judgeable rather than
 // opaque. 4.1 bar to arm and ~31 bar for "brake pressed" are plausible; the
 // 25.2 bar DV gate still wants checking against what the EBS actually holds.
 inline constexpr uint16_t BrakeSensorFullScaleBar = 40;  // EPT1400 order code: 40 bar (04000)
 inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
-inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: EV.2.3 "brake pressed"
+// Brake FULL TRAVEL, the top of the brake_pct scale. It used to also gate the
+// EV.2.3 brake+throttle cut; that rule was deleted in FS-Rules 2024 and the cut
+// with it, so this is now purely a scaling endpoint and no longer arms anything.
+inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: brake full travel
 // DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
 // a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
 inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
 // BRING-UP brake stub, controlled by THIS value (no build flag): != 0 makes
 // io_signals inject it as brake_raw instead of reading the ADC; 0 = real ADC
-// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D and BELOW
-// BrakePressedRaw (3000) to dodge the EV.2.3 cut (bench: 2700). MUST be 0 for
+// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D (bench: 2700).
+// It no longer has to stay below BrakePressedRaw -- the EV.2.3 cut that used to
+// trip there was deleted with the rule in FS-Rules 2024. MUST be 0 for
 // flight — folds away at compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
@@ -139,8 +143,6 @@ inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 inline constexpr uint8_t  TorqueCap            = 100;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
-inline constexpr uint8_t  Ev23SetPct           = 25;    // EV.2.3: brake + torque>this -> latch
-inline constexpr uint8_t  Ev23ResetPct         = 5;     // EV.2.3: clears when torque<this (brake released)
 
 // ---- Low-cell-voltage torque derate ---------------------------------------
 // Linear ramp: 100 % at/above the knee, down to CellVDerateFloorPct at the

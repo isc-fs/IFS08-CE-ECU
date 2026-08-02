@@ -42,13 +42,19 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     if (torque < DeadbandLowPct) torque = 0;
     else if (torque > DeadbandHighPct) torque = 100;
 
-    // EV.2.3 brake+throttle plausibility (latches; clears only when the pedal
-    // returns below the reset threshold with the brake released).
-    if (in.brake_raw > in.cal.brake_pressed && torque > Ev23SetPct) {
-        ev23_latched_ = true;
-    } else if (in.brake_raw < in.cal.brake_pressed && torque < Ev23ResetPct) {
-        ev23_latched_ = false;
-    }
+    // The EV.2.3 brake+throttle plausibility cut USED TO BE HERE. It was deleted
+    // in FS-Rules 2024 and is gone from the firmware with it (#177).
+    //
+    // It was a latching torque cut: brake above cal.brake_pressed with demand
+    // over 25 % zeroed torque until the driver fully lifted. Two reasons not to
+    // keep it as an optional safety net once the rule stopped requiring it --
+    // it tripped on brake_pressed, which is still COMMISSION-tagged and has
+    // never been measured, and being a latch, a spurious trip took drive away
+    // mid-corner until a full lift. An unnecessary cut on an unverified
+    // threshold is a hazard of its own.
+    //
+    // T.11.8.9 below is UNAFFECTED -- APPS-disagreement is a different rule and
+    // is still required.
 
     // T.11.8.9 APPS disagreement, honouring the 100 ms persistence window.
     const int diff = static_cast<int>(a1) - static_cast<int>(a2);
@@ -64,17 +70,16 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     const bool t11 = apps_disagree_active_ &&
                      static_cast<uint32_t>(now_ms - apps_disagree_since_ms_) >= AppsDisagreePersistMs;
 
-    if (ev23_latched_ || t11) torque = 0;
+    if (t11) torque = 0;
 
     // DV torque source (#17): when the DV drive is latched the pedals are NOT
     // the torque source -- the conditioned uDV 0x507 command is, and a stale
     // command stream means torque 0, NEVER a fall-back to APPS (no driver is
-    // seated). EV.2.3 / T.11.8.9 are driver-pedal rules and do not gate the DV
-    // command (the EBS legitimately holds brake pressure in DV -- a naive
-    // EV.2.3 would cut torque the moment uDV commands accel). The pedal
-    // latches keep computing above (pedals idle; pit-diag verdicts stay live)
-    // but their zeroing applies to the pedal torque only. The cell-voltage
-    // derate below still applies -- pack protection is mode-independent.
+    // seated). T.11.8.9 is a driver-pedal rule and does not gate the DV
+    // command. Its latch keeps computing above (pedals idle; the pit-diag
+    // verdict stays live) but the zeroing applies to the pedal torque only.
+    // The cell-voltage derate below still applies -- pack protection is
+    // mode-independent.
     if (dv_latched_) {
         torque = in.dv_fresh ? in.dv_torque_pct : 0;
     }
@@ -273,7 +278,6 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.torque_nm    = torque_pct_to_nm(cmd_torque);
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;
-    out.ev_2_3      = ev23_latched_;
     out.t11_8_9     = t11;
     out.dv_mode     = dv_latched_;
     return out;

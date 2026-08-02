@@ -46,7 +46,6 @@ extern uint16_t g_last_apps1_raw;
 extern uint16_t g_last_apps2_raw;
 extern uint16_t g_last_brake_raw;
 extern uint8_t  g_last_start_button;
-extern uint8_t  g_last_ev_2_3;
 extern uint8_t  g_last_t11_8_9;
 
 /* Count of frames dropped by can_tx_post() because the TX queue was full (its

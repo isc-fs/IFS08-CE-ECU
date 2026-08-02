@@ -116,7 +116,7 @@ service.
 
 ### What is NOT calibratable
 
-The deadbands, the FSAE plausibility percentages (`Ev23*`, `AppsDisagree*`) and
+The deadbands, the FSAE plausibility percentages (`AppsDisagree*`) and
 every timing stay compile-time. They are design decisions, not per-car
 measurements, and an operator must not be able to move them.
 
@@ -135,7 +135,7 @@ That also makes the three brake thresholds reviewable in physical units:
 |---|---|---|---|
 | `BrakeArmRaw` | 750 | 4.1 bar | R2D arm (light press) |
 | `BrakeDvHardRaw` | 2500 | 25.2 bar | DV R2D + the `0x505` verdict to the uDV |
-| `BrakePressedRaw` | 3000 | 31.3 bar | EV.2.3 brake+throttle cut |
+| `BrakePressedRaw` | 3000 | 31.3 bar | brake full travel — top of the `brake_pct` scale |
 
 > ⚠️ A released-pedal reading of ~560 counts is **1.8 bar**, not 0. That is either
 > genuine residual pressure in the system or sensor offset, and it shifts every
@@ -226,11 +226,11 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
 
 - **`config::StubBrakeRaw`** — a nonzero value is injected as `brake_raw` instead of
   reading the ADC. Set it ABOVE the threshold you need: `BrakeArmRaw` (750) for manual
-  R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700), and BELOW `BrakePressedRaw`
-  (3000) to stay clear of the EV.2.3 cut. `0` = read the real ADC (flight).
-  > ⚠ Staying below `BrakePressedRaw` only matters for a **manual** R2D test. On the **DV**
-  > path EV.2.3 does not gate torque at all (the EBS legitimately holds brake pressure while
-  > uDV commands accel), so it is not something you can "dodge" there — see `control.cpp`.
+  R2D, or **`BrakeDvHardRaw` (2500) for DV R2D** (e.g. 2700). `0` = read the real ADC
+  (flight).
+  > There is no longer an upper bound to respect. The EV.2.3 brake+throttle cut that
+  > used to trip above `BrakePressedRaw` was deleted along with the rule in FS-Rules
+  > 2024 (#177), so brake pressure no longer gates torque in either mode.
 - **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
   ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
   (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
@@ -252,8 +252,8 @@ alone, press the real start button; `StubStart` alone, press the real brake.)
 
 **⚠ Never flash an image with `StubBrakeRaw != 0` / `StubStart = true` to drive.**
 
-`BrakeArmRaw` was calibrated on the car (2026-06-27, `750`). **`BrakePressedRaw` (3000, the
-EV.2.3 threshold) and `BrakeDvHardRaw` (2500, the DV R2D gate) are still `COMMISSION`** —
+`BrakeArmRaw` was calibrated on the car (2026-06-27, `750`). **`BrakePressedRaw` (3000,
+brake full travel) and `BrakeDvHardRaw` (2500, the DV R2D gate) are still `COMMISSION`** —
 recalibrate both once the line is purged, reading `0x701 brake_raw` via pit-diag.
 
 > ⚠ Read `brake_raw` on **`0x701`**, not `0x705`: `PitDiag_brake`'s `brake_pressure` is
@@ -327,8 +327,7 @@ the DV trigger:
 
 **Brake** — the DV R2D gate needs `brake_raw > BrakeDvHardRaw` (2500):
 - If the **real EBS presses** the brake above 2500, leave `StubBrakeRaw = 0` (real ADC).
-- Otherwise set `StubBrakeRaw` above 2500 (and below `BrakePressedRaw` 3000, to dodge
-  EV.2.3) — e.g. `2700`.
+- Otherwise set `StubBrakeRaw` above 2500 — e.g. `2700`.
 
 > **⚠ SAFETY.** No AMS, no inverter handshake — the same envelope as §3 (PSU limits + torque
 > cap + car on stands). Keep `TorqueCap` low for on-stands work; **`100` for flight only**.

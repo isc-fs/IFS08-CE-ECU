@@ -183,32 +183,7 @@ static void test_active_torque_and_deadband() {
     CHECK(o.torque_pct == 0, "released pedal -> 0%");
 }
 
-// EV.2.3 brake+throttle plausibility ("safety-brake").
-static void test_ev_2_3() {
-    std::printf("[ev_2_3]\n");
-    Controller c;
-    uint32_t t = 0;
-    drive_to_active(c, t);
-
-    CtrlInputs in = good_drive_inputs();
-    in.apps1_raw = (Apps1AdcMin + Apps1AdcMax) / 2;
-    in.apps2_raw = (Apps2AdcMin + Apps2AdcMax) / 2;
-    in.brake_raw = BrakePressedRaw + 100;
-    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.ev_2_3, "brake+throttle -> EV.2.3 latched");
-    CHECK(o.torque_pct == 0, "EV.2.3 cuts torque to 0");
-
-    in.brake_raw = 0;
-    o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.ev_2_3, "EV.2.3 stays latched while pedal still pressed");
-    CHECK(o.torque_pct == 0, "still cut while latched");
-
-    in.apps1_raw = Apps1AdcMin;
-    in.apps2_raw = Apps2AdcMin;
-    o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(!o.ev_2_3, "EV.2.3 clears when pedal released");
-}
-
+// T.11.8.9 APPS disagreement, including the 100 ms persistence window.
 static void test_t11_8_9_window() {
     std::printf("[t11_8_9]\n");
     Controller c;
@@ -865,8 +840,14 @@ static void test_power_envelope() {
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
         in.motor_rpm_mech = 7000;
-        in.brake_raw = static_cast<std::uint16_t>(in.cal.brake_pressed + 100);  // EV.2.3
-        CtrlOutput o = c.step(in, t);
+        // T.11.8.9: both channels above the agreement floor but 50 % apart, held
+        // past the persistence window. (This used to use the EV.2.3 brake cut,
+        // which no longer exists -- the rule was deleted in FS-Rules 2024.)
+        in.apps2_raw = static_cast<std::uint16_t>(in.cal.apps2_min +
+                       (in.cal.apps2_max - in.cal.apps2_min) / 2);
+        CtrlOutput o{};
+        for (int i = 0; i < 15; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
+        CHECK(o.t11_8_9, "T.11.8.9 tripped");
         CHECK(o.torque_pct == 0, "a plausibility cut still wins over the envelope");
     }
 
@@ -920,7 +901,7 @@ static void test_brake_pressure() {
         const std::uint16_t prsd = brake_pressure_dbar(config::BrakePressedRaw);
         CHECK(arm < dvh && dvh < prsd, "thresholds are ordered in pressure as well as counts");
         CHECK(arm > 30 && arm < 50, "R2D arm lands near 4 bar -- a light press");
-        CHECK(prsd > 290 && prsd < 330, "EV.2.3 cut lands near 31 bar -- firm braking");
+        CHECK(prsd > 290 && prsd < 330, "brake full travel lands near 31 bar -- firm braking");
     }
     {
         // The rest reading seen in the #148 captures, in real units. At 40 bar
@@ -1613,11 +1594,14 @@ static void test_dv_mode() {
     CHECK(o.state == CtrlState::Active, "staleness does not exit the drive");
     in.apps1_raw = 0; in.apps2_raw = 0;
 
-    // EV.2.3 is a driver-pedal rule: EBS pressure + DV torque must NOT trip it.
+    // Brake pressure must NEVER gate DV torque: the EBS legitimately holds hard
+    // braking while the uDV commands acceleration. This was the EV.2.3 carve-out
+    // before that rule was deleted; kept as a standing regression, because any
+    // future brake-based cut that forgets the DV path breaks autonomous driving.
     in.dv_fresh = true; in.dv_torque_pct = 50;
     in.brake_raw = BrakePressedRaw + 500;    // EBS holding hard
     o = c.step(in, t); t += ControlPeriodMs;
-    CHECK(o.torque_pct == 50, "EV.2.3 does not gate DV torque (EBS pressure)");
+    CHECK(o.torque_pct == 50, "brake pressure does not gate DV torque (EBS holding)");
     in.brake_raw = 0;
 
     // Drive-cycle exit clears the latch; the next entry re-decides the mode.
@@ -1742,7 +1726,7 @@ static RadioSnapshotInputs radio_test_inputs() {
     RadioSnapshotInputs in{};
     in.tick_ms = 0x11223344u; in.seq = 0xABCD;
     in.start_button = 1; in.apps1_raw = 2500; in.apps2_raw = 2400; in.brake_raw = 1234;
-    in.torque_pct = 77; in.ev_2_3 = 1; in.t11_8_9 = 1;
+    in.torque_pct = 77; in.t11_8_9 = 1;
     in.state = 5; in.ok_precharge = 1; in.ams_fsm_state = 3;
     in.v_cell_min_mV = 3650; in.soc = 87;
     for (int i = 0; i < 5; ++i) {
@@ -1781,7 +1765,9 @@ static void test_radio_snapshot() {
     CHECK(s[6] == 1,                 "start_button @6");
     CHECK(rd16(s, 7) == 2500 && rd16(s, 9) == 2400 && rd16(s, 11) == 1234, "pedals @7/9/11");
     CHECK(rd16(s, 13) == 77,         "torque_pct @13 (u8 zero-extended)");
-    CHECK(s[15] == 1 && s[16] == 1,  "ev_2_3/t11_8_9 @15/16");
+    // [15] is reserved-zero since EV.2.3 was deleted; [16] must NOT have shifted.
+    CHECK(s[15] == 0,                "byte 15 reserved (was ev_2_3), always 0");
+    CHECK(s[16] == 1,                "t11_8_9 still @16 -- layout not shifted");
     CHECK(s[17] == 5 && s[18] == 1 && s[19] == 3, "state/ok_precharge/ams_fsm @17-19");
     CHECK(rd16(s, 20) == 3650,       "v_cell_min_mV @20");
     CHECK(s[22] == 87,               "soc @22");
@@ -1951,7 +1937,6 @@ static void run_all() {
     test_dynamic_states();
     test_precharge_no_ack();
     test_active_torque_and_deadband();
-    test_ev_2_3();
     test_t11_8_9_window();
     test_ams_error();
     test_cell_v_derate();
@@ -1988,12 +1973,11 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-full-cycle"))       { test_boot_sequence(); test_active_torque_and_deadband(); }
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
-    else if (!std::strcmp(m, "--test-safety-brake"))       test_ev_2_3();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }
     else if (!std::strcmp(m, "--test-ams-error"))          test_ams_error();
     else if (!std::strcmp(m, "--test-cell-ir"))            test_cell_ir_compensation();
     else if (!std::strcmp(m, "--test-legacy-compat"))    { test_cell_v_derate(); test_t11_8_9_window(); }
-    else if (!std::strcmp(m, "--test-plausibility"))     { test_ev_2_3(); test_t11_8_9_window(); }
+    else if (!std::strcmp(m, "--test-plausibility"))       test_t11_8_9_window();
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();
     else if (!std::strcmp(m, "--test-dsl-parity"))         test_dsl_parity();
     else if (!std::strcmp(m, "--test-inverter"))           test_inverter();

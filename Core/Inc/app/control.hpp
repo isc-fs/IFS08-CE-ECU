@@ -131,7 +131,6 @@ struct CtrlOutput {
     bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)
-    bool      ev_2_3 = false;    // brake+throttle implausibility (latched)
     bool      t11_8_9 = false;   // APPS disagreement past the 100 ms window
     // DV drive latched this cycle (the 0x510+EBS gate fired) -> torque source
     // is the uDV 0x507 command; drives the 0x511 R2D-confirm emission.
@@ -157,7 +156,6 @@ private:
 
     CtrlState state_ = CtrlState::WaitInvVdcConfig;
     uint32_t  state_entry_ms_ = 0;
-    bool      ev23_latched_ = false;
     bool      apps_disagree_active_ = false;
     uint32_t  apps_disagree_since_ms_ = 0;
     // The mode decision (#17): latched by WHICH trigger fired at WaitStartBrake

@@ -233,7 +233,7 @@ re-medirse en el coche montado con sensores reales antes de cualquier marcha**.
 > ⚠️ **No dupliques los valores aquí.** `ecu_config.hpp` es la única fuente de verdad — este
 > archivo ya se quedó desactualizado una vez citándolos. Estado a día de hoy:
 > **APPS1/APPS2 ya calibrados** en banco (2026-06-22) y **`BrakeArmRaw` calibrado en coche**
-> (2026-06-27); **`BrakePressedRaw` (EV.2.3) y `BrakeDvHardRaw` (R2D driverless) siguen
+> (2026-06-27); **`BrakePressedRaw` (recorrido total de freno) y `BrakeDvHardRaw` (R2D driverless) siguen
 > `COMMISSION`** — sin calibrar. Ver [`docs/commissioning.md`](docs/commissioning.md).
 
 ### Calibración de pedales en RUNTIME (#169)

@@ -14,7 +14,7 @@
 // as before.
 //
 // NOT calibratable and deliberately still compile-time: the deadbands, the
-// FSAE plausibility percentages (Ev23*, AppsDisagree*) and every timing. Those
+// FSAE plausibility percentages (AppsDisagree*) and every timing. Those
 // are design decisions, not per-car measurements, and an operator must not be
 // able to move them.
 
