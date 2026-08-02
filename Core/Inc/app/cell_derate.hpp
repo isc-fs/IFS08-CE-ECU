@@ -3,6 +3,13 @@
 // cell_derate.hpp -- turning the AMS minimum cell voltage into something worth
 // derating on.
 //
+// A CAP, NOT A GAIN. The result is a torque CEILING: torque = min(torque, cap).
+// It used to multiply demand, which rescaled the whole pedal -- at a 68 % factor
+// a 30 % request became 20 %, even though 30 % was never the problem. The pack
+// can deliver it; only the peak needed limiting. Capping leaves everything below
+// the ceiling untouched, so the driver keeps full resolution over the range that
+// is still allowed, and matches the thermal and power limiters.
+//
 // THE PROBLEM. A cell's terminal voltage under load is not a measure of how
 // empty it is; it is mostly a measure of how hard you are accelerating. Pack
 // current flows through every series element, so each one sags by I * R_cell.
@@ -69,7 +76,8 @@ struct CellDerateState {
     std::uint16_t est_ocv_mV   = 0;      // compensated + filtered -- what the derate uses
     std::uint16_t raw_mV       = 0;      // straight off 0x12C, for comparison on 0x709
     std::int16_t  comp_mV      = 0;      // how much IR compensation was applied
-    std::uint8_t  cap_pct      = 100;    // the resulting derate factor, 0..100
+    std::uint8_t  cap_pct      = 100;    // torque CEILING in percent, 0..100
+    bool          capped       = false;  // the ceiling is below full this tick
     bool          compensated  = false;  // false -> running on raw voltage (stale current)
     bool          raw_floor    = false;  // the raw-voltage backstop fired
 };

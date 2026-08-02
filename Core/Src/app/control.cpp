@@ -100,13 +100,17 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     cdi.i_fresh       = in.current_fresh;
     cell_derate_ = cell_.update(cdi);
 
-    torque = static_cast<uint8_t>(static_cast<uint32_t>(torque) * cell_derate_.cap_pct / 100u);
+    // A CAP, not a gain (#177). This used to multiply demand, which rescaled the
+    // WHOLE pedal: at a 68 % factor a 30 % request became 20 %, even though 30 %
+    // was never the problem -- the pack can deliver it, and only the peak needed
+    // limiting. The driver lost resolution exactly when predictability matters
+    // most. Now everything under the cap passes through untouched and only the
+    // top is clipped, matching the thermal and power limiters below.
+    if (torque > cell_derate_.cap_pct) torque = cell_derate_.cap_pct;
 
     // Motor thermal cap (#177). Runs every tick so the filter is settled before
-    // torque is ever commanded. Unlike the cell derate above this is a CAP, not
-    // a gain -- everything under it passes through untouched, so the driver
-    // keeps full pedal resolution over the range still allowed. Losing the
-    // sensors does NOT mean no limit; see motor_thermal.hpp.
+    // torque is ever commanded. Losing the sensors does NOT mean no limit; see
+    // motor_thermal.hpp.
     MotorThermalInputs mti{};
     mti.temp_motor1_raw = in.inv_temp_motor1_raw;
     mti.temp_motor2_raw = in.inv_temp_motor2_raw;
@@ -120,9 +124,10 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // limit and the map commanded roughly twice it over most of the speed
     // range. Inert below ~2865 mech rpm, so normal cornering is untouched.
     //
-    // Order against the thermal cap is immaterial -- both are min() caps, so
-    // whichever is lower wins either way. That is a property of caps and NOT of
-    // the cell derate above, which multiplies and therefore has to come first.
+    // Order among the three limiters is immaterial: cell, thermal and power are
+    // all min() caps now, so the lowest wins whatever sequence they run in. That
+    // was NOT true while the cell derate multiplied -- a gain had to come first
+    // or it would have scaled the caps themselves.
     bool power_capped = false;
     {
         const uint8_t cap = power_cap_pct(in.motor_rpm_mech);

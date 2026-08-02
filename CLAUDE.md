@@ -166,7 +166,7 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | 0x7E2 | PitCal_cmd (RX)  | Sesión de calibración de pedales: comando + punto de captura + guard `0xCA11B0DE` (CRC-32 del set en `COMMIT`) |
 | 0x7E3 | PitCal_status    | Estado de sesión · último cmd · result · máscara de capturas · flags de validación |
 | 0x7E4 / 0x7E5 | PitCal_apps / PitCal_brake | Lectura de los valores (almacenados o staged) tras `READ_STORED` / `READ_STAGED` |
-| 0x709 | PitDiag_cell | Estimador del derate por celda baja: `raw_mV` (0x12C crudo) vs `est_ocv_mV` (compensado por IR + filtrado) vs `comp_mV` (la corrección aplicada) + `cap_pct` y los flags `compensated` / `raw_floor`. **Es el instrumento con el que se calibra `CellIrMilliOhm`** — ver [`docs/commissioning.md`](docs/commissioning.md) |
+| 0x709 | PitDiag_cell | Estimador del **cap** por celda baja (`torque = min(torque, cap_pct)`, ya no multiplica — #177): `raw_mV` (0x12C crudo) vs `est_ocv_mV` (compensado por IR + filtrado) vs `comp_mV` (la corrección aplicada) + `cap_pct` y los flags `compensated` / `raw_floor`. **Es el instrumento con el que se calibra `CellIrMilliOhm`** — ver [`docs/commissioning.md`](docs/commissioning.md) |
 | 0x708 | PitDiag_inv_faults | Capas de fallo **L1 `PwrStg`** (9 bits) y **L2 `EMCtrl`** (8 bits) del 0x461, con nombre bit a bit + el lado **comandado** (`cmd_follow_n`, `cmd_flt_clear`). El DEM (L3) por sí solo no distingue un latch limpiable de una condición L1/L2 viva que lo sostiene (#148) |
 
 > **`0x704` se emite siempre (ungated)** desde `DiagTask`, fuera del gate `0x7E0`, para que

@@ -192,6 +192,11 @@ pack look *healthier*, and all three fail towards derating sooner:
 
 ### The curve itself
 
+A **cap**, not a scale factor: `torque = min(torque, cap)`. At a 68 % cap, half
+pedal still gives exactly 50 % — only the top of the range is clipped. (It
+multiplied demand until #177, which rescaled the whole pedal and cost the driver
+resolution across the entire travel in order to limit a peak.)
+
 | min cell (estimated OCV) | torque cap |
 |---|---|
 | ≥ 2800 mV | 100% |

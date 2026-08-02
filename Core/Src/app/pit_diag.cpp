@@ -78,6 +78,7 @@ CanFrame PitDiag::build_cell(const CellDerateState& s) noexcept {
     d.cap_pct     = s.cap_pct;
     d.compensated = s.compensated ? 1u : 0u;
     d.raw_floor   = s.raw_floor ? 1u : 0u;
+    d.capped      = s.capped ? 1u : 0u;
     std::uint8_t b[PitDiag_cell_DLC];
     encode_PitDiag_cell(d, b);
     return make_acu(PitDiag_cell_ID, b);

@@ -15,8 +15,9 @@
  * how much correction is being applied, so the two can be read apart instead of
  * inferred from the sum.
  *
- * cap_pct is what actually multiplies driver torque, and the two flags say
- * which path produced it: compensated=0 means the current signal went stale and
+ * cap_pct is the torque CEILING (torque = min(torque, cap_pct)), not a scale
+ * factor -- it stopped multiplying demand in #177. The flags say which path
+ * produced it: compensated=0 means the current signal went stale and
  * the derate fell back to the raw loaded voltage; raw_floor=1 means the
  * backstop fired and the estimate was ignored entirely.
  */
@@ -29,4 +30,5 @@ CAN_MSG(PitDiag_cell, 0x709, 8, "VCU", 100)
     /* byte 7 flags, one 1-bit DBC signal each (same convention as 0x700) */
     FIELD_LE_BITS (compensated, uint8_t, 56, 1, 1, 0, "bit")
     FIELD_LE_BITS (raw_floor,   uint8_t, 57, 1, 1, 0, "bit")
+    FIELD_LE_BITS (capped,      uint8_t, 58, 1, 1, 0, "bit")
 CAN_MSG_END(PitDiag_cell)

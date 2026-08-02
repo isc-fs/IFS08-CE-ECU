@@ -30,6 +30,7 @@ CellDerateState CellDerate::update(const CellDerateInputs& in) noexcept {
         st.est_ocv_mV = CellVDefaultMv;
         st.raw_mV     = in.v_cell_min_mV;
         st.cap_pct    = 100u;
+        st.capped     = false;
         last_ = st;
         return st;
     }
@@ -83,6 +84,7 @@ CellDerateState CellDerate::update(const CellDerateInputs& in) noexcept {
     } else {
         st.cap_pct = cell_derate_pct(st.est_ocv_mV);
     }
+    st.capped = (st.cap_pct < 100u);
 
     last_ = st;
     return st;
