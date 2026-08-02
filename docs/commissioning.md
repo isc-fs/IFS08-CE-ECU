@@ -207,6 +207,59 @@ pack look *healthier*, and all three fail towards derating sooner:
 
 ---
 
+## 1d. Motor thermal cap — check the sensors before you trust the limit
+
+The motor limit is **80 °C**. The cap starts backing torque off at **70 °C** and
+reaches its **20 % floor at 80 °C** — the limit is where the floor *is*, not
+where the cap starts, because a limiter that waits for the limit has already let
+the winding get there.
+
+| motor temp | torque cap |
+|---|---|
+| ≤ 70 °C | 100% |
+| 72 | 84% |
+| 75 | 60% |
+| 78 | 36% |
+| ≥ 80 | 20% |
+
+It is a **cap, not a gain**: anything below the cap passes through untouched, so
+at 75 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
+
+Heat goes as torque squared, so the 20% floor is ~4% of the heating — the motor
+cools under any realistic load while the car can still drive off track.
+
+### The part that actually needs checking
+
+`0x464` carries two motor sensors and **both failure modes are silent**:
+
+| raw byte | decodes to | what it really means |
+|---|---|---|
+| `0xFF` | 205 °C | **sensor disconnected** — would slam the cap to the floor if read literally |
+| `0` | −50 °C | **no `0x464` ever received** — reads as a very cold, very healthy motor |
+
+The second is the dangerous one, and it is the *default state at boot*. Both are
+rejected, and losing every sensor does **not** mean "no limit" — the cap holds at
+`MotorTempUnknownCapPct` (60%), enough to drive, not enough to cook a motor
+nobody is watching.
+
+**Before any run, confirm on `0x706`:**
+
+1. `temp_s1_valid` and `temp_s2_valid` are both **1**
+2. `temp_unknown` is **0**
+3. `motor_temp_used_degC` tracks the two raw temps and is plausible (ambient at
+   key-on, not −50 and not 205)
+
+If `temp_unknown = 1` the car will run at 60% and feel flat. That is the
+protection working, not a fault in the derate — go and find the temperature
+sensor.
+
+> `motor_temp_used_degC` is the **hottest valid** sensor, filtered (~2.5 s). It
+> is deliberately not simply `max(motor1, motor2)`: a disconnected sensor is
+> excluded, so with one sensor dead this tracks the surviving one rather than
+> the 205 °C sentinel.
+
+---
+
 ## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `StubStart`)
 
 R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on

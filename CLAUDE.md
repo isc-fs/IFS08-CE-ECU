@@ -161,7 +161,7 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | 0x703 | PitDiag_fwinfo   | semver + 4 bytes de git hash |
 | 0x704 | PitDiag_health   | heap · liveness por tarea (bits) · reset_cause · uptime · last_fault |
 | 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING; `brake_pressure` está **hardcodeado a 0** hoy) |
-| 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) |
+| 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) **+ el cap térmico del motor** (#177): `motor_temp_used_degC` (el sensor válido más caliente, filtrado), `thermal_cap_pct`, y `temp_s1_valid` / `temp_s2_valid` / `temp_unknown` / `thermal_capped`. `temp_unknown=1` = ningún sensor usable → cap fijo `MotorTempUnknownCapPct`; **raw 0 decodifica a −50 °C, así que "parece frío" es el estado por defecto al arrancar** |
 | 0x707 | PitDiag_dv       | `dv_r2d_req` · `brake_over_limit` · `r2d_confirm` · torque uDV — diagnóstico del modo driverless |
 | 0x7E2 | PitCal_cmd (RX)  | Sesión de calibración de pedales: comando + punto de captura + guard `0xCA11B0DE` (CRC-32 del set en `COMMIT`) |
 | 0x7E3 | PitCal_status    | Estado de sesión · último cmd · result · máscara de capturas · flags de validación |

@@ -62,6 +62,14 @@ static CtrlInputs good_drive_inputs() {
     in.ok_precharge      = true;
     in.ams_error         = false;
     in.v_cell_min_mV     = CellVDefaultMv;   // >= knee -> no derate
+    // A healthy car REPORTS ITS MOTOR TEMPERATURE. Leaving these at the struct
+    // default is not "no thermal input", it is the unknown-sensor case, and the
+    // cap correctly drops to MotorTempUnknownCapPct there -- which is exactly
+    // the failure this fixture must not silently sit in. 40 degC, well under
+    // the 70 degC cap start.
+    in.inv_temp_motor1_raw = static_cast<uint16_t>(40 - MotorTempRawOffsetDegC);
+    in.inv_temp_motor2_raw = static_cast<uint16_t>(38 - MotorTempRawOffsetDegC);
+    in.inv_temps_fresh     = true;
     return in;
 }
 
@@ -181,6 +189,147 @@ static void test_active_torque_and_deadband() {
     in.apps2_raw = Apps2AdcMin;
     o = c.step(in, t); t += ControlPeriodMs;
     CHECK(o.torque_pct == 0, "released pedal -> 0%");
+}
+
+// Motor thermal torque cap (#177). The curve is the easy half; the sensor
+// failure modes are the half that can kill a motor or strand the car.
+static void test_motor_thermal() {
+    std::printf("[motor_thermal]\n");
+
+    const auto raw = [](int degC) {
+        return static_cast<uint8_t>(degC - MotorTempRawOffsetDegC);
+    };
+    auto settle = [](MotorThermal& mt, MotorThermalInputs in, int ticks) {
+        MotorThermalState s{};
+        for (int i = 0; i < ticks; ++i) s = mt.update(in);
+        return s;
+    };
+
+    // ---- the curve ---------------------------------------------------------
+    // 80 degC is where the cap reaches its FLOOR, not where it starts. A limiter
+    // that waits for the limit has already let the winding get there.
+    CHECK(MotorTempLimitDegC == 80, "motor limit is 80 degC");
+    CHECK(motor_thermal_cap_pct(40) == 100, "40 degC -> no cap");
+    CHECK(motor_thermal_cap_pct(MotorTempDerateStartDegC) == 100, "at the start temp -> no cap");
+    CHECK(motor_thermal_cap_pct(75) < 100, "mid-ramp -> capped");
+    CHECK(motor_thermal_cap_pct(75) > MotorTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 80 degC -> floor");
+    CHECK(motor_thermal_cap_pct(120) == MotorTempFloorPct, "past the limit -> flat floor");
+    CHECK(motor_thermal_cap_pct(72) > motor_thermal_cap_pct(78), "ramp decreases with temperature");
+    CHECK(MotorTempFloorPct > 0, "the floor lets the car drive off track, never strands it");
+
+    // ---- validity ----------------------------------------------------------
+    CHECK(!motor_temp_raw_valid(0xFF), "0xFF is the disconnected sentinel, not 205 degC");
+    CHECK(!motor_temp_raw_valid(0),    "raw 0 (-50 degC / untouched state) is not a temperature");
+    CHECK(motor_temp_raw_valid(raw(40)), "a normal reading is valid");
+    CHECK(motor_temp_raw_valid(raw(0)),  "0 degC is a real temperature and stays valid");
+
+    // ---- a hot motor caps --------------------------------------------------
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true; in.temp_motor1_raw = raw(85); in.temp_motor2_raw = raw(85);
+        const MotorThermalState s = settle(mt, in, 2000);
+        CHECK(s.cap_pct == MotorTempFloorPct, "motor past the limit -> floor cap");
+        CHECK(s.capped, "capped flag set");
+    }
+
+    // ---- the HOTTEST valid sensor wins, and a dead one cannot hide it ------
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true;
+        in.temp_motor1_raw = 0xFF;       // disconnected
+        in.temp_motor2_raw = raw(85);    // and the other one is cooking
+        const MotorThermalState s = settle(mt, in, 2000);
+        CHECK(!s.s1_valid && s.s2_valid, "one sensor valid");
+        CHECK(!s.unknown, "one good sensor is not the unknown case");
+        CHECK(s.cap_pct == MotorTempFloorPct, "a dead sensor does not mask a hot one");
+    }
+    {
+        // The 0xFF sentinel must not be READ as 205 degC either -- that would
+        // cap on a disconnected wire rather than on a temperature.
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true;
+        in.temp_motor1_raw = 0xFF;
+        in.temp_motor2_raw = raw(40);    // genuinely cool
+        const MotorThermalState s = settle(mt, in, 2000);
+        CHECK(s.cap_pct == 100, "0xFF alongside a cool sensor -> no cap");
+    }
+
+    // ---- THE DANGEROUS DEFAULT --------------------------------------------
+    // An untouched VehicleState is all zeros, which decodes to -50 degC. Read
+    // naively that is a very cold, very healthy motor at full power forever.
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true; in.temp_motor1_raw = 0; in.temp_motor2_raw = 0;
+        const MotorThermalState s = settle(mt, in, 10);
+        CHECK(s.unknown, "all-zero temperatures are UNKNOWN, not cold");
+        CHECK(s.cap_pct == MotorTempUnknownCapPct, "unknown -> the unknown-sensor cap");
+        CHECK(s.cap_pct < 100, "an unmonitored motor is NEVER allowed full torque");
+    }
+
+    // ---- stale 0x464 -------------------------------------------------------
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true; in.temp_motor1_raw = raw(40); in.temp_motor2_raw = raw(40);
+        MotorThermalState s = settle(mt, in, 500);
+        CHECK(s.cap_pct == 100, "fresh and cool -> uncapped");
+        in.fresh = false;                     // temperatures stop arriving
+        s = mt.update(in);
+        CHECK(s.unknown, "stale 0x464 -> unknown");
+        CHECK(s.cap_pct == MotorTempUnknownCapPct, "stale falls back to the unknown cap");
+    }
+
+    // ---- the filter is seeded, and re-seeds after a dropout ----------------
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        in.fresh = true; in.temp_motor1_raw = raw(75); in.temp_motor2_raw = raw(75);
+        const MotorThermalState s = mt.update(in);   // very first tick
+        CHECK(s.temp_degC == 75, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == motor_thermal_cap_pct(75), "protection is live immediately");
+    }
+
+    // ---- it is a CAP, not a gain -------------------------------------------
+    // Half pedal below the cap must pass through UNTOUCHED. This is the
+    // structural difference from the low-cell derate.
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        in.inv_temp_motor1_raw = raw(75);      // mid-ramp
+        in.inv_temp_motor2_raw = raw(75);
+        const uint8_t cap = motor_thermal_cap_pct(75);
+        CHECK(cap > 50, "test premise: the cap sits above half pedal");
+
+        in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
+                       (in.cal.apps1_max - in.cal.apps1_min) / 2);
+        in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
+                       (in.cal.apps2_max - in.cal.apps2_min) / 2);
+        // drive_to_active() seeded the filter at the fixture's 40 degC, so let
+        // it actually reach 75 before asserting anything about the cap. Half
+        // pedal stays under the cap the whole way up, so it passes through
+        // untouched throughout the climb, not just at the end.
+        CtrlOutput o{};
+        bool always_unscaled = true;
+        for (int i = 0; i < 2000; ++i) {
+            o = c.step(in, t); t += ControlPeriodMs;
+            if (o.torque_pct < 49 || o.torque_pct > 51) always_unscaled = false;
+        }
+        CHECK(always_unscaled,
+              "half pedal under the cap passes through UNSCALED (cap, not gain)");
+        CHECK(o.thermal_capped, "the cap IS active at 75 degC -- premise of the check above");
+
+        // ...and full pedal is clipped to exactly the cap.
+        in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;
+        for (int i = 0; i < 5; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
+        CHECK(o.torque_pct == cap, "full pedal is clipped to the cap");
+        CHECK(o.thermal_capped, "thermal_capped annunciated on the output");
+    }
 }
 
 // T.11.8.9 APPS disagreement, including the 100 ms persistence window.
@@ -1941,6 +2090,7 @@ static void run_all() {
     test_ams_error();
     test_cell_v_derate();
     test_cell_ir_compensation();
+    test_motor_thermal();
     test_bootloader_trigger();
     test_dsl_parity();
     test_inverter();
@@ -1976,6 +2126,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }
     else if (!std::strcmp(m, "--test-ams-error"))          test_ams_error();
     else if (!std::strcmp(m, "--test-cell-ir"))            test_cell_ir_compensation();
+    else if (!std::strcmp(m, "--test-motor-thermal"))      test_motor_thermal();
     else if (!std::strcmp(m, "--test-legacy-compat"))    { test_cell_v_derate(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-plausibility"))       test_t11_8_9_window();
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();

@@ -41,6 +41,11 @@ struct VehicleState {
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
     std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
     std::uint8_t  inv_temp_motor2   = 0;  // 0x464 motor temp 2      (raw)
+    // 0x464 gets its OWN timestamp, like 0x135. last_inv_tick is stamped by
+    // 0x461/0x463/0x464/0x466 alike, so a dead 0x464 with the rest of the
+    // inverter still talking would leave the thermal cap running off
+    // temperatures frozen minutes ago -- and frozen-cold reads as healthy.
+    std::uint32_t last_inv_temps_tick = 0;   // 0x464 seen
     std::uint32_t last_inv_tick     = 0;  // any inverter frame
     // 0x461 SPECIFICALLY (not any inverter frame): inv_state and the DEM ride
     // on it, and the whole climb/fault ladder is steered by them, so its own

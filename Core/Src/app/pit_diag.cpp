@@ -112,12 +112,26 @@ CanFrame PitDiag::build_inverter(const VehicleState& v,
     return make_acu(PitDiag_inverter_ID, b);
 }
 
-CanFrame PitDiag::build_inverter_temps(const VehicleState& v) noexcept {
+CanFrame PitDiag::build_inverter_temps(const VehicleState& v,
+                                       const MotorThermalState& th) noexcept {
     PitDiag_inverter_temps_t t{};
     t.temp_board_degC  = v.inv_temp_board;   // raw bytes; the DBC -50 offset -> degC
     t.temp_pwrstg_degC = v.inv_temp_pwrstg;
     t.temp_motor1_degC = v.inv_temp_motor1;
     t.temp_motor2_degC = v.inv_temp_motor2;
+    // Re-encode with the same -50 offset the DBC will undo. Clamped rather than
+    // wrapped so an absurd temperature stays absurd on the wire.
+    {
+        std::int32_t enc = static_cast<std::int32_t>(th.temp_degC) - config::MotorTempRawOffsetDegC;
+        if (enc < 0)   enc = 0;
+        if (enc > 255) enc = 255;
+        t.motor_temp_used_degC = static_cast<std::uint8_t>(enc);
+    }
+    t.thermal_cap_pct  = th.cap_pct;
+    t.temp_s1_valid    = th.s1_valid ? 1u : 0u;
+    t.temp_s2_valid    = th.s2_valid ? 1u : 0u;
+    t.temp_unknown     = th.unknown  ? 1u : 0u;
+    t.thermal_capped   = th.capped   ? 1u : 0u;
     std::uint8_t b[PitDiag_inverter_temps_DLC];
     encode_PitDiag_inverter_temps(t, b);
     return make_acu(PitDiag_inverter_temps_ID, b);

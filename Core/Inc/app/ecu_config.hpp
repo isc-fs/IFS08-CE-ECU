@@ -244,11 +244,43 @@ inline constexpr uint32_t PowerCapK =
 // tell when the envelope is not binding without re-deriving it.
 inline constexpr uint32_t InvTorqueFullScaleNm = 240;
 
-// ---- Motor thermal limit (for the thermal derate, #177) --------------------
-// 80 degC, from the team. The inverter reports motor temperature on 0x464 as a
-// raw byte with a -50 offset. NOT yet used to derate -- recorded here so the
-// number is not lost, and so the thermal step has its one missing input.
-inline constexpr int16_t  MotorTempLimitDegC    = 80;
+// ---- Motor thermal torque cap (#177) ---------------------------------------
+// The inverter reports two motor temperatures on 0x464 as raw bytes with a -50
+// offset. See motor_thermal.hpp for why this is a cap rather than a gain and
+// why losing the sensors does NOT mean "no limit".
+//
+// 80 degC is the motor limit, from the team. It is where the cap reaches its
+// FLOOR, not where it starts: a limiter that waits for the limit has already
+// let the winding get there. Backing off from 70 degC is what keeps it away.
+inline constexpr int16_t  MotorTempDerateStartDegC = 70;   // begin capping
+inline constexpr int16_t  MotorTempLimitDegC       = 80;   // floor reached here
+// Heat goes as torque squared, so 20 % torque is ~4 % of the heating -- the
+// motor cools under any realistic load while the car can still drive off track.
+// A thermal limiter that strands the car has traded one failure for another.
+inline constexpr uint8_t  MotorTempFloorPct        = 20;
+// No usable sensor. Deliberately NOT 100: an unmonitored motor at full power is
+// the failure this whole module exists to prevent, and raw 0 (an untouched
+// VehicleState) decodes to -50 degC, so "looks cold" is the DEFAULT at boot.
+// Drivable, but not enough to cook anything. Annunciated on 0x706.
+inline constexpr uint8_t  MotorTempUnknownCapPct   = 60;
+inline constexpr uint8_t  MotorTempDisconnectedRaw = 0xFFu;  // inverter sentinel (would read 205 degC)
+inline constexpr int16_t  MotorTempRawOffsetDegC   = -50;    // NX encoding: degC = raw - 50
+inline constexpr int16_t  MotorTempMinPlausibleDegC = -40;   // below this the reading is not a temperature
+// tau ~= (1 << shift) * ControlPeriodMs = 2.56 s. The sensor is 1 degC/count and
+// the ramp is 8 points of cap per degC, so without this a reading dithering
+// between two counts steps torque by 8 points at 100 Hz. Temperature is slow
+// enough that the lag costs nothing.
+inline constexpr uint8_t  MotorTempFilterShift     = 8;
+
+static_assert(MotorTempDerateStartDegC < MotorTempLimitDegC,
+              "thermal cap must start below the limit (the ramp divides by their span)");
+static_assert(MotorTempFloorPct <= 100 && MotorTempUnknownCapPct <= 100,
+              "thermal caps are percentages");
+static_assert(MotorTempFloorPct > 0,
+              "the floor is a limp-home: a thermal cap that strands the car is not a safe default");
+static_assert(MotorTempFilterShift < 16,
+              "the q16 filter accumulator needs the shift below its fractional width, "
+              "or the per-tick increment truncates to zero and the filter stalls short");
 
 inline constexpr int32_t  InvTorqueMapMul      = 240;
 inline constexpr int32_t  InvTorqueMapDiv      = 95;
@@ -280,6 +312,10 @@ inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuSt
 // compensation gives up and the derate falls back to raw loaded voltage.
 inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
+// 0x464 temperatures, tracked separately from the inverter block (see
+// VehicleState). Feeds the motor thermal cap, which must fall back to its
+// unknown-sensor cap when the TEMPERATURES stop, not when the inverter does.
+inline constexpr uint32_t InvTempsStaleMs      = 500;
 inline constexpr uint32_t UdvCmdStaleMs        = 100;   // 0x507 accel stream stale -> DV torque 0 (never APPS)
 inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request considered current
 
