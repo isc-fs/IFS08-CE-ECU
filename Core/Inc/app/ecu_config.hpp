@@ -249,11 +249,11 @@ inline constexpr uint32_t InvTorqueFullScaleNm = 240;
 // offset. See motor_thermal.hpp for why this is a cap rather than a gain and
 // why losing the sensors does NOT mean "no limit".
 //
-// 80 degC is the motor limit, from the team. It is where the cap reaches its
-// FLOOR, not where it starts: a limiter that waits for the limit has already
-// let the winding get there. Backing off from 70 degC is what keeps it away.
-inline constexpr int16_t  MotorTempDerateStartDegC = 70;   // begin capping
-inline constexpr int16_t  MotorTempLimitDegC       = 80;   // floor reached here
+// 70 degC is the motor limit, from the team (2026-08-02). It is where the cap
+// reaches its FLOOR, not where it starts: a limiter that waits for the limit has
+// already let the winding get there. Backing off from 60 degC keeps it away.
+inline constexpr int16_t  MotorTempDerateStartDegC = 60;   // begin capping
+inline constexpr int16_t  MotorTempLimitDegC       = 70;   // floor reached here
 // Heat goes as torque squared, so 20 % torque is ~4 % of the heating -- the
 // motor cools under any realistic load while the car can still drive off track.
 // A thermal limiter that strands the car has traded one failure for another.
@@ -282,15 +282,17 @@ static_assert(MotorTempFloorPct > 0,
 // Per-module maxima on 0x136/0x137, signed degC (no offset -- unlike the
 // inverter's byte encoding). See pack_thermal.hpp.
 //
-// *** COMMISSION -- NOT A NUMBER THIS REPO CAN KNOW. ***
-// The pack limit is the CELL MANUFACTURER's maximum discharge temperature, and
-// it must sit at or below whatever the AMS itself trips on. 60 degC is the usual
-// Li-ion NMC discharge ceiling and is used here as a placeholder; confirm it
-// against the cell datasheet and the AMS configuration before any endurance run.
-// Too high and the AMS opens the AIRs before this ever engages, which makes the
-// whole cap decorative.
-inline constexpr int16_t  PackTempDerateStartDegC = 50;   // begin capping
-inline constexpr int16_t  PackTempLimitDegC       = 60;   // COMMISSION: floor reached here
+// 50 degC cell limit, from the team (2026-08-02) -- conservative against the
+// usual 60 degC Li-ion NMC discharge ceiling. Still worth confirming it sits at
+// or below whatever the AMS itself trips on: if the AMS opens first this cap
+// never engages and is decorative.
+//
+// NOTE this engages EARLY in practice. 40 degC is reachable partway into a hot
+// endurance run, so expect the car to spend real time capped -- that is the
+// intent of a 50 degC ceiling, not a fault. Narrowing the band (start 45) delays
+// onset at the cost of a ramp twice as steep.
+inline constexpr int16_t  PackTempDerateStartDegC = 40;   // begin capping
+inline constexpr int16_t  PackTempLimitDegC       = 50;   // floor reached here
 inline constexpr uint8_t  PackTempFloorPct        = 20;
 // No usable module. Same reasoning as the motor: an unmonitored pack at full
 // power is the failure the cap exists to prevent.

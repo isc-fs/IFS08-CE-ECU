@@ -214,14 +214,14 @@ static void test_motor_thermal() {
     // ---- the curve ---------------------------------------------------------
     // 80 degC is where the cap reaches its FLOOR, not where it starts. A limiter
     // that waits for the limit has already let the winding get there.
-    CHECK(MotorTempLimitDegC == 80, "motor limit is 80 degC");
+    CHECK(MotorTempLimitDegC == 70, "motor limit is 70 degC");
     CHECK(motor_thermal_cap_pct(40) == 100, "40 degC -> no cap");
     CHECK(motor_thermal_cap_pct(MotorTempDerateStartDegC) == 100, "at the start temp -> no cap");
-    CHECK(motor_thermal_cap_pct(75) < 100, "mid-ramp -> capped");
-    CHECK(motor_thermal_cap_pct(75) > MotorTempFloorPct, "mid-ramp -> above the floor");
-    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 80 degC -> floor");
+    CHECK(motor_thermal_cap_pct(65) < 100, "mid-ramp -> capped");
+    CHECK(motor_thermal_cap_pct(65) > MotorTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 70 degC -> floor");
     CHECK(motor_thermal_cap_pct(120) == MotorTempFloorPct, "past the limit -> flat floor");
-    CHECK(motor_thermal_cap_pct(72) > motor_thermal_cap_pct(78), "ramp decreases with temperature");
+    CHECK(motor_thermal_cap_pct(62) > motor_thermal_cap_pct(68), "ramp decreases with temperature");
     CHECK(MotorTempFloorPct > 0, "the floor lets the car drive off track, never strands it");
 
     // ---- validity ----------------------------------------------------------
@@ -294,10 +294,10 @@ static void test_motor_thermal() {
     {
         MotorThermal mt;
         MotorThermalInputs in{};
-        in.fresh = true; in.temp_motor1_raw = raw(75); in.temp_motor2_raw = raw(75);
+        in.fresh = true; in.temp_motor1_raw = raw(65); in.temp_motor2_raw = raw(65);
         const MotorThermalState s = mt.update(in);   // very first tick
-        CHECK(s.temp_degC == 75, "first sample seeds the filter exactly");
-        CHECK(s.cap_pct == motor_thermal_cap_pct(75), "protection is live immediately");
+        CHECK(s.temp_degC == 65, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == motor_thermal_cap_pct(65), "protection is live immediately");
     }
 
     // ---- it is a CAP, not a gain -------------------------------------------
@@ -307,9 +307,9 @@ static void test_motor_thermal() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        in.inv_temp_motor1_raw = raw(75);      // mid-ramp
-        in.inv_temp_motor2_raw = raw(75);
-        const uint8_t cap = motor_thermal_cap_pct(75);
+        in.inv_temp_motor1_raw = raw(65);      // mid-ramp
+        in.inv_temp_motor2_raw = raw(65);
+        const uint8_t cap = motor_thermal_cap_pct(65);
         CHECK(cap > 50, "test premise: the cap sits above half pedal");
 
         in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
@@ -317,7 +317,7 @@ static void test_motor_thermal() {
         in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
                        (in.cal.apps2_max - in.cal.apps2_min) / 2);
         // drive_to_active() seeded the filter at the fixture's 40 degC, so let
-        // it actually reach 75 before asserting anything about the cap. Half
+        // it actually reach 65 before asserting anything about the cap. Half
         // pedal stays under the cap the whole way up, so it passes through
         // untouched throughout the climb, not just at the end.
         CtrlOutput o{};
@@ -328,7 +328,7 @@ static void test_motor_thermal() {
         }
         CHECK(always_unscaled,
               "half pedal under the cap passes through UNSCALED (cap, not gain)");
-        CHECK(o.thermal_capped, "the cap IS active at 75 degC -- premise of the check above");
+        CHECK(o.thermal_capped, "the cap IS active at 65 degC -- premise of the check above");
 
         // ...and full pedal is clipped to exactly the cap.
         in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;
@@ -360,10 +360,10 @@ static void test_pack_thermal() {
     };
 
     // ---- the curve ---------------------------------------------------------
-    CHECK(pack_thermal_cap_pct(30) == 100, "30 degC -> no cap");
+    CHECK(pack_thermal_cap_pct(25) == 100, "25 degC -> no cap");
     CHECK(pack_thermal_cap_pct(PackTempDerateStartDegC) == 100, "at the start temp -> no cap");
-    CHECK(pack_thermal_cap_pct(55) < 100, "mid-ramp -> capped");
-    CHECK(pack_thermal_cap_pct(55) > PackTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(pack_thermal_cap_pct(45) < 100, "mid-ramp -> capped");
+    CHECK(pack_thermal_cap_pct(45) > PackTempFloorPct, "mid-ramp -> above the floor");
     CHECK(pack_thermal_cap_pct(PackTempLimitDegC) == PackTempFloorPct, "at the limit -> floor");
     CHECK(pack_thermal_cap_pct(90) == PackTempFloorPct, "past the limit -> flat floor");
     CHECK(PackTempFloorPct > 0, "the floor is a limp-home, never a torque cut");
@@ -394,7 +394,7 @@ static void test_pack_thermal() {
     {
         PackThermal pt;
         PackThermalInputs in = uniform(30);
-        in.tmax_module[2] = 70;                 // stale value in an offline slot
+        in.tmax_module[2] = 80;                 // stale value in an offline slot
         in.module_online_mask = 0x1F & ~0x04;   // module 2 offline
         const PackThermalState s = settle(pt, in, 3000);
         CHECK((s.valid_mask & 0x04u) == 0u, "offline module excluded");
@@ -407,13 +407,13 @@ static void test_pack_thermal() {
     // readings must still be used rather than all being discarded.
     {
         PackThermal pt;
-        PackThermalInputs in = uniform(55);
+        PackThermalInputs in = uniform(45);
         in.module_online_mask = 0;      // nothing marked online...
         in.mask_valid = false;          // ...because the mask itself is stale
         const PackThermalState s = settle(pt, in, 3000);
         CHECK(!s.unknown, "a stale mask does not manufacture a thermal fault");
         CHECK(s.valid_mask == 0x1F, "all readings used on plausibility alone");
-        CHECK(s.cap_pct == pack_thermal_cap_pct(55), "and the cap still applies");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(45), "and the cap still applies");
     }
 
     // ---- implausible readings are dropped, plausible ones still count -----
@@ -421,11 +421,11 @@ static void test_pack_thermal() {
         PackThermal pt;
         PackThermalInputs in = uniform(30);
         in.tmax_module[0] = 9000;       // garbage
-        in.tmax_module[1] = 58;         // real, and hot
+        in.tmax_module[1] = 48;         // real, and hot
         const PackThermalState s = settle(pt, in, 3000);
         CHECK((s.valid_mask & 0x01u) == 0u, "garbage reading dropped");
-        CHECK(s.raw_max_degC == 58, "garbage did not become the max");
-        CHECK(s.cap_pct == pack_thermal_cap_pct(58), "the real hot module still caps");
+        CHECK(s.raw_max_degC == 48, "garbage did not become the max");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(48), "the real hot module still caps");
     }
 
     // ---- THE UNINITIALISED CASE -------------------------------------------
@@ -463,9 +463,9 @@ static void test_pack_thermal() {
     // ---- filter seeding ----------------------------------------------------
     {
         PackThermal pt;
-        const PackThermalState s = pt.update(uniform(55));   // very first tick
-        CHECK(s.temp_degC == 55, "first sample seeds the filter exactly");
-        CHECK(s.cap_pct == pack_thermal_cap_pct(55), "protection live immediately");
+        const PackThermalState s = pt.update(uniform(45));   // very first tick
+        CHECK(s.temp_degC == 45, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(45), "protection live immediately");
     }
 
     // ---- cap, not gain, through the whole controller ----------------------
@@ -473,7 +473,7 @@ static void test_pack_thermal() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 55;
+        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 45;
 
         in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
                        (in.cal.apps1_max - in.cal.apps1_min) / 2);

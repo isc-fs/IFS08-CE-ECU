@@ -214,21 +214,21 @@ resolution across the entire travel in order to limit a peak.)
 
 ## 1d. Motor thermal cap — check the sensors before you trust the limit
 
-The motor limit is **80 °C**. The cap starts backing torque off at **70 °C** and
-reaches its **20 % floor at 80 °C** — the limit is where the floor *is*, not
+The motor limit is **70 °C**. The cap starts backing torque off at **60 °C** and
+reaches its **20 % floor at 70 °C** — the limit is where the floor *is*, not
 where the cap starts, because a limiter that waits for the limit has already let
 the winding get there.
 
 | motor temp | torque cap |
 |---|---|
-| ≤ 70 °C | 100% |
-| 72 | 84% |
-| 75 | 60% |
-| 78 | 36% |
-| ≥ 80 | 20% |
+| ≤ 60 °C | 100% |
+| 62 | 84% |
+| 65 | 60% |
+| 68 | 36% |
+| ≥ 70 | 20% |
 
 It is a **cap, not a gain**: anything below the cap passes through untouched, so
-at 75 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
+at 65 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
 
 Heat goes as torque squared, so the 20% floor is ~4% of the heating — the motor
 cools under any realistic load while the car can still drive off track.
@@ -267,15 +267,28 @@ sensor.
 
 ## 1e. Accumulator thermal cap — and why it is the easiest one to miss
 
-Same shape as the motor cap: a **cap** (not a gain), starting at **50 °C** and
-reaching its **20 % floor at 60 °C**, driven by the hottest *valid* module from
+Same shape as the motor cap: a **cap** (not a gain), starting at **40 °C** and
+reaching its **20 % floor at 50 °C**, driven by the hottest *valid* module from
 `0x136`/`0x137`.
 
-> ⚠️ **`PackTempLimitDegC` (60 °C) is `COMMISSION` and this repo cannot know it.**
-> It is the cell manufacturer's maximum discharge temperature, and it must sit at
-> or below whatever the AMS itself trips on. If the AMS opens first, this cap
-> never engages and is purely decorative. Confirm against the cell datasheet and
-> the AMS configuration before any endurance run.
+| pack temp | torque cap |
+|---|---|
+| ≤ 40 °C | 100% |
+| 42 | 84% |
+| 45 | 60% |
+| 48 | 36% |
+| ≥ 50 | 20% |
+
+> ⚠️ **This one engages early, on purpose.** 40 °C is reachable partway into a
+> hot endurance run, so expect the car to spend real time capped. That is what a
+> 50 °C cell ceiling means, not a fault — check `pack_capped` on `0x70A` before
+> assuming something broke. Narrowing the band (start at 45 °C) delays onset at
+> the cost of a ramp twice as steep.
+
+> `PackTempLimitDegC` (50 °C) is the team's cell limit, conservative against the
+> usual 60 °C Li-ion NMC ceiling. Still worth confirming it sits at or below
+> whatever the AMS itself trips on: if the AMS opens first, this cap never
+> engages and is decorative.
 
 ### Why this one is easier to miss than the motor
 
