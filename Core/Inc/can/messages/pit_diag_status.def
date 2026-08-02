@@ -6,6 +6,7 @@
  * Byte 2's control flags are exposed as individual 1-bit DBC signals:
  *   bit0 ev_2_3   bit1 t11_8_9   bit2 rtds_active
  *   bit3 ok_precharge   bit4 start_button   bit5 dv_mode (DV drive latched, #109)
+ *   bit7 power_capped (EV 2.2.1 envelope limiting this tick, #177)
  *   bit6 tx_dropped (sticky: >=1 CAN frame dropped by a full TX queue since boot;
  *        g_can_tx_dropped != 0 -- a safety cyclic may have been lost, #127)
  */
@@ -22,6 +23,8 @@ CAN_MSG(PitDiag_status, 0x700, 8, "VCU", 100)
     FIELD_LE_BITS (start_button, uint8_t, 20, 1, 1, 0, "bit")
     FIELD_LE_BITS (dv_mode,      uint8_t, 21, 1, 1, 0, "bit")
     FIELD_LE_BITS (tx_dropped,   uint8_t, 22, 1, 1, 0, "bit")
+    /* bit7: the EV 2.2.1 power envelope is limiting torque this tick (#177) */
+    FIELD_LE_BITS (power_capped, uint8_t, 23, 1, 1, 0, "bit")
     FIELD_LE   (torque_pct,    uint8_t,  3, 8,  1, 0, "%")
     FIELD_BE   (v_cell_min_mV, uint16_t, 4, 16, 1, 0, "mV")
     FIELD_BE_S (torque_cmd,    int16_t,  6, 16, 1, 0, "cmd")

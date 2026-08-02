@@ -164,6 +164,32 @@ inline constexpr int32_t  MotorPolePairs       = 10;
 // 100% -> 240 Nm (full scale unchanged). Legacy VCU used 240/90 with bias 2400,
 // i.e. zero at 10%. Re-based for the 5% deadband: slope 240/(100-5) = 240/95,
 // bias 5*240 = 1200. Full scale stays 240 Nm -- only the zero-crossing moved.
+// ---- FS-Rules EV 2.2.1 tractive-power envelope (#177) ----------------------
+// "The TS power at the outlet of the TSAC must not exceed 80 kW", judged on a
+// 500 ms moving average (D 10.4.1). Nothing in the vehicle enforced this before
+// -- see power_limit.hpp.
+inline constexpr uint32_t PowerLimitW          = 80000;
+// Assumed inverter+motor efficiency. The rule is on ELECTRICAL power at the
+// TSAC outlet but we can only cap SHAFT torque, so the shaft budget is the
+// electrical limit times efficiency. 90 % is an assumption, not a measurement:
+// too high and we exceed the limit, too low and we leave performance unused.
+// Confirm against a real 500 ms average from scripts/packlog.py and adjust.
+inline constexpr uint32_t DrivetrainEffPct     = 90;
+// Folded constant: K = P * eta * 60/(2*pi), so T_max[Nm] = K / rpm_mech.
+// 60/(2*pi) = 9.5493, carried as 9549/1000. Ordered to stay inside uint32:
+// 800 * 90 = 72000, 72000 * 9549 = 6.875e8, well under 4.29e9.
+inline constexpr uint32_t PowerCapK =
+    (PowerLimitW / 100u) * DrivetrainEffPct * 9549u / 1000u;   // 687528
+// Shaft torque at 100 % on the map below. Kept explicit so power_cap_pct can
+// tell when the envelope is not binding without re-deriving it.
+inline constexpr uint32_t InvTorqueFullScaleNm = 240;
+
+// ---- Motor thermal limit (for the thermal derate, #177) --------------------
+// 80 degC, from the team. The inverter reports motor temperature on 0x464 as a
+// raw byte with a -50 offset. NOT yet used to derate -- recorded here so the
+// number is not lost, and so the thermal step has its one missing input.
+inline constexpr int16_t  MotorTempLimitDegC    = 80;
+
 inline constexpr int32_t  InvTorqueMapMul      = 240;
 inline constexpr int32_t  InvTorqueMapDiv      = 95;
 inline constexpr int32_t  InvTorqueMapBias     = 1200;  // /Div
