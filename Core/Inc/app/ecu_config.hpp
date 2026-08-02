@@ -278,6 +278,40 @@ static_assert(MotorTempFloorPct <= 100 && MotorTempUnknownCapPct <= 100,
               "thermal caps are percentages");
 static_assert(MotorTempFloorPct > 0,
               "the floor is a limp-home: a thermal cap that strands the car is not a safe default");
+// ---- Accumulator thermal torque cap (#177) ---------------------------------
+// Per-module maxima on 0x136/0x137, signed degC (no offset -- unlike the
+// inverter's byte encoding). See pack_thermal.hpp.
+//
+// *** COMMISSION -- NOT A NUMBER THIS REPO CAN KNOW. ***
+// The pack limit is the CELL MANUFACTURER's maximum discharge temperature, and
+// it must sit at or below whatever the AMS itself trips on. 60 degC is the usual
+// Li-ion NMC discharge ceiling and is used here as a placeholder; confirm it
+// against the cell datasheet and the AMS configuration before any endurance run.
+// Too high and the AMS opens the AIRs before this ever engages, which makes the
+// whole cap decorative.
+inline constexpr int16_t  PackTempDerateStartDegC = 50;   // begin capping
+inline constexpr int16_t  PackTempLimitDegC       = 60;   // COMMISSION: floor reached here
+inline constexpr uint8_t  PackTempFloorPct        = 20;
+// No usable module. Same reasoning as the motor: an unmonitored pack at full
+// power is the failure the cap exists to prevent.
+inline constexpr uint8_t  PackTempUnknownCapPct   = 60;
+// Plausible band for a module reading. NOTE 0 degC is a REAL pack temperature
+// (cold morning), so unlike the motor there is no "implausibly cold" check that
+// can catch an uninitialised state -- freshness alone carries that case.
+inline constexpr int16_t  PackTempMinPlausibleDegC = -40;
+inline constexpr int16_t  PackTempMaxPlausibleDegC = 125;
+// An accumulator has minutes of thermal mass, so this can be slower than the
+// motor's without losing anything. tau ~= 2.56 s at shift 8.
+inline constexpr uint8_t  PackTempFilterShift      = 8;
+
+static_assert(PackTempDerateStartDegC < PackTempLimitDegC,
+              "pack cap must start below the limit (the ramp divides by their span)");
+static_assert(PackTempFloorPct > 0 && PackTempFloorPct <= 100,
+              "the pack floor is a limp-home, never a torque cut");
+static_assert(PackTempUnknownCapPct <= 100, "cap is a percentage");
+static_assert(PackTempFilterShift < 16,
+              "the q16 accumulator needs the shift below its fractional width");
+
 static_assert(MotorTempFilterShift < 16,
               "the q16 filter accumulator needs the shift below its fractional width, "
               "or the per-tick increment truncates to zero and the filter stalls short");
@@ -311,6 +345,11 @@ inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuSt
 // The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
 // compensation gives up and the derate falls back to raw loaded voltage.
 inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
+// 0x136/0x137 per-module temperatures, 250 ms cyclic. Four missed in a row
+// before the pack cap falls back to its unknown-sensor value. This window is the
+// WHOLE fail-safe for the uninitialised case (0 degC is a real pack
+// temperature, so no value check can catch it) -- do not widen it casually.
+inline constexpr uint32_t AcuTmaxStaleMs       = 1000;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
 // 0x464 temperatures, tracked separately from the inverter block (see
 // VehicleState). Feeds the motor thermal cap, which must fall back to its

@@ -58,6 +58,11 @@ struct VehicleState {
     bool          ok_precharge      = false;  // 0x020 byte0 != 0
     std::uint16_t v_cell_min_mV     = 0;      // 0x12C / 0x4A0
     std::uint8_t  ams_fsm_state     = 0;      // 0x4A0 byte0 (== AmsFsmError -> Error)
+    // 0x4A0 byte2, bit N = module N reporting. The pack thermal cap uses this to
+    // decide which per-module temperature is worth acting on -- an offline
+    // module's slot still holds whatever arrived last, and stale-warm misleads
+    // exactly as much as stale-cold.
+    std::uint8_t  module_online_mask = 0;     // 0x4A0 byte2
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
     // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---
@@ -79,6 +84,11 @@ struct VehicleState {
     std::uint32_t last_currents_tick = 0;     // 0x135 seen
     std::int16_t  tmax_module[5]    = {};     // 0x136/0x137, degC, per module
     std::int16_t  tmax_dcdc         = 0;      // 0x137, degC (AMS-side stub until a real sensor exists)
+    // Own timestamp, like 0x135 and 0x464 before it. last_ams_tick is stamped by
+    // every AMS frame, and for the pack thermal cap freshness is not a backstop
+    // -- 0 degC is a real pack temperature, so staleness is the ONLY thing that
+    // can catch an uninitialised state.
+    std::uint32_t last_tmax_tick    = 0;      // 0x136/0x137 seen
 };
 
 class VehicleService {

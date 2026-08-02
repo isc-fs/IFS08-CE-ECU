@@ -118,14 +118,25 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     motor_thermal_ = thermal_.update(mti);
     if (torque > motor_thermal_.cap_pct) torque = motor_thermal_.cap_pct;
 
+    // Accumulator thermal cap (#177). Same shape as the motor cap; the pack has
+    // minutes of thermal mass rather than a lap's, so once this engages it stays
+    // engaged for the session. That is correct, and it is why it annunciates.
+    PackThermalInputs pti{};
+    for (std::size_t i = 0; i < PackModuleCount; ++i) pti.tmax_module[i] = in.tmax_module[i];
+    pti.module_online_mask = in.module_online_mask;
+    pti.mask_valid         = in.ams_status_fresh;
+    pti.temps_fresh        = in.pack_temps_fresh;
+    pack_thermal_ = pack_.update(pti);
+    if (torque > pack_thermal_.cap_pct) torque = pack_thermal_.cap_pct;
+
     // EV 2.2.1 tractive-power envelope (#177). LAST, so nothing downstream can
     // put torque back above it, and feed-forward from measured speed so it
     // closes no loop. Before this, nothing in the vehicle enforced the 80 kW
     // limit and the map commanded roughly twice it over most of the speed
     // range. Inert below ~2865 mech rpm, so normal cornering is untouched.
     //
-    // Order among the three limiters is immaterial: cell, thermal and power are
-    // all min() caps now, so the lowest wins whatever sequence they run in. That
+    // Order among the four limiters is immaterial: cell, motor, pack and power
+    // are all min() caps, so the lowest wins whatever sequence they run in. That
     // was NOT true while the cell derate multiplied -- a gain had to come first
     // or it would have scaled the caps themselves.
     bool power_capped = false;
@@ -296,7 +307,8 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.inv_mode_follow_n   = follow_n;
     out.inv_flt_clear       = flt_clear;
     out.power_capped   = power_capped;
-    out.thermal_capped = motor_thermal_.capped;
+    out.thermal_capped      = motor_thermal_.capped;
+    out.pack_thermal_capped = pack_thermal_.capped;
     out.torque_nm    = torque_pct_to_nm(cmd_torque);
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;

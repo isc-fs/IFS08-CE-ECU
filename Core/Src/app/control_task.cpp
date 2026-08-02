@@ -103,6 +103,14 @@ extern "C" void ecu_control_task_run(void *argument) {
             ci.v_cell_min_mV     = config::CellVDefaultMv;   // healthy default -> no low-cell derate
             ci.current_accu_dA   = 0;
             ci.current_fresh     = false;                    // nothing to compensate on a bench PSU
+            // No AMS -> no pack temperatures. Report a plausible cool pack so the
+            // bench does not sit at the unknown-sensor cap; this whole branch is
+            // already "pretend the AMS is healthy", and a stub that trips a
+            // thermal limit would just be confusing.
+            for (std::size_t m = 0; m < PackModuleCount; ++m) ci.tmax_module[m] = 25;
+            ci.module_online_mask = 0x1Fu;
+            ci.ams_status_fresh   = true;
+            ci.pack_temps_fresh   = true;
         } else {
             const bool ams_fresh = VehicleService::is_fresh(now, veh.last_ams_tick, config::AmsStaleMs);
             ci.ams_fresh         = ams_fresh;
@@ -115,6 +123,15 @@ extern "C" void ecu_control_task_run(void *argument) {
             ci.current_accu_dA   = veh.current_accu_dA;
             ci.current_fresh     = VehicleService::is_fresh(now, veh.last_currents_tick,
                                                             config::AcuCurrentsStaleMs);
+            // Pack thermal cap: per-module maxima on their own window, plus the
+            // AMS's own online mask (only trusted while 0x4A0 is fresh).
+            for (std::size_t m = 0; m < PackModuleCount; ++m) {
+                ci.tmax_module[m] = veh.tmax_module[m];
+            }
+            ci.module_online_mask = veh.module_online_mask;
+            ci.ams_status_fresh   = ams_fresh;
+            ci.pack_temps_fresh   = VehicleService::is_fresh(now, veh.last_tmax_tick,
+                                                             config::AcuTmaxStaleMs);
         }
         // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
         // and the conditioned 0x507 accel command with its own freshness --
@@ -291,6 +308,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
             can_tx_post(PitDiag::build_cell(ctrl.cell_derate()));  // 0x709 low-cell estimator
+            can_tx_post(PitDiag::build_pack_temp(ctrl.pack_thermal()));  // 0x70A pack thermal cap
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh, ctrl.motor_thermal()));

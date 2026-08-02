@@ -265,6 +265,58 @@ sensor.
 
 ---
 
+## 1e. Accumulator thermal cap — and why it is the easiest one to miss
+
+Same shape as the motor cap: a **cap** (not a gain), starting at **50 °C** and
+reaching its **20 % floor at 60 °C**, driven by the hottest *valid* module from
+`0x136`/`0x137`.
+
+> ⚠️ **`PackTempLimitDegC` (60 °C) is `COMMISSION` and this repo cannot know it.**
+> It is the cell manufacturer's maximum discharge temperature, and it must sit at
+> or below whatever the AMS itself trips on. If the AMS opens first, this cap
+> never engages and is purely decorative. Confirm against the cell datasheet and
+> the AMS configuration before any endurance run.
+
+### Why this one is easier to miss than the motor
+
+The motor cap had a giveaway: a disconnected sensor decoded to −50 °C, which is
+not a temperature, so a bad reading could be spotted from its value alone.
+
+**A pack module at 0 °C is perfectly real.** So there is no implausible value to
+catch an uninitialised state — `0x136`/`0x137` **freshness is the only thing**
+standing between an unmonitored pack and full torque. That is why the stale
+window is 1000 ms (four missed frames at 250 ms) and why it should not be
+widened casually.
+
+### What to check on `0x70A`
+
+1. `pack_unknown` is **0**
+2. `mod0_used` … `mod4_used` — **all five set**, for a five-module pack
+3. `pack_temp_used_degC` tracks the module temps on the dash
+
+`mod*_used` is the reason the frame exists. A module gets silently dropped from
+the maximum if either:
+
+- the AMS marks it offline in `module_online_mask` (`0x4A0` byte 2), or
+- its reading falls outside −40…125 °C
+
+Both are correct behaviour — an offline module's slot still holds whatever
+arrived last, and stale-warm misleads as much as stale-cold — but a pack running
+on three of five modules will happily report a comfortable temperature while the
+two you are not reading cook. **Check the mask, not just the number.**
+
+> If `0x4A0` itself is stale the mask is not trusted and all plausible readings
+> are used. A missing mask must not manufacture a thermal fault out of five good
+> temperatures.
+
+### It does not recover within a session
+
+A motor cools in a lap. An accumulator has minutes of thermal mass, so once this
+engages it stays engaged. If the car "went slow and stayed slow", check
+`pack_capped` before assuming something broke.
+
+---
+
 ## 2. R2D / RTDS test without brake pressure / start wiring (`StubBrakeRaw` / `StubStart`)
 
 R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on

@@ -84,6 +84,23 @@ CanFrame PitDiag::build_cell(const CellDerateState& s) noexcept {
     return make_acu(PitDiag_cell_ID, b);
 }
 
+CanFrame PitDiag::build_pack_temp(const PackThermalState& s) noexcept {
+    PitDiag_pack_temp_t d{};
+    d.pack_temp_used_degC = s.temp_degC;
+    d.pack_temp_raw_degC  = s.raw_max_degC;
+    d.pack_cap_pct        = s.cap_pct;
+    d.mod0_used    = (s.valid_mask & 0x01u) ? 1u : 0u;
+    d.mod1_used    = (s.valid_mask & 0x02u) ? 1u : 0u;
+    d.mod2_used    = (s.valid_mask & 0x04u) ? 1u : 0u;
+    d.mod3_used    = (s.valid_mask & 0x08u) ? 1u : 0u;
+    d.mod4_used    = (s.valid_mask & 0x10u) ? 1u : 0u;
+    d.pack_unknown = s.unknown ? 1u : 0u;
+    d.pack_capped  = s.capped  ? 1u : 0u;
+    std::uint8_t b[PitDiag_pack_temp_DLC];
+    encode_PitDiag_pack_temp(d, b);
+    return make_acu(PitDiag_pack_temp_ID, b);
+}
+
 CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_pedals_t p{};
     p.apps1_raw = io.apps1_raw;

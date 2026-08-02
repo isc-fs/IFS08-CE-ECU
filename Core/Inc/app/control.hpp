@@ -26,6 +26,7 @@
 
 #include "app/cell_derate.hpp"
 #include "app/motor_thermal.hpp"
+#include "app/pack_thermal.hpp"
 #include "app/ecu_config.hpp"
 #include "app/pedal_cal.hpp"
 #include "app/power_limit.hpp"
@@ -86,6 +87,14 @@ struct CtrlInputs {
     uint8_t  inv_temp_motor1_raw = 0;    // 0x464
     uint8_t  inv_temp_motor2_raw = 0;    // 0x464
     bool     inv_temps_fresh = false;    // 0x464 recently received
+    // Accumulator per-module maxima (0x136/0x137, signed degC, no offset) plus
+    // the AMS's own view of which modules are reporting (0x4A0 byte2). Own
+    // freshness again -- and here it is the ONLY guard against an
+    // uninitialised state, because 0 degC is a real pack temperature.
+    int16_t  tmax_module[PackModuleCount] = {};
+    uint8_t  module_online_mask = 0;     // 0x4A0 byte2
+    bool     ams_status_fresh = false;   // 0x4A0 fresh -> the mask is trustworthy
+    bool     pack_temps_fresh = false;   // 0x136/0x137 recently received
     // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
     // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
     // and the ECU verifies it on its own brake sensor; no start button in DV.
@@ -136,6 +145,8 @@ struct CtrlOutput {
     // Motor thermal cap is limiting this tick (including the unknown-sensor
     // case). Annunciated on 0x706 next to the temperatures that caused it.
     bool      thermal_capped = false;
+    // Accumulator thermal cap is limiting this tick. Annunciated on 0x70A.
+    bool      pack_thermal_capped = false;
     // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
     // torque_cmd, which was hardcoded to 0 before this.
     int16_t   torque_nm = 0;
@@ -167,6 +178,11 @@ public:
     // 0x706 so a thermal limit is visible rather than inferred.
     const MotorThermalState& motor_thermal() const noexcept { return motor_thermal_; }
 
+    // Accumulator thermal cap working state from the last step(). Published on
+    // 0x70A -- which modules were actually used is the part worth seeing, since
+    // a silently-excluded module is how a hot pack goes unnoticed.
+    const PackThermalState& pack_thermal() const noexcept { return pack_thermal_; }
+
 private:
     void enter_(CtrlState s, uint32_t now_ms) noexcept;
 
@@ -185,6 +201,8 @@ private:
     CellDerateState cell_derate_{};
     MotorThermal      thermal_{};
     MotorThermalState motor_thermal_{};
+    PackThermal       pack_{};
+    PackThermalState  pack_thermal_{};
 };
 
 // APPS travel %, clamped 0..100. Exposed for the pit-diag adapter (0x701) and

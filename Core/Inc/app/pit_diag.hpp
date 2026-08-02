@@ -43,6 +43,10 @@ public:
     // raw_mV sags. Takes the state straight off the controller, which already
     // computed it this tick.
     static CanFrame build_cell(const CellDerateState& s) noexcept;
+    // 0x70A -- the accumulator thermal cap. valid_mask is the reason this frame
+    // exists: the per-module temperatures are already on the dash, but which
+    // ones the cap actually USED is not visible anywhere else.
+    static CanFrame build_pack_temp(const PackThermalState& s) noexcept;
     static CanFrame build_pedals(const IoInputs& io,
                                  const PedalCal& cal) noexcept;  // 0x701
     // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360

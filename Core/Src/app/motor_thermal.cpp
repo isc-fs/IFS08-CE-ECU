@@ -5,6 +5,8 @@
 
 #include "app/motor_thermal.hpp"
 
+#include "app/derate_ramp.hpp"
+
 namespace ecu {
 
 using namespace config;
@@ -26,13 +28,8 @@ bool motor_temp_raw_valid(std::uint8_t raw) noexcept {
 }
 
 std::uint8_t motor_thermal_cap_pct(std::int16_t temp_degC) noexcept {
-    if (temp_degC <= MotorTempDerateStartDegC) return 100u;
-    if (temp_degC >= MotorTempLimitDegC)       return MotorTempFloorPct;
-    const std::int32_t span  = MotorTempLimitDegC - MotorTempDerateStartDegC;
-    const std::int32_t below = MotorTempLimitDegC - temp_degC;
-    // Linear from 100 at the start temperature to the floor at the limit.
-    return static_cast<std::uint8_t>(
-        MotorTempFloorPct + (100 - MotorTempFloorPct) * below / span);
+    return falling_ramp_pct(temp_degC, MotorTempDerateStartDegC,
+                            MotorTempLimitDegC, MotorTempFloorPct);
 }
 
 MotorThermalState MotorThermal::update(const MotorThermalInputs& in) noexcept {
