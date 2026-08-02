@@ -9,10 +9,9 @@
 //
 // A CAP, NOT A GAIN. torque = min(torque, cap), so everything below the cap
 // passes through untouched and the driver keeps full pedal resolution over the
-// range that is still allowed. This is deliberately unlike the low-cell derate,
-// which multiplies demand and therefore rescales the whole pedal (at a 68 %
-// factor, 30 % pedal gives 20 %). Restructuring that one is a separate #177
-// item; a new limiter should not copy the shape that is being fixed.
+// range that is still allowed. Every torque limiter in the core works this way
+// now -- the low-cell derate was the last multiplier and was converted in #177 --
+// which is also why their order does not matter: the lowest ceiling wins.
 //
 // Heat goes as torque squared, so the floor does not need to be near zero to
 // work: at MotorTempFloorPct = 20 % the motor generates ~4 % of the heat it does

@@ -192,6 +192,7 @@ BO_ 1801 PitDiag_cell: 8 VCU
  SG_ cap_pct : 48|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ compensated : 56|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ raw_floor : 57|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ capped : 58|1@1+ (1,0) [0|0] "bit" Vector__XXX
 
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX

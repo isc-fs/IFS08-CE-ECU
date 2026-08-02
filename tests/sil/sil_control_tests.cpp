@@ -409,6 +409,46 @@ static void test_cell_v_derate() {
     CHECK(cell_derate_pct(CellVDerateFloorMv - 100) == CellVDerateFloorPct, "below the floor -> flat");
     CHECK(cell_derate_pct(0) == CellVDerateFloorPct, "0 mV -> floor, not a divide blow-up");
     CHECK(CellVDerateFloorPct > 0, "floor is a limp-home, never a torque cut");
+
+    // ---- it is a CAP, not a gain (#177) -----------------------------------
+    // The last multiplier in the torque chain. It used to scale demand, so a
+    // 30 % request at a 68 % factor became 20 % even though the pack could
+    // deliver 30 % perfectly well -- the driver lost pedal resolution across the
+    // whole range to limit a peak. Driven through the real controller, because
+    // the property under test is how it COMBINES with everything else.
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        in.v_cell_min_mV = 2700;      // mid-ramp
+        in.current_accu_dA = 0;       // no IR correction, so est == raw
+        in.current_fresh = true;
+
+        // Half pedal, held while the estimator settles down from the fixture's
+        // 3600 mV. It must pass through untouched the whole way -- if this were
+        // still a gain it would be scaled from the moment the cap left 100.
+        in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
+                       (in.cal.apps1_max - in.cal.apps1_min) / 2);
+        in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
+                       (in.cal.apps2_max - in.cal.apps2_min) / 2);
+        CtrlOutput o{};
+        bool always_unscaled = true;
+        for (int i = 0; i < 2000; ++i) {
+            o = c.step(in, t); t += ControlPeriodMs;
+            if (o.torque_pct < 49 || o.torque_pct > 51) always_unscaled = false;
+        }
+        const uint8_t cap = c.cell_derate().cap_pct;
+        CHECK(cap > 50 && cap < 100, "test premise: the cap is active and above half pedal");
+        CHECK(c.cell_derate().capped, "capped flag set while limiting");
+        CHECK(always_unscaled, "half pedal under the cap passes through UNSCALED (cap, not gain)");
+
+        // Full pedal clips to exactly the cap -- and to the CAP, not to
+        // 100 * cap / 100 by coincidence, which the half-pedal check above rules
+        // out separately.
+        in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;
+        for (int i = 0; i < 5; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
+        CHECK(o.torque_pct == cap, "full pedal is clipped to the cap");
+    }
 }
 
 // The IR-compensated estimator: the part that has to tolerate acceleration sag.
