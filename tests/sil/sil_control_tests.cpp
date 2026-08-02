@@ -70,6 +70,12 @@ static CtrlInputs good_drive_inputs() {
     in.inv_temp_motor1_raw = static_cast<uint16_t>(40 - MotorTempRawOffsetDegC);
     in.inv_temp_motor2_raw = static_cast<uint16_t>(38 - MotorTempRawOffsetDegC);
     in.inv_temps_fresh     = true;
+    // ...and its PACK temperature, for the same reason. All five modules
+    // reporting, well under the 50 degC cap start.
+    for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 30;
+    in.module_online_mask  = 0x1F;   // all five online
+    in.ams_status_fresh    = true;
+    in.pack_temps_fresh    = true;
     return in;
 }
 
@@ -208,14 +214,14 @@ static void test_motor_thermal() {
     // ---- the curve ---------------------------------------------------------
     // 80 degC is where the cap reaches its FLOOR, not where it starts. A limiter
     // that waits for the limit has already let the winding get there.
-    CHECK(MotorTempLimitDegC == 80, "motor limit is 80 degC");
+    CHECK(MotorTempLimitDegC == 70, "motor limit is 70 degC");
     CHECK(motor_thermal_cap_pct(40) == 100, "40 degC -> no cap");
     CHECK(motor_thermal_cap_pct(MotorTempDerateStartDegC) == 100, "at the start temp -> no cap");
-    CHECK(motor_thermal_cap_pct(75) < 100, "mid-ramp -> capped");
-    CHECK(motor_thermal_cap_pct(75) > MotorTempFloorPct, "mid-ramp -> above the floor");
-    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 80 degC -> floor");
+    CHECK(motor_thermal_cap_pct(65) < 100, "mid-ramp -> capped");
+    CHECK(motor_thermal_cap_pct(65) > MotorTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 70 degC -> floor");
     CHECK(motor_thermal_cap_pct(120) == MotorTempFloorPct, "past the limit -> flat floor");
-    CHECK(motor_thermal_cap_pct(72) > motor_thermal_cap_pct(78), "ramp decreases with temperature");
+    CHECK(motor_thermal_cap_pct(62) > motor_thermal_cap_pct(68), "ramp decreases with temperature");
     CHECK(MotorTempFloorPct > 0, "the floor lets the car drive off track, never strands it");
 
     // ---- validity ----------------------------------------------------------
@@ -288,10 +294,10 @@ static void test_motor_thermal() {
     {
         MotorThermal mt;
         MotorThermalInputs in{};
-        in.fresh = true; in.temp_motor1_raw = raw(75); in.temp_motor2_raw = raw(75);
+        in.fresh = true; in.temp_motor1_raw = raw(65); in.temp_motor2_raw = raw(65);
         const MotorThermalState s = mt.update(in);   // very first tick
-        CHECK(s.temp_degC == 75, "first sample seeds the filter exactly");
-        CHECK(s.cap_pct == motor_thermal_cap_pct(75), "protection is live immediately");
+        CHECK(s.temp_degC == 65, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == motor_thermal_cap_pct(65), "protection is live immediately");
     }
 
     // ---- it is a CAP, not a gain -------------------------------------------
@@ -301,9 +307,9 @@ static void test_motor_thermal() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        in.inv_temp_motor1_raw = raw(75);      // mid-ramp
-        in.inv_temp_motor2_raw = raw(75);
-        const uint8_t cap = motor_thermal_cap_pct(75);
+        in.inv_temp_motor1_raw = raw(65);      // mid-ramp
+        in.inv_temp_motor2_raw = raw(65);
+        const uint8_t cap = motor_thermal_cap_pct(65);
         CHECK(cap > 50, "test premise: the cap sits above half pedal");
 
         in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
@@ -311,7 +317,7 @@ static void test_motor_thermal() {
         in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
                        (in.cal.apps2_max - in.cal.apps2_min) / 2);
         // drive_to_active() seeded the filter at the fixture's 40 degC, so let
-        // it actually reach 75 before asserting anything about the cap. Half
+        // it actually reach 65 before asserting anything about the cap. Half
         // pedal stays under the cap the whole way up, so it passes through
         // untouched throughout the climb, not just at the end.
         CtrlOutput o{};
@@ -322,13 +328,171 @@ static void test_motor_thermal() {
         }
         CHECK(always_unscaled,
               "half pedal under the cap passes through UNSCALED (cap, not gain)");
-        CHECK(o.thermal_capped, "the cap IS active at 75 degC -- premise of the check above");
+        CHECK(o.thermal_capped, "the cap IS active at 65 degC -- premise of the check above");
 
         // ...and full pedal is clipped to exactly the cap.
         in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;
         for (int i = 0; i < 5; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
         CHECK(o.torque_pct == cap, "full pedal is clipped to the cap");
         CHECK(o.thermal_capped, "thermal_capped annunciated on the output");
+    }
+}
+
+// Accumulator thermal torque cap (#177). The curve mirrors the motor cap; what
+// is genuinely different -- and what this mostly tests -- is deciding WHICH
+// module readings are worth acting on.
+static void test_pack_thermal() {
+    std::printf("[pack_thermal]\n");
+
+    auto settle = [](PackThermal& pt, PackThermalInputs in, int ticks) {
+        PackThermalState s{};
+        for (int i = 0; i < ticks; ++i) s = pt.update(in);
+        return s;
+    };
+    // All five modules at one temperature, all online, everything fresh.
+    auto uniform = [](int16_t degC) {
+        PackThermalInputs in{};
+        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = degC;
+        in.module_online_mask = 0x1F;
+        in.mask_valid = true;
+        in.temps_fresh = true;
+        return in;
+    };
+
+    // ---- the curve ---------------------------------------------------------
+    CHECK(pack_thermal_cap_pct(25) == 100, "25 degC -> no cap");
+    CHECK(pack_thermal_cap_pct(PackTempDerateStartDegC) == 100, "at the start temp -> no cap");
+    CHECK(pack_thermal_cap_pct(45) < 100, "mid-ramp -> capped");
+    CHECK(pack_thermal_cap_pct(45) > PackTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(pack_thermal_cap_pct(PackTempLimitDegC) == PackTempFloorPct, "at the limit -> floor");
+    CHECK(pack_thermal_cap_pct(90) == PackTempFloorPct, "past the limit -> flat floor");
+    CHECK(PackTempFloorPct > 0, "the floor is a limp-home, never a torque cut");
+
+    // ---- plausibility: 0 degC is REAL here --------------------------------
+    // The motor cap rejects raw 0 because it decodes to -50. A pack module can
+    // genuinely sit at 0 degC, so it must NOT be rejected -- which is precisely
+    // why freshness has to carry the uninitialised case on its own.
+    CHECK(pack_temp_plausible(0),    "0 degC is a real pack temperature, not a fault");
+    CHECK(pack_temp_plausible(-20),  "sub-zero is plausible");
+    CHECK(!pack_temp_plausible(-100), "-100 degC is not a temperature");
+    CHECK(!pack_temp_plausible(500),  "500 degC is not a temperature");
+
+    // ---- hottest module wins ----------------------------------------------
+    {
+        PackThermal pt;
+        PackThermalInputs in = uniform(30);
+        in.tmax_module[3] = 65;                 // one module cooking
+        const PackThermalState s = settle(pt, in, 3000);
+        CHECK(s.raw_max_degC == 65, "the max is the hottest module, not an average");
+        CHECK(s.cap_pct == PackTempFloorPct, "one hot module caps the whole car");
+        CHECK(s.valid_mask == 0x1F, "all five modules counted");
+    }
+
+    // ---- an OFFLINE module is excluded ------------------------------------
+    // Its slot still holds whatever arrived last. Trusting it either way is
+    // wrong, so the AMS mask decides.
+    {
+        PackThermal pt;
+        PackThermalInputs in = uniform(30);
+        in.tmax_module[2] = 80;                 // stale value in an offline slot
+        in.module_online_mask = 0x1F & ~0x04;   // module 2 offline
+        const PackThermalState s = settle(pt, in, 3000);
+        CHECK((s.valid_mask & 0x04u) == 0u, "offline module excluded");
+        CHECK(s.raw_max_degC == 30, "its stale reading did not reach the max");
+        CHECK(s.cap_pct == 100, "no cap from a module the AMS says is not reporting");
+    }
+
+    // ---- ...but a missing MASK must not fault the whole pack --------------
+    // 0x4A0 stale means we do not know which modules are online. Five good
+    // readings must still be used rather than all being discarded.
+    {
+        PackThermal pt;
+        PackThermalInputs in = uniform(45);
+        in.module_online_mask = 0;      // nothing marked online...
+        in.mask_valid = false;          // ...because the mask itself is stale
+        const PackThermalState s = settle(pt, in, 3000);
+        CHECK(!s.unknown, "a stale mask does not manufacture a thermal fault");
+        CHECK(s.valid_mask == 0x1F, "all readings used on plausibility alone");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(45), "and the cap still applies");
+    }
+
+    // ---- implausible readings are dropped, plausible ones still count -----
+    {
+        PackThermal pt;
+        PackThermalInputs in = uniform(30);
+        in.tmax_module[0] = 9000;       // garbage
+        in.tmax_module[1] = 48;         // real, and hot
+        const PackThermalState s = settle(pt, in, 3000);
+        CHECK((s.valid_mask & 0x01u) == 0u, "garbage reading dropped");
+        CHECK(s.raw_max_degC == 48, "garbage did not become the max");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(48), "the real hot module still caps");
+    }
+
+    // ---- THE UNINITIALISED CASE -------------------------------------------
+    // All-zero temperatures with nothing fresh. 0 degC is plausible, so ONLY
+    // staleness stands between an unmonitored pack and full torque.
+    {
+        PackThermal pt;
+        PackThermalInputs in{};         // everything default: zeros, not fresh
+        const PackThermalState s = settle(pt, in, 10);
+        CHECK(s.unknown, "no fresh 0x136/0x137 -> unknown");
+        CHECK(s.cap_pct == PackTempUnknownCapPct, "unknown -> the unknown-sensor cap");
+        CHECK(s.cap_pct < 100, "an unmonitored pack is NEVER allowed full torque");
+    }
+    {
+        // And the same once the frames stop mid-run.
+        PackThermal pt;
+        PackThermalInputs in = uniform(30);
+        PackThermalState s = settle(pt, in, 500);
+        CHECK(s.cap_pct == 100, "fresh and cool -> uncapped");
+        in.temps_fresh = false;
+        s = pt.update(in);
+        CHECK(s.unknown && s.cap_pct == PackTempUnknownCapPct, "stale mid-run -> unknown cap");
+    }
+
+    // ---- every module offline is also unknown -----------------------------
+    {
+        PackThermal pt;
+        PackThermalInputs in = uniform(30);
+        in.module_online_mask = 0;      // and the mask IS trustworthy
+        const PackThermalState s = settle(pt, in, 10);
+        CHECK(s.unknown, "mask says nothing is reporting -> unknown");
+        CHECK(s.cap_pct == PackTempUnknownCapPct, "-> unknown cap, not full torque");
+    }
+
+    // ---- filter seeding ----------------------------------------------------
+    {
+        PackThermal pt;
+        const PackThermalState s = pt.update(uniform(45));   // very first tick
+        CHECK(s.temp_degC == 45, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == pack_thermal_cap_pct(45), "protection live immediately");
+    }
+
+    // ---- cap, not gain, through the whole controller ----------------------
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 45;
+
+        in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
+                       (in.cal.apps1_max - in.cal.apps1_min) / 2);
+        in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
+                       (in.cal.apps2_max - in.cal.apps2_min) / 2);
+        CtrlOutput o{};
+        bool always_unscaled = true;
+        for (int i = 0; i < 3000; ++i) {
+            o = c.step(in, t); t += ControlPeriodMs;
+            if (o.torque_pct < 49 || o.torque_pct > 51) always_unscaled = false;
+        }
+        const uint8_t cap = c.pack_thermal().cap_pct;
+        CHECK(cap > 50 && cap < 100, "test premise: cap active and above half pedal");
+        CHECK(always_unscaled, "half pedal under the cap passes through UNSCALED");
+        CHECK(o.pack_thermal_capped, "pack_thermal_capped annunciated");
+
+        in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;
+        for (int i = 0; i < 5; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
+        CHECK(o.torque_pct == cap, "full pedal clipped to the pack cap");
     }
 }
 
@@ -2131,6 +2295,7 @@ static void run_all() {
     test_cell_v_derate();
     test_cell_ir_compensation();
     test_motor_thermal();
+    test_pack_thermal();
     test_bootloader_trigger();
     test_dsl_parity();
     test_inverter();
@@ -2167,6 +2332,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-ams-error"))          test_ams_error();
     else if (!std::strcmp(m, "--test-cell-ir"))            test_cell_ir_compensation();
     else if (!std::strcmp(m, "--test-motor-thermal"))      test_motor_thermal();
+    else if (!std::strcmp(m, "--test-pack-thermal"))       test_pack_thermal();
     else if (!std::strcmp(m, "--test-legacy-compat"))    { test_cell_v_derate(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-plausibility"))       test_t11_8_9_window();
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();

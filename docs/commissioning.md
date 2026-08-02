@@ -214,21 +214,21 @@ resolution across the entire travel in order to limit a peak.)
 
 ## 1d. Motor thermal cap — check the sensors before you trust the limit
 
-The motor limit is **80 °C**. The cap starts backing torque off at **70 °C** and
-reaches its **20 % floor at 80 °C** — the limit is where the floor *is*, not
+The motor limit is **70 °C**. The cap starts backing torque off at **60 °C** and
+reaches its **20 % floor at 70 °C** — the limit is where the floor *is*, not
 where the cap starts, because a limiter that waits for the limit has already let
 the winding get there.
 
 | motor temp | torque cap |
 |---|---|
-| ≤ 70 °C | 100% |
-| 72 | 84% |
-| 75 | 60% |
-| 78 | 36% |
-| ≥ 80 | 20% |
+| ≤ 60 °C | 100% |
+| 62 | 84% |
+| 65 | 60% |
+| 68 | 36% |
+| ≥ 70 | 20% |
 
 It is a **cap, not a gain**: anything below the cap passes through untouched, so
-at 75 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
+at 65 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
 
 Heat goes as torque squared, so the 20% floor is ~4% of the heating — the motor
 cools under any realistic load while the car can still drive off track.
@@ -262,6 +262,71 @@ sensor.
 > is deliberately not simply `max(motor1, motor2)`: a disconnected sensor is
 > excluded, so with one sensor dead this tracks the surviving one rather than
 > the 205 °C sentinel.
+
+---
+
+## 1e. Accumulator thermal cap — and why it is the easiest one to miss
+
+Same shape as the motor cap: a **cap** (not a gain), starting at **40 °C** and
+reaching its **20 % floor at 50 °C**, driven by the hottest *valid* module from
+`0x136`/`0x137`.
+
+| pack temp | torque cap |
+|---|---|
+| ≤ 40 °C | 100% |
+| 42 | 84% |
+| 45 | 60% |
+| 48 | 36% |
+| ≥ 50 | 20% |
+
+> ⚠️ **This one engages early, on purpose.** 40 °C is reachable partway into a
+> hot endurance run, so expect the car to spend real time capped. That is what a
+> 50 °C cell ceiling means, not a fault — check `pack_capped` on `0x70A` before
+> assuming something broke. Narrowing the band (start at 45 °C) delays onset at
+> the cost of a ramp twice as steep.
+
+> `PackTempLimitDegC` (50 °C) is the team's cell limit, conservative against the
+> usual 60 °C Li-ion NMC ceiling. Still worth confirming it sits at or below
+> whatever the AMS itself trips on: if the AMS opens first, this cap never
+> engages and is decorative.
+
+### Why this one is easier to miss than the motor
+
+The motor cap had a giveaway: a disconnected sensor decoded to −50 °C, which is
+not a temperature, so a bad reading could be spotted from its value alone.
+
+**A pack module at 0 °C is perfectly real.** So there is no implausible value to
+catch an uninitialised state — `0x136`/`0x137` **freshness is the only thing**
+standing between an unmonitored pack and full torque. That is why the stale
+window is 1000 ms (four missed frames at 250 ms) and why it should not be
+widened casually.
+
+### What to check on `0x70A`
+
+1. `pack_unknown` is **0**
+2. `mod0_used` … `mod4_used` — **all five set**, for a five-module pack
+3. `pack_temp_used_degC` tracks the module temps on the dash
+
+`mod*_used` is the reason the frame exists. A module gets silently dropped from
+the maximum if either:
+
+- the AMS marks it offline in `module_online_mask` (`0x4A0` byte 2), or
+- its reading falls outside −40…125 °C
+
+Both are correct behaviour — an offline module's slot still holds whatever
+arrived last, and stale-warm misleads as much as stale-cold — but a pack running
+on three of five modules will happily report a comfortable temperature while the
+two you are not reading cook. **Check the mask, not just the number.**
+
+> If `0x4A0` itself is stale the mask is not trusted and all plausible readings
+> are used. A missing mask must not manufacture a thermal fault out of five good
+> temperatures.
+
+### It does not recover within a session
+
+A motor cools in a lap. An accumulator has minutes of thermal mass, so once this
+engages it stays engaged. If the car "went slow and stayed slow", check
+`pack_capped` before assuming something broke.
 
 ---
 
