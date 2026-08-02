@@ -96,6 +96,7 @@ BO_ 1792 PitDiag_status: 8 VCU
  SG_ start_button : 20|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ dv_mode : 21|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ tx_dropped : 22|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ power_capped : 23|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ torque_pct : 24|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ v_cell_min_mV : 39|16@0+ (1,0) [0|0] "mV" Vector__XXX
  SG_ torque_cmd : 55|16@0- (1,0) [0|0] "cmd" Vector__XXX
