@@ -137,7 +137,8 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.inv_temp_pwrstg = f.data[1];
             state_.inv_temp_motor1 = f.data[2];
             state_.inv_temp_motor2 = f.data[3];
-            state_.last_inv_tick   = f.timestamp_ms;
+            state_.last_inv_tick       = f.timestamp_ms;
+            state_.last_inv_temps_tick = f.timestamp_ms;   // per-signal: see the header
             return true;
         }
         if (f.id == config::InvRxDcBusId) {                 // 0x466

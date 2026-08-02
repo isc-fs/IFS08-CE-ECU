@@ -102,11 +102,27 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
 
     torque = static_cast<uint8_t>(static_cast<uint32_t>(torque) * cell_derate_.cap_pct / 100u);
 
+    // Motor thermal cap (#177). Runs every tick so the filter is settled before
+    // torque is ever commanded. Unlike the cell derate above this is a CAP, not
+    // a gain -- everything under it passes through untouched, so the driver
+    // keeps full pedal resolution over the range still allowed. Losing the
+    // sensors does NOT mean no limit; see motor_thermal.hpp.
+    MotorThermalInputs mti{};
+    mti.temp_motor1_raw = in.inv_temp_motor1_raw;
+    mti.temp_motor2_raw = in.inv_temp_motor2_raw;
+    mti.fresh           = in.inv_temps_fresh;
+    motor_thermal_ = thermal_.update(mti);
+    if (torque > motor_thermal_.cap_pct) torque = motor_thermal_.cap_pct;
+
     // EV 2.2.1 tractive-power envelope (#177). LAST, so nothing downstream can
     // put torque back above it, and feed-forward from measured speed so it
     // closes no loop. Before this, nothing in the vehicle enforced the 80 kW
     // limit and the map commanded roughly twice it over most of the speed
     // range. Inert below ~2865 mech rpm, so normal cornering is untouched.
+    //
+    // Order against the thermal cap is immaterial -- both are min() caps, so
+    // whichever is lower wins either way. That is a property of caps and NOT of
+    // the cell derate above, which multiplies and therefore has to come first.
     bool power_capped = false;
     {
         const uint8_t cap = power_cap_pct(in.motor_rpm_mech);
@@ -274,7 +290,8 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.inv_mode_follow[1]  = follow[1];
     out.inv_mode_follow_n   = follow_n;
     out.inv_flt_clear       = flt_clear;
-    out.power_capped = power_capped;
+    out.power_capped   = power_capped;
+    out.thermal_capped = motor_thermal_.capped;
     out.torque_nm    = torque_pct_to_nm(cmd_torque);
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;

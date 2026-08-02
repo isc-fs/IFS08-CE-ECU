@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "app/cell_derate.hpp"
+#include "app/motor_thermal.hpp"
 #include "app/ecu_config.hpp"
 #include "app/pedal_cal.hpp"
 #include "app/power_limit.hpp"
@@ -78,6 +79,13 @@ struct CtrlInputs {
     // signal keep compensating off a frozen value.
     int16_t  current_accu_dA = 0;        // 0x135
     bool     current_fresh = false;      // 0x135 recently received
+    // Motor temperatures (0x464, raw bytes; degC = raw - 50) for the thermal
+    // cap. Own freshness for the same reason as the current: the inverter can
+    // keep talking on 0x461/0x463/0x466 while 0x464 alone dies, and a frozen
+    // temperature reads as a healthy one.
+    uint8_t  inv_temp_motor1_raw = 0;    // 0x464
+    uint8_t  inv_temp_motor2_raw = 0;    // 0x464
+    bool     inv_temps_fresh = false;    // 0x464 recently received
     // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
     // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
     // and the ECU verifies it on its own brake sensor; no start button in DV.
@@ -125,6 +133,9 @@ struct CtrlOutput {
     // 0x700 so a driver complaining of "no power at the end of the straight"
     // can be answered from a capture instead of a guess (#177).
     bool      power_capped = false;
+    // Motor thermal cap is limiting this tick (including the unknown-sensor
+    // case). Annunciated on 0x706 next to the temperatures that caused it.
+    bool      thermal_capped = false;
     // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
     // torque_cmd, which was hardcoded to 0 before this.
     int16_t   torque_nm = 0;
@@ -151,6 +162,11 @@ public:
     // if the intermediate values leave the core.
     const CellDerateState& cell_derate() const noexcept { return cell_derate_; }
 
+    // Motor thermal cap working state from the last step(): the filtered
+    // temperature, per-sensor validity and the resulting cap. Published on
+    // 0x706 so a thermal limit is visible rather than inferred.
+    const MotorThermalState& motor_thermal() const noexcept { return motor_thermal_; }
+
 private:
     void enter_(CtrlState s, uint32_t now_ms) noexcept;
 
@@ -167,6 +183,8 @@ private:
     // tick -- a filter reconstructed every call is just a passthrough.
     CellDerate      cell_{};
     CellDerateState cell_derate_{};
+    MotorThermal      thermal_{};
+    MotorThermalState motor_thermal_{};
 };
 
 // APPS travel %, clamped 0..100. Exposed for the pit-diag adapter (0x701) and

@@ -51,7 +51,12 @@ public:
     // caller (control_task) already has the CtrlOutput in hand at this point.
     static CanFrame build_inverter(const VehicleState& v,
                                    std::uint8_t inv_mode_cmd) noexcept;
-    static CanFrame build_inverter_temps(const VehicleState& v) noexcept; // 0x706
+    // 0x706 -- the four inverter temperatures PLUS the motor thermal cap they
+    // produced. The cap comes from the controller rather than being recomputed
+    // here: motor_temp_used_degC is filtered and sensor-validated, so a second
+    // implementation would drift from the one that actually limits torque.
+    static CanFrame build_inverter_temps(const VehicleState& v,
+                                         const MotorThermalState& th) noexcept;
     // 0x708 -- the inverter's L1 (PwrStg) / L2 (EMCtrl) fault-layer bitmasks.
     // L3 (DEM) alone cannot say whether a latched fault is held up by a live
     // hardware condition underneath (#148).

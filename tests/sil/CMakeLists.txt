@@ -22,6 +22,7 @@ add_executable(ecu08_sil
     sil_control_tests.cpp
     ${REPO}/Core/Src/app/control.cpp
     ${REPO}/Core/Src/app/cell_derate.cpp
+    ${REPO}/Core/Src/app/motor_thermal.cpp
     ${REPO}/Core/Src/app/pedal_cal.cpp
     ${REPO}/Core/Src/app/power_limit.cpp
     ${REPO}/Core/Src/app/pedal_cal_nvm.cpp

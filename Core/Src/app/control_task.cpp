@@ -125,6 +125,13 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
         // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL (#177).
         ci.motor_rpm_mech = veh.inv_rpm / config::MotorPolePairs;
+        // Motor temperatures for the thermal cap, on their OWN freshness window
+        // (0x464 can die while the rest of the inverter keeps talking, and a
+        // frozen temperature reads as a healthy one).
+        ci.inv_temp_motor1_raw = veh.inv_temp_motor1;
+        ci.inv_temp_motor2_raw = veh.inv_temp_motor2;
+        ci.inv_temps_fresh     = VehicleService::is_fresh(now, veh.last_inv_temps_tick,
+                                                          config::InvTempsStaleMs);
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);
@@ -286,7 +293,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_cell(ctrl.cell_derate()));  // 0x709 low-cell estimator
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
-            can_tx_post(PitDiag::build_inverter_temps(veh));
+            can_tx_post(PitDiag::build_inverter_temps(veh, ctrl.motor_thermal()));
             can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness (#148)
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in, ci.cal));
