@@ -47,9 +47,10 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     s.start_button = start_button ? 1u : 0u;
     s.dv_mode      = c.dv_mode ? 1u : 0u;   // #109: DV drive latched this cycle
     s.tx_dropped   = (g_can_tx_dropped != 0u) ? 1u : 0u;  // #127: any TX-queue drop since boot
+    s.power_capped = c.power_capped ? 1u : 0u;            // #177: EV 2.2.1 envelope active
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
-    s.torque_cmd    = 0;   // inverter unit-map deferred (task #10)
+    s.torque_cmd    = c.torque_nm;   // #177: real commanded shaft Nm (was hardcoded 0)
     std::uint8_t b[PitDiag_status_DLC];
     encode_PitDiag_status(s, b);
     return make_acu(PitDiag_status_ID, b);

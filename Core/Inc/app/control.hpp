@@ -26,6 +26,7 @@
 
 #include "app/ecu_config.hpp"
 #include "app/pedal_cal.hpp"
+#include "app/power_limit.hpp"
 
 namespace ecu {
 
@@ -75,6 +76,10 @@ struct CtrlInputs {
     bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
     bool     dv_fresh = false;           // 0x507 stream fresh (UdvCmdStaleMs)
     uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
+    // MECHANICAL motor speed (0x463 erpm / MotorPolePairs). Feeds the EV 2.2.1
+    // power envelope. Feed-forward only: the cap reads this, it does not drive
+    // it on the timescale of a control tick, so no loop is closed (#177).
+    int32_t  motor_rpm_mech = 0;
     // Pedal calibration, carried IN rather than read from a global so step()
     // stays a pure function of its arguments and the SIL suite can vary it.
     // Defaults reproduce the values that used to be constexpr, so an ECU with
@@ -108,6 +113,13 @@ struct CtrlOutput {
     // words alone do not shift a LATCHED fault -- dem_present = 0, condition
     // already gone, inverter still parked in SoftFault(10) (#148).
     bool      inv_flt_clear = false;
+    // EV 2.2.1 power envelope is actively limiting this tick. Annunciated on
+    // 0x700 so a driver complaining of "no power at the end of the straight"
+    // can be answered from a capture instead of a guess (#177).
+    bool      power_capped = false;
+    // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
+    // torque_cmd, which was hardcoded to 0 before this.
+    int16_t   torque_nm = 0;
     bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)

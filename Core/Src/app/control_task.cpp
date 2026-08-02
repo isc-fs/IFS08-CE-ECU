@@ -115,6 +115,8 @@ extern "C" void ecu_control_task_run(void *argument) {
                            VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
         ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
         ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
+        // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL (#177).
+        ci.motor_rpm_mech = veh.inv_rpm / config::MotorPolePairs;
 
         // --- step the pure controller ---
         CtrlOutput out = ctrl.step(ci, now);

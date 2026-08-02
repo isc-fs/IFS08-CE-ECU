@@ -99,6 +99,17 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // Low-cell-voltage derate (applied -- see note above).
     torque = derate_for_cell_voltage(torque, in.ams_fresh ? in.v_cell_min_mV : CellVDefaultMv);
 
+    // EV 2.2.1 tractive-power envelope (#177). LAST, so nothing downstream can
+    // put torque back above it, and feed-forward from measured speed so it
+    // closes no loop. Before this, nothing in the vehicle enforced the 80 kW
+    // limit and the map commanded roughly twice it over most of the speed
+    // range. Inert below ~2865 mech rpm, so normal cornering is untouched.
+    bool power_capped = false;
+    {
+        const uint8_t cap = power_cap_pct(in.motor_rpm_mech);
+        if (torque > cap) { torque = cap; power_capped = true; }
+    }
+
     // ---- FSM: decide transitions FIRST, then derive outputs from the
     //      resulting state, so the emitted output always matches the state we
     //      report (a Moore machine -- no one-tick lag on entry actions). ----
@@ -260,6 +271,8 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.inv_mode_follow[1]  = follow[1];
     out.inv_mode_follow_n   = follow_n;
     out.inv_flt_clear       = flt_clear;
+    out.power_capped = power_capped;
+    out.torque_nm    = torque_pct_to_nm(cmd_torque);
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;
     out.ev_2_3      = ev23_latched_;

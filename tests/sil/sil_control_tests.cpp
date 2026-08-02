@@ -19,6 +19,7 @@
 
 #include "app/control.hpp"
 #include "app/cal_session.hpp"
+#include "app/power_limit.hpp"
 #include "app/pedal_cal_nvm.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
 #include "can/can_codecs.hpp"    // DSL <Msg>_ID for the parity check
@@ -615,6 +616,87 @@ static void test_pedal_cal() {
     { PedalCal c{}; c.apps1_min = c.apps1_max = c.apps2_min = c.apps2_max = 0xFFFF;
       c.brake_rest = c.brake_arm = c.brake_dv_hard = c.brake_pressed = 0xFFFF;
       CHECK(validate_cal(c) != 0, "erased-flash pattern (all 0xFFFF) rejected"); }
+}
+
+// #177 -- the EV 2.2.1 tractive-power envelope. The point of the cap is that
+// SHAFT POWER STAYS FLAT above the corner speed, so that is what these assert,
+// rather than re-checking the arithmetic that produced it.
+static void test_power_envelope() {
+    std::printf("[power_envelope]\n");
+
+    // Inert where it should be: below the corner speed full pedal is untouched,
+    // so normal cornering and low-speed driving feel exactly as before.
+    CHECK(power_cap_pct(0) == 100, "stationary -> no cap (P = T*0 = 0)");
+    CHECK(power_cap_pct(1000) == 100, "1000 rpm -> no cap");
+    CHECK(power_cap_pct(2000) == 100, "2000 rpm -> no cap");
+
+    // Binding above it, and the whole point: power stops rising.
+    auto shaft_kw = [](std::int32_t rpm) {
+        const std::uint8_t pct = power_cap_pct(rpm);
+        const std::int32_t nm  = torque_pct_to_nm(pct);
+        return static_cast<double>(nm) * rpm * 6.283185 / 60.0 / 1000.0;
+    };
+    static const std::int32_t kSpeeds[] = {3000, 4000, 5000, 6000, 8000, 10000};
+    for (unsigned si = 0; si < sizeof(kSpeeds)/sizeof(kSpeeds[0]); ++si) {
+        const std::int32_t rpm = kSpeeds[si];
+        const double kw = shaft_kw(rpm);
+        CHECK(kw < 74.0, "capped shaft power stays under the 72 kW budget + rounding");
+        CHECK(kw > 68.0, "...and is not needlessly conservative");
+    }
+    // Uncapped, the map would blow straight through it -- this is the finding.
+    {
+        const double uncapped_8000 =
+            static_cast<double>(torque_pct_to_nm(100)) * 8000 * 6.283185 / 60.0 / 1000.0;
+        CHECK(uncapped_8000 > 190.0, "without the cap, 100% at 8000 rpm is ~200 kW of shaft power");
+    }
+
+    // Monotonic: more speed, less allowed torque. A non-monotonic cap would
+    // make the pedal feel like it was fighting the driver.
+    for (std::int32_t rpm = 3000; rpm <= 9000; rpm += 500) {
+        CHECK(power_cap_pct(rpm) >= power_cap_pct(rpm + 500), "cap is monotonic in speed");
+    }
+
+    // Direction-agnostic: the envelope is on power magnitude.
+    CHECK(power_cap_pct(-6000) == power_cap_pct(6000), "reverse rotation capped the same");
+
+    // Feed-forward: identical input gives identical output with no history.
+    // This is what makes it structurally unlike the low-cell derate, which
+    // closes a loop through the pack and limit-cycles (#177).
+    CHECK(power_cap_pct(5000) == power_cap_pct(5000), "stateless");
+
+    // End to end through the real controller: at speed, full pedal is capped
+    // and the cap is annunciated; at low speed it is not.
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();      // full pedal
+        in.motor_rpm_mech = 1500;
+        CtrlOutput lo = c.step(in, t); t += ControlPeriodMs;
+        CHECK(lo.torque_pct == 100, "full pedal at 1500 rpm -> uncapped");
+        CHECK(!lo.power_capped, "...and not annunciated");
+
+        in.motor_rpm_mech = 7000;
+        CtrlOutput hi = c.step(in, t); t += ControlPeriodMs;
+        CHECK(hi.torque_pct < 60, "full pedal at 7000 rpm -> heavily capped");
+        CHECK(hi.power_capped, "...and annunciated on 0x700");
+        CHECK(hi.torque_nm > 0 && hi.torque_nm < 130, "commanded Nm reported and consistent");
+    }
+
+    // The cap must sit AFTER every other reduction, so a safety cut still wins.
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        in.motor_rpm_mech = 7000;
+        in.brake_raw = static_cast<std::uint16_t>(in.cal.brake_pressed + 100);  // EV.2.3
+        CtrlOutput o = c.step(in, t);
+        CHECK(o.torque_pct == 0, "a plausibility cut still wins over the envelope");
+    }
+
+    // torque_cmd on 0x700 was hardcoded 0; it now carries real Nm.
+    CHECK(torque_pct_to_nm(100) == 240, "100% -> 240 Nm full scale");
+    CHECK(torque_pct_to_nm(5) == 0, "deadband edge -> 0 Nm");
+    CHECK(torque_pct_to_nm(0) == 0, "released -> 0 Nm");
 }
 
 // #169 -- EPT1400 brake pressure. The board divider is KNOWN (R8 1k series,
@@ -1705,6 +1787,7 @@ static void run_all() {
     test_inverter_fault_layers();
     test_pedal_cal();
     test_brake_pressure();
+    test_power_envelope();
     test_pedal_cal_nvm();
     test_cal_session();
     test_cal_nvm_write();
@@ -1741,6 +1824,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inverter-fault-layers")) test_inverter_fault_layers();
     else if (!std::strcmp(m, "--test-pedal-cal"))          test_pedal_cal();
     else if (!std::strcmp(m, "--test-brake-pressure"))     test_brake_pressure();
+    else if (!std::strcmp(m, "--test-power-envelope"))     test_power_envelope();
     else if (!std::strcmp(m, "--test-pedal-cal-nvm"))      test_pedal_cal_nvm();
     else if (!std::strcmp(m, "--test-cal-session"))        test_cal_session();
     else if (!std::strcmp(m, "--test-cal-nvm-write"))      test_cal_nvm_write();
