@@ -20,6 +20,7 @@
  *
  * byte5 b3 stub_brake (#137) -- the 4th stub announce, restored here. It was
  * dropped when TelemetryTask took the 5th task-liveness bit and byte4 filled up.
+ * byte5 b6 stub_torque_cap -- the 5th (config::TorqueCap < 100). See below.
  * It disables NO safety gate (StubBrakeRaw!=0 just injects a fake brake_raw,
  * also visible on 0x701), so it lives outside the byte4 safety-stub cluster --
  * in the room freed by narrowing reset_cause to its true width (below).
@@ -56,6 +57,13 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
      * indistinguishable from an applied one, which is the confusion this
      * exists to prevent. The per-rule reason lives on the 0x7E3 session frame. */
     FIELD_LE_BITS (cal_status,       uint8_t, 44, 2, 1, 0, "enum")
+    /* byte5 b6 stub_torque_cap -- the 5th stub announce. config::TorqueCap < 100
+     * clamps commanded torque for on-stands testing, and it was the ONE bench
+     * stub with no annunciation anywhere: it is applied in control_task AFTER
+     * Controller::step(), so it sets none of the capped flags on 0x700/0x706/
+     * 0x709/0x70A. A car quietly limited to 80 % looked exactly like a derate
+     * that no derate could explain. Ungated, like the rest of the announce. */
+    FIELD_LE_BITS (stub_torque_cap,  uint8_t, 46, 1, 1, 0, "bit")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)

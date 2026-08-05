@@ -214,14 +214,15 @@ static void test_motor_thermal() {
     // ---- the curve ---------------------------------------------------------
     // 80 degC is where the cap reaches its FLOOR, not where it starts. A limiter
     // that waits for the limit has already let the winding get there.
-    CHECK(MotorTempLimitDegC == 70, "motor limit is 70 degC");
+    CHECK(MotorTempLimitDegC == 110, "motor floor is 110 degC (EMRAX 228, ~120 winding)");
     CHECK(motor_thermal_cap_pct(40) == 100, "40 degC -> no cap");
+    CHECK(motor_thermal_cap_pct(85) == 100, "85 degC -> no cap (EMRAX runs warm)");
     CHECK(motor_thermal_cap_pct(MotorTempDerateStartDegC) == 100, "at the start temp -> no cap");
-    CHECK(motor_thermal_cap_pct(65) < 100, "mid-ramp -> capped");
-    CHECK(motor_thermal_cap_pct(65) > MotorTempFloorPct, "mid-ramp -> above the floor");
-    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 70 degC -> floor");
+    CHECK(motor_thermal_cap_pct(100) < 100, "mid-ramp -> capped");
+    CHECK(motor_thermal_cap_pct(100) > MotorTempFloorPct, "mid-ramp -> above the floor");
+    CHECK(motor_thermal_cap_pct(MotorTempLimitDegC) == MotorTempFloorPct, "at 110 degC -> floor");
     CHECK(motor_thermal_cap_pct(120) == MotorTempFloorPct, "past the limit -> flat floor");
-    CHECK(motor_thermal_cap_pct(62) > motor_thermal_cap_pct(68), "ramp decreases with temperature");
+    CHECK(motor_thermal_cap_pct(95) > motor_thermal_cap_pct(105), "ramp decreases with temperature");
     CHECK(MotorTempFloorPct > 0, "the floor lets the car drive off track, never strands it");
 
     // ---- validity ----------------------------------------------------------
@@ -234,7 +235,7 @@ static void test_motor_thermal() {
     {
         MotorThermal mt;
         MotorThermalInputs in{};
-        in.fresh = true; in.temp_motor1_raw = raw(85); in.temp_motor2_raw = raw(85);
+        in.fresh = true; in.temp_motor1_raw = raw(120); in.temp_motor2_raw = raw(120);
         const MotorThermalState s = settle(mt, in, 2000);
         CHECK(s.cap_pct == MotorTempFloorPct, "motor past the limit -> floor cap");
         CHECK(s.capped, "capped flag set");
@@ -246,7 +247,7 @@ static void test_motor_thermal() {
         MotorThermalInputs in{};
         in.fresh = true;
         in.temp_motor1_raw = 0xFF;       // disconnected
-        in.temp_motor2_raw = raw(85);    // and the other one is cooking
+        in.temp_motor2_raw = raw(120);   // and the other one is cooking
         const MotorThermalState s = settle(mt, in, 2000);
         CHECK(!s.s1_valid && s.s2_valid, "one sensor valid");
         CHECK(!s.unknown, "one good sensor is not the unknown case");
@@ -294,10 +295,10 @@ static void test_motor_thermal() {
     {
         MotorThermal mt;
         MotorThermalInputs in{};
-        in.fresh = true; in.temp_motor1_raw = raw(65); in.temp_motor2_raw = raw(65);
+        in.fresh = true; in.temp_motor1_raw = raw(100); in.temp_motor2_raw = raw(100);
         const MotorThermalState s = mt.update(in);   // very first tick
-        CHECK(s.temp_degC == 65, "first sample seeds the filter exactly");
-        CHECK(s.cap_pct == motor_thermal_cap_pct(65), "protection is live immediately");
+        CHECK(s.temp_degC == 100, "first sample seeds the filter exactly");
+        CHECK(s.cap_pct == motor_thermal_cap_pct(100), "protection is live immediately");
     }
 
     // ---- it is a CAP, not a gain -------------------------------------------
@@ -307,9 +308,9 @@ static void test_motor_thermal() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        in.inv_temp_motor1_raw = raw(65);      // mid-ramp
-        in.inv_temp_motor2_raw = raw(65);
-        const uint8_t cap = motor_thermal_cap_pct(65);
+        in.inv_temp_motor1_raw = raw(100);     // mid-ramp
+        in.inv_temp_motor2_raw = raw(100);
+        const uint8_t cap = motor_thermal_cap_pct(100);
         CHECK(cap > 50, "test premise: the cap sits above half pedal");
 
         in.apps1_raw = static_cast<uint16_t>(in.cal.apps1_min +
@@ -317,7 +318,7 @@ static void test_motor_thermal() {
         in.apps2_raw = static_cast<uint16_t>(in.cal.apps2_min +
                        (in.cal.apps2_max - in.cal.apps2_min) / 2);
         // drive_to_active() seeded the filter at the fixture's 40 degC, so let
-        // it actually reach 65 before asserting anything about the cap. Half
+        // it actually reach 100 before asserting anything about the cap. Half
         // pedal stays under the cap the whole way up, so it passes through
         // untouched throughout the climb, not just at the end.
         CtrlOutput o{};
@@ -328,7 +329,7 @@ static void test_motor_thermal() {
         }
         CHECK(always_unscaled,
               "half pedal under the cap passes through UNSCALED (cap, not gain)");
-        CHECK(o.thermal_capped, "the cap IS active at 65 degC -- premise of the check above");
+        CHECK(o.thermal_capped, "the cap IS active at 100 degC -- premise of the check above");
 
         // ...and full pedal is clipped to exactly the cap.
         in.apps1_raw = Apps1AdcMax; in.apps2_raw = Apps2AdcMax;

@@ -229,6 +229,11 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     // brake_raw). Disables no safety gate -- also visible on 0x701 -- but carried
     // here so the flight-vs-bench announce on the ungated 0x704 is complete again.
     h.stub_brake       = (config::StubBrakeRaw != 0) ? 1u : 0u;
+    // stub_torque_cap: the bring-up torque clamp. Announced here because it is
+    // applied in control_task AFTER Controller::step(), so it trips none of the
+    // derate `capped` flags -- a build limited to 80 % presented as a derate
+    // that no derate could account for. A flight build reports 0.
+    h.stub_torque_cap  = (config::TorqueCap < 100) ? 1u : 0u;
     h.reset_cause   = static_cast<std::uint8_t>(m.reset_cause);
     h.uptime_s      = m.uptime_s;
     h.last_fault    = static_cast<std::uint8_t>(m.last_fault);

@@ -214,21 +214,34 @@ resolution across the entire travel in order to limit a peak.)
 
 ## 1d. Motor thermal cap — check the sensors before you trust the limit
 
-The motor limit is **70 °C**. The cap starts backing torque off at **60 °C** and
-reaches its **20 % floor at 70 °C** — the limit is where the floor *is*, not
-where the cap starts, because a limiter that waits for the limit has already let
-the winding get there.
+The motor is an **EMRAX 228 MV**, rated to roughly **120 °C winding**. The cap
+holds full torque to **90 °C** and reaches its **20 % floor at 110 °C** — the
+floor sits at the limit, not the start, because a limiter that waits for the
+limit has already let the winding get there.
 
 | motor temp | torque cap |
 |---|---|
-| ≤ 60 °C | 100% |
-| 62 | 84% |
-| 65 | 60% |
-| 68 | 36% |
-| ≥ 70 | 20% |
+| ≤ 90 °C | 100% |
+| 95 | 80% |
+| 100 | 60% |
+| 105 | 40% |
+| ≥ 110 | 20% |
+
+> ⚠️ **The 10 °C between the floor and the 120 °C winding rating is not spare
+> performance.** The thermistor is in the *stator winding*; what fails
+> permanently is the *rotor magnets* (irreversible demagnetisation), and the
+> rotor has no direct cooling path — under sustained load it runs hotter than the
+> winding while `0x464` reports something comfortable. That margin is rotor
+> headroom no reading on this car will ever show you.
+
+> ⚠️ **Verify the sensor scaling before trusting any of this.** EMRAX ships with
+> PT100 *or* KTY81-210 depending on the order. If the inverter is configured for
+> the wrong one, every temperature is wrong and the failure is silent. With the
+> motor **cold**, `temp_motor1_degC` on `0x706` must read ambient. Thirty
+> seconds, and it validates the whole thermal chain.
 
 It is a **cap, not a gain**: anything below the cap passes through untouched, so
-at 65 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
+at 100 °C half pedal still gives exactly 50%. Only the top of the range is clipped.
 
 Heat goes as torque squared, so the 20% floor is ~4% of the heating — the motor
 cools under any realistic load while the car can still drive off track.
@@ -355,6 +368,13 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
   > used to trip above `BrakePressedRaw` was deleted along with the rule in FS-Rules
   > 2024 (#177), so brake pressure no longer gates torque in either mode.
 - **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
+
+> **All five bench stubs are announced on the ungated `0x704`** —
+> `stub_no_ams`, `stub_no_inverter`, `stub_start`, `stub_brake` and
+> `stub_torque_cap`. A flight build reports **all zero**. Check this before
+> chasing anything else: `TorqueCap < 100` is applied *after* the control core,
+> so it trips **none** of the derate `capped` flags, and a car quietly limited to
+> 80 % looks exactly like a derate that no derate can explain.
   ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
   (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
 
