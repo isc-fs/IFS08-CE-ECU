@@ -44,6 +44,10 @@ inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 inline constexpr uint8_t  InvOffState          = 0;   // UNVERIFIED (IFS07-derived)
 inline constexpr uint8_t  InvStandbyState      = 3;   // bench-proven
 inline constexpr uint8_t  InvReadyState        = 4;   // bench-proven
+// Torque enabled -- the state the inverter reports once it accepts 0x06 from
+// Ready. Needed to answer "is the inverter still IN the drive?", which is not
+// the same question as "is it faulted?" (#191).
+inline constexpr uint8_t  InvTorqueEnableState = 6;   // bench-observed
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
 // 13 is now BENCH-CONFIRMED (2026-07-29): observed on 0x700 inv_state after a

@@ -220,6 +220,7 @@ CanFrame PitDiag::build_inv_faults(const VehicleState& v,
     const std::uint32_t age = static_cast<std::uint32_t>(now_ms - v.last_inv_state_tick);
     f.inv_state_age_ms      = (age > 255u) ? 255u : static_cast<std::uint8_t>(age);
     f.inv_state_seq         = v.inv_state_seq;
+    f.inv_redrive_count     = c.inv_redrive_count;   // #191: Active -> WaitInvStandby fallbacks
     std::uint8_t b[PitDiag_inv_faults_DLC];
     encode_PitDiag_inv_faults(f, b);
     return make_acu(PitDiag_inv_faults_ID, b);

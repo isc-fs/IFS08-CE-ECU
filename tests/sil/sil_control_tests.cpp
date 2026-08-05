@@ -144,6 +144,113 @@ static void test_boot_sequence() {
 
 // Dynamic state changes after Active: AMS opening the contactors (ok_precharge
 // falls) must re-arm, and ok_precharge returning advances again.
+// #191 -- the inverter leaves the drive while the TS stays up.
+//
+// Found on the car: an overspeed trips the inverter, it parks itself in
+// Standby(3), TS never drops, and the ECU sat in Active commanding
+// TorqueEnable at 100 Hz forever. Standby is not a fault state so the recovery
+// burst never fired, and Active's only exit was ok_precharge falling -- which
+// it never did. The driver could not re-arm without an LV power cycle.
+static void test_inv_leaves_drive() {
+    std::printf("[inv_leaves_drive]\n");
+    Controller c;
+    uint32_t t = 0;
+    drive_to_active(c, t);
+
+    CtrlInputs in = good_drive_inputs();
+    CHECK(c.state() == CtrlState::Active, "premise: in Active");
+
+    // ---- the exact reported case: overspeed -> Standby, TS still up --------
+    in.inv_state = InvStandbyState;      // 3 -- NOT a fault state
+    CtrlOutput o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::WaitInvStandby, "Standby with TS up -> back to WaitInvStandby");
+    CHECK(o.torque_pct == 0, "no torque while re-climbing");
+    CHECK(o.inv_mode == InvMode::Ready, "and it commands Ready(0x04), the word Standby accepts");
+    CHECK(o.inv_redrive_count == 1, "the re-drive is counted for 0x708");
+
+    // The inverter comes back -> drive resumes. Team decision (2026-08-02):
+    // immediate, no re-arm gate.
+    in.inv_state = InvReadyState;
+    o = c.step(in, t); t += ControlPeriodMs;
+    CHECK(o.state == CtrlState::Active, "Ready -> Active again, no R2D needed");
+    CHECK(o.torque_pct > 0, "torque resumes immediately with the pedal still down");
+
+    // ---- the same trap in the other non-drive states -----------------------
+    // Testing membership of the drive states, not for Standby specifically, is
+    // what makes these covered too.
+    static const uint8_t kNonDrive[] = { InvOffState, InvStandbyState, InvShutdownState };
+    for (uint8_t s : kNonDrive) {
+        Controller c2; uint32_t t2 = 0;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.inv_state = s;
+        const CtrlOutput o2 = c2.step(in2, t2);
+        CHECK(o2.state == CtrlState::WaitInvStandby, "any non-drive state exits Active");
+        CHECK(o2.torque_pct == 0, "and commands no torque");
+    }
+
+    // ---- TorqueEnable(6) is a DRIVE state and must NOT bounce --------------
+    // The inverter reports 6 once it accepts our TorqueEnable, which is the
+    // normal steady state in Active. Treating it as "not Ready" would have the
+    // FSM oscillating every single tick under load.
+    {
+        Controller c2; uint32_t t2 = 0;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.inv_state = InvTorqueEnableState;
+        CtrlOutput o2{};
+        for (int i = 0; i < 50; ++i) { o2 = c2.step(in2, t2); t2 += ControlPeriodMs; }
+        CHECK(o2.state == CtrlState::Active, "TorqueEnable(6) stays in Active");
+        CHECK(o2.torque_pct > 0, "and keeps driving");
+        CHECK(o2.inv_redrive_count == 0, "no spurious re-drives");
+    }
+
+    // ---- a fault routes here too, and the recovery burst still goes out ----
+    // The reactive block runs in ANY drive state, so moving to WaitInvStandby
+    // does not lose it -- and afterwards the climb is driven by the state that
+    // owns it instead of by Active, where nothing did.
+    {
+        Controller c2; uint32_t t2 = 0;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.inv_state = InvSoftFaultState;
+        const CtrlOutput o2 = c2.step(in2, t2);
+        CHECK(o2.state == CtrlState::WaitInvStandby, "a fault also exits Active");
+        CHECK(o2.inv_mode == InvMode::Fault, "recovery burst still commanded");
+        CHECK(o2.inv_mode_follow_n == 2, "with both follow words");
+        CHECK(o2.inv_flt_clear, "and Flt_Clear");
+        CHECK(o2.torque_pct == 0, "no torque into a faulted inverter");
+    }
+
+    // ---- TS loss still wins over the re-climb ------------------------------
+    // ok_precharge is the more fundamental exit and must be checked first.
+    {
+        Controller c2; uint32_t t2 = 0;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.inv_state = InvStandbyState;
+        in2.ok_precharge = false;
+        const CtrlOutput o2 = c2.step(in2, t2);
+        CHECK(o2.state == CtrlState::Precharge, "TS loss beats the inverter re-climb");
+    }
+
+    // ---- no RTDS on the way back -------------------------------------------
+    // R2dDelay is skipped, so the buzzer does not re-sound. The RTDS marks the
+    // driver's R2D, not an inverter hiccup.
+    {
+        Controller c2; uint32_t t2 = 0;
+        drive_to_active(c2, t2);
+        CtrlInputs in2 = good_drive_inputs();
+        in2.inv_state = InvStandbyState;
+        bool any_rtds = false;
+        for (int i = 0; i < 20; ++i) {
+            const CtrlOutput o2 = c2.step(in2, t2); t2 += ControlPeriodMs;
+            if (o2.rtds_on) any_rtds = true;
+        }
+        CHECK(!any_rtds, "no RTDS re-sound on an inverter re-climb");
+    }
+}
+
 static void test_dynamic_states() {
     std::printf("[dynamic_states]\n");
     Controller c;
@@ -2377,6 +2484,7 @@ static void run_all() {
     test_apps_pct();
     test_cold_start();
     test_boot_sequence();
+    test_inv_leaves_drive();
     test_dynamic_states();
     test_precharge_no_ack();
     test_active_torque_and_deadband();
@@ -2417,6 +2525,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-rtos-startup"))       test_cold_start();
     else if (!std::strcmp(m, "--test-boot"))             { test_cold_start(); test_boot_sequence(); }
     else if (!std::strcmp(m, "--test-full-cycle"))       { test_boot_sequence(); test_active_torque_and_deadband(); }
+    else if (!std::strcmp(m, "--test-inv-leaves-drive"))   test_inv_leaves_drive();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

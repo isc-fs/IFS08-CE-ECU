@@ -189,7 +189,51 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         break;
     case CtrlState::Active:
         // AMS opened the contactors (ok_precharge fell) -> re-arm.
-        if (!in.ok_precharge) enter_(CtrlState::Precharge, now_ms);
+        if (!in.ok_precharge) {
+            enter_(CtrlState::Precharge, now_ms);
+        } else if (in.inv_state != InvReadyState &&
+                   in.inv_state != InvTorqueEnableState) {
+            // THE INVERTER LEFT THE DRIVE WHILE THE TS STAYED UP (#191).
+            //
+            // Observed with an overspeed: the inverter trips, parks itself in
+            // Standby(3) and never comes back. Standby is NOT a fault state, so
+            // the reactive block below does not fire; and Standby < SoftFault,
+            // so the output switch happily kept commanding TorqueEnable(0x06)
+            // at 100 Hz. But this A16 config climbs Standby -> Ready(0x04) ->
+            // TorqueEnable; it does not jump straight to TorqueEnable. The one
+            // state that knows how to run that climb is WaitInvStandby, which we
+            // had already left -- so the ECU sat in Active shouting a word the
+            // inverter would not act on, forever. TS never dropped, so the
+            // ok_precharge exit above never fired either, and R2D is only
+            // reachable from WaitStartBrake: the driver could not re-arm at all
+            // without a full LV power cycle.
+            //
+            // Testing membership of the DRIVE states rather than for Standby
+            // specifically, because the same trap is waiting in Shutdown(13) and
+            // in whatever state a cleared fault lands in. "Is it faulted?" and
+            // "is it still in the drive?" are different questions and only the
+            // first one was being asked.
+            //
+            // Faults (10/11) route here too, which is an improvement: the
+            // reactive block runs in ANY drive state, so the recovery burst
+            // still goes out, and afterwards the climb is driven from the state
+            // that owns it instead of from Active where nothing did.
+            //
+            // NO RTDS on the way back: R2dDelay is skipped, so the buzzer does
+            // not re-sound. That is deliberate -- the RTDS marks the driver's
+            // R2D, not an inverter hiccup.
+            //
+            // >>> DRIVE RESUMES AS SOON AS THE INVERTER REACHES Ready AGAIN. <<<
+            // Team decision (2026-08-02): recovery speed over a re-arm gate. The
+            // consequence to know about is that if the driver still has the
+            // throttle down when the inverter recovers, torque returns with no
+            // driver action. If that ever proves too abrupt, the fix is a latch
+            // holding cmd_torque at 0 until apps falls below the deadband --
+            // NOT reinstating a full R2D, which would make every lifted-wheel
+            // overspeed a stop-and-rearm.
+            enter_(CtrlState::WaitInvStandby, now_ms);
+            ++inv_redrive_count_;   // wraps; visible on 0x708
+        }
         break;
     case CtrlState::AmsError:
         if (!in.ams_error) enter_(CtrlState::WaitInvVdcConfig, now_ms);
@@ -309,6 +353,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.power_capped   = power_capped;
     out.thermal_capped      = motor_thermal_.capped;
     out.pack_thermal_capped = pack_thermal_.capped;
+    out.inv_redrive_count   = inv_redrive_count_;
     out.torque_nm    = torque_pct_to_nm(cmd_torque);
     out.rtds_on     = rtds;
     out.ok_to_drive = drive;

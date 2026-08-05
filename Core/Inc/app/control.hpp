@@ -147,6 +147,11 @@ struct CtrlOutput {
     bool      thermal_capped = false;
     // Accumulator thermal cap is limiting this tick. Annunciated on 0x70A.
     bool      pack_thermal_capped = false;
+    // Wrapping count of times Active dropped back to WaitInvStandby because the
+    // inverter left the drive (#191). Transient by nature -- the inverter
+    // recovers and the FSM climbs again within a couple of ticks -- so without a
+    // counter the event is invisible after the fact. On 0x708.
+    uint8_t   inv_redrive_count = 0;
     // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
     // torque_cmd, which was hardcoded to 0 before this.
     int16_t   torque_nm = 0;
@@ -194,6 +199,7 @@ private:
     // (manual start+brake vs DV 0x510+EBS-brake); cleared on any exit from the
     // drive ladder (enter_ to a pre-R2D state or AmsError). Never swaps live.
     bool      dv_latched_ = false;
+    uint8_t   inv_redrive_count_ = 0;
     // IR-compensated low-cell estimator (cell_derate.hpp). Holds filter state,
     // so it lives with the FSM's other history rather than being rebuilt per
     // tick -- a filter reconstructed every call is just a passthrough.
