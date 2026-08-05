@@ -40,6 +40,8 @@
 #include "pit_diag_dv.def"          /* 0x707  DV drive-mode + autonomy (#109)  */
 #include "pit_diag_cell.def"        /* 0x709  low-cell derate estimator        */
 #include "pit_diag_pack_temp.def"   /* 0x70A  accumulator thermal cap          */
+#include "pit_diag_inv_foc.def"     /* 0x70B  inverter FOC currents + modulus  */
+#include "pit_diag_inv_torque.def"  /* 0x70C  ask / ceiling / delivered torque */
 
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */

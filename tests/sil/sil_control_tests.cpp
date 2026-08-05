@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <cstring>
 
 #include "app/control.hpp"
@@ -1994,6 +1995,94 @@ static void test_dv_mode() {
 }
 
 // uDV autonomous contract (#17) -- RX decode/store + the ECU->uDV TX builders.
+// Inverter FOC feedback decode (#177). These signals were on the wire from the
+// start and simply never parsed; the whole value of decoding them is that the
+// bit layouts match the VENDOR DBC (NX0001_STS04_A16.dbc) exactly, so that is
+// what this pins -- byte offsets and endianness, against hand-built frames.
+static void test_inv_foc_rx() {
+    std::printf("[inv_foc_rx]\n");
+    auto& vs = VehicleService::instance();
+
+    auto inv_frame = [](uint32_t id, uint8_t dlc, std::initializer_list<uint8_t> bytes) {
+        CanFrame f{};
+        f.bus = static_cast<uint8_t>(CanBus::Inv);
+        f.id = id; f.dlc = dlc;
+        uint8_t i = 0;
+        for (uint8_t b : bytes) { if (i < 8) f.data[i++] = b; }
+        f.timestamp_ms = 1000;
+        return f;
+    };
+
+    // ---- 0x463 EMC_TX_STATE_4 ---------------------------------------------
+    // Current_D_A 0|16@1-, Current_Q_A 16|16@1-, Volt_Modulus_permil 32|12@1+,
+    // EMachine_Speed_erpm 44|20@1-. LITTLE-endian, unlike the AMS frames.
+    // D = -32 (0xFFE0), Q = +3200 (0x0C80), modulus = 0x3E7 = 999.
+    {
+        CHECK(vs.update_from_frame(inv_frame(0x463u, 8,
+              {0xE0, 0xFF, 0x80, 0x0C, 0xE7, 0x03, 0x00, 0x00})), "0x463 accepted");
+        const VehicleState v = vs.snapshot();
+        CHECK(v.inv_current_d_raw == -32,   "Current_D_A: LE signed @ bytes 0-1");
+        CHECK(v.inv_current_q_raw == 3200,  "Current_Q_A: LE signed @ bytes 2-3");
+        // 3200 raw * 0.03125 = 100 A on the torque-producing axis.
+        CHECK(v.inv_current_q_raw / 32 == 100, "Q raw scales to 100 A (LSB = 1/32)");
+        CHECK(v.inv_volt_modulus == 999,    "Volt_Modulus: 12-bit LE @ bit 32");
+        CHECK(v.last_inv_s4_tick == 1000,   "0x463 stamps its OWN tick");
+    }
+    // The modulus must NOT bleed the low nibble of the rpm field into itself.
+    {
+        CHECK(vs.update_from_frame(inv_frame(0x463u, 8,
+              {0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF})), "0x463 accepted");
+        const VehicleState v = vs.snapshot();
+        CHECK(v.inv_volt_modulus == 0x0FFF, "modulus masks to 12 bits, no rpm bleed");
+    }
+
+    // ---- 0x467 EMC_TX_STATE_8: the inverter's own ceiling ------------------
+    // Torque_Max_Feas 0|16@1-, Setpoint_App_D_A 16|16@1-, Setpoint_App_Q_A 32|16@1-.
+    {
+        CHECK(vs.update_from_frame(inv_frame(0x467u, 6,
+              {0xF0, 0x00, 0x00, 0x00, 0x40, 0x06})), "0x467 accepted");
+        const VehicleState v = vs.snapshot();
+        CHECK(v.inv_torque_max_feas == 240, "Torque_Max_Feas: LE signed @ bytes 0-1");
+        CHECK(v.inv_setpoint_q_raw == 1600, "Setpoint_App_Q_A: LE signed @ bytes 4-5");
+        CHECK(v.last_inv_s8_tick == 1000,   "0x467 stamps its OWN tick");
+    }
+    // A short frame must be rejected rather than read past its end.
+    CHECK(!vs.update_from_frame(inv_frame(0x467u, 4, {0, 0, 0, 0})), "short 0x467 rejected");
+
+    // ---- 0x468 EMC_TX_STATE_9: delivered torque ---------------------------
+    // Torque_Est_Nm 16|16@1- -- bytes 0-1 are the E2E header, NOT the value.
+    {
+        CHECK(vs.update_from_frame(inv_frame(0x468u, 4,
+              {0xAB, 0xCD, 0x1B, 0xFF})), "0x468 accepted");
+        const VehicleState v = vs.snapshot();
+        CHECK(v.inv_torque_est_nm == -229, "Torque_Est_Nm: LE signed @ bytes 2-3, past the E2E header");
+    }
+
+    // ---- 0x465 EMC_TX_STATE_6: which control law is running ---------------
+    // Cmd_Src 0|4, Ctrl_Type 4|4, Ctrl_Mode 8|4.
+    {
+        CHECK(vs.update_from_frame(inv_frame(0x465u, 4, {0x32, 0x01, 0, 0})), "0x465 accepted");
+        const VehicleState v = vs.snapshot();
+        CHECK(v.inv_cmd_src   == 2, "Cmd_Src: low nibble of byte 0");
+        CHECK(v.inv_ctrl_type == 3, "Ctrl_Type: high nibble of byte 0");
+        CHECK(v.inv_ctrl_mode == 1, "Ctrl_Mode: low nibble of byte 1");
+    }
+
+    // ---- the per-frame ticks are genuinely independent ---------------------
+    // The point of decoding these at all is diagnosing a limit, and a frozen
+    // "max feasible torque" reads as a healthy ceiling. last_inv_tick is stamped
+    // by every inverter frame, so it cannot carry that.
+    {
+        CanFrame f = inv_frame(0x463u, 8, {0, 0, 0, 0, 0, 0, 0, 0});
+        f.timestamp_ms = 5000;
+        vs.update_from_frame(f);
+        const VehicleState v = vs.snapshot();
+        CHECK(v.last_inv_s4_tick == 5000, "0x463 tick advanced");
+        CHECK(v.last_inv_s8_tick == 1000, "0x467 tick did NOT -- per-frame, not bus-level");
+        CHECK(v.last_inv_tick == 5000,    "the shared tick advanced (which is why it cannot be used)");
+    }
+}
+
 static void test_udv_rx() {
     std::printf("[udv_rx]\n");
 
@@ -2312,6 +2401,7 @@ static void run_all() {
     test_cal_nvm_write();
     test_inverter_rx();
     test_dv_mode();
+    test_inv_foc_rx();
     test_udv_rx();
     test_udv_tx();
     test_radio_snapshot();
@@ -2334,6 +2424,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-cell-ir"))            test_cell_ir_compensation();
     else if (!std::strcmp(m, "--test-motor-thermal"))      test_motor_thermal();
     else if (!std::strcmp(m, "--test-pack-thermal"))       test_pack_thermal();
+    else if (!std::strcmp(m, "--test-inv-foc"))            test_inv_foc_rx();
     else if (!std::strcmp(m, "--test-legacy-compat"))    { test_cell_v_derate(); test_t11_8_9_window(); }
     else if (!std::strcmp(m, "--test-plausibility"))       test_t11_8_9_window();
     else if (!std::strcmp(m, "--test-bootloader-trigger")) test_bootloader_trigger();

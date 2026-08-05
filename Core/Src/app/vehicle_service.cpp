@@ -18,6 +18,14 @@ std::int16_t be16_s(const std::uint8_t* d) noexcept {
     return static_cast<std::int16_t>(be16(d));
 }
 
+// The EMC inverter frames are LITTLE-endian throughout (DBC @1), unlike the
+// AMS block above. Separate helpers rather than a flag, so a call site cannot
+// silently pick the wrong endianness.
+std::int16_t le16_s(const std::uint8_t* d) noexcept {
+    return static_cast<std::int16_t>(
+        static_cast<std::uint16_t>(d[0] | (static_cast<std::uint16_t>(d[1]) << 8)));
+}
+
 }  // namespace
 
 namespace ecu {
@@ -128,7 +136,17 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.id == config::InvRxRpmId) {                   // 0x463
             if (f.dlc < 8) return false;
             state_.inv_rpm       = decode_inv_rpm(f.data);
-            state_.last_inv_tick = f.timestamp_ms;
+            // The FOC feedback that shares this frame and was never decoded
+            // (#177). Current_Q_A is the torque-producing axis: a Q current that
+            // plateaus while the request keeps climbing IS the inverter
+            // limiting, and it has been on the wire the whole time.
+            state_.inv_current_d_raw = le16_s(&f.data[0]);   // Current_D_A
+            state_.inv_current_q_raw = le16_s(&f.data[2]);   // Current_Q_A
+            // Volt_Modulus_permil: 12 bits at frame bit 32 -> byte4 | byte5[0:3].
+            state_.inv_volt_modulus  = static_cast<std::uint16_t>(
+                f.data[4] | (static_cast<std::uint16_t>(f.data[5] & 0x0Fu) << 8));
+            state_.last_inv_tick    = f.timestamp_ms;
+            state_.last_inv_s4_tick = f.timestamp_ms;
             return true;
         }
         if (f.id == config::InvRxTempId) {                  // 0x464
@@ -139,6 +157,37 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.inv_temp_motor2 = f.data[3];
             state_.last_inv_tick       = f.timestamp_ms;
             state_.last_inv_temps_tick = f.timestamp_ms;   // per-signal: see the header
+            return true;
+        }
+        if (f.id == config::InvRxCtrlModeId) {              // 0x465 EMC_TX_STATE_6
+            if (f.dlc < 2) return false;
+            // Which control law the inverter is running and where it is taking
+            // commands from. If Ctrl_Mode/Ctrl_Type are not what we assume, the
+            // Torque_Nm_Req on 0x362 may not even be the active setpoint.
+            state_.inv_cmd_src   = static_cast<std::uint8_t>(f.data[0] & 0x0Fu);
+            state_.inv_ctrl_type = static_cast<std::uint8_t>(f.data[0] >> 4);
+            state_.inv_ctrl_mode = static_cast<std::uint8_t>(f.data[1] & 0x0Fu);
+            state_.last_inv_tick    = f.timestamp_ms;
+            state_.last_inv_s6_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxTorqueLimId) {             // 0x467 EMC_TX_STATE_8
+            if (f.dlc < 6) return false;
+            // Torque_Max_Feas: the inverter stating its OWN ceiling. This is the
+            // single most direct answer to "is the inverter limiting us?" and it
+            // has been broadcast, undecoded, the whole time (#177).
+            state_.inv_torque_max_feas = le16_s(&f.data[0]);
+            state_.inv_setpoint_q_raw  = le16_s(&f.data[4]);   // Setpoint_App_Q_A
+            state_.last_inv_tick    = f.timestamp_ms;
+            state_.last_inv_s8_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::InvRxTorqueEstId) {             // 0x468 EMC_TX_STATE_9
+            if (f.dlc < 4) return false;
+            // Torque_Est_Nm @ frame bit 16 -- bytes 0-1 are the E2E header.
+            state_.inv_torque_est_nm = le16_s(&f.data[2]);
+            state_.last_inv_tick    = f.timestamp_ms;
+            state_.last_inv_s9_tick = f.timestamp_ms;
             return true;
         }
         if (f.id == config::InvRxDcBusId) {                 // 0x466

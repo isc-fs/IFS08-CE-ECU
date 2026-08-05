@@ -47,6 +47,13 @@ public:
     // exists: the per-module temperatures are already on the dash, but which
     // ones the cap actually USED is not visible anywhere else.
     static CanFrame build_pack_temp(const PackThermalState& s) noexcept;
+    // 0x70B / 0x70C -- the inverter's own FOC feedback and its torque ceiling.
+    // Everything here was already arriving on FDCAN1 (the filter accepts every
+    // standard ID) and was simply never decoded, which left "is the INVERTER
+    // limiting us?" unanswerable from the car (#177).
+    static CanFrame build_inv_foc(const VehicleState& v, std::uint32_t now_ms) noexcept;
+    static CanFrame build_inv_torque(const VehicleState& v,
+                                     std::int16_t torque_req_nm) noexcept;
     static CanFrame build_pedals(const IoInputs& io,
                                  const PedalCal& cal) noexcept;  // 0x701
     // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360

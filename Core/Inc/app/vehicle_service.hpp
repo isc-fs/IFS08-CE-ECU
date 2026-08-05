@@ -41,6 +41,34 @@ struct VehicleState {
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
     std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
     std::uint8_t  inv_temp_motor2   = 0;  // 0x464 motor temp 2      (raw)
+
+    // --- inverter FOC feedback: what it is actually doing, and its own ceiling.
+    // All of this was already on the wire and simply not decoded. Current_Q_A is
+    // the torque-producing axis, so a Q current that plateaus while the request
+    // keeps climbing IS the inverter limiting -- and Torque_Max_Feas is the
+    // inverter stating that ceiling outright (#177).
+    std::int16_t  inv_current_d_raw  = 0;  // 0x463 b0-1  Current_D_A,  LSB = 1/32 A
+    std::int16_t  inv_current_q_raw  = 0;  // 0x463 b2-3  Current_Q_A,  LSB = 1/32 A
+    // Voltage modulus in per-mille. Near 1000 means the inverter is against the
+    // DC-bus voltage ceiling and physically cannot push more current at this
+    // speed -- the field-weakening roll-off, which no ECU change can lift.
+    std::uint16_t inv_volt_modulus   = 0;  // 0x463 bits 32-43 (12-bit)
+    // 0x467. NOTE the vendor DBC calls this "Ndm", not "Nm" -- the unit is NOT
+    // confirmed and may be deci-Nm. Reported RAW on pit-diag so it can be
+    // resolved against Torque_Est_Nm on the same frame rather than guessed at.
+    std::int16_t  inv_torque_max_feas = 0; // 0x467 b0-1  Torque_Max_Feas_Ndm
+    std::int16_t  inv_setpoint_q_raw = 0;  // 0x467 b4-5  Setpoint_App_Q_A, LSB = 1/32 A
+    std::int16_t  inv_torque_est_nm  = 0;  // 0x468 b2-3  Torque_Est_Nm
+    std::uint8_t  inv_cmd_src        = 0;  // 0x465 bits 0-3
+    std::uint8_t  inv_ctrl_type      = 0;  // 0x465 bits 4-7
+    std::uint8_t  inv_ctrl_mode      = 0;  // 0x465 bits 8-11
+    // Per-frame timestamps: last_inv_tick is stamped by every inverter frame, so
+    // it cannot tell you that 0x467 specifically went quiet -- and a frozen
+    // "max feasible torque" reads as a perfectly healthy ceiling.
+    std::uint32_t last_inv_s4_tick   = 0;  // 0x463
+    std::uint32_t last_inv_s6_tick   = 0;  // 0x465
+    std::uint32_t last_inv_s8_tick   = 0;  // 0x467
+    std::uint32_t last_inv_s9_tick   = 0;  // 0x468
     // 0x464 gets its OWN timestamp, like 0x135. last_inv_tick is stamped by
     // 0x461/0x463/0x464/0x466 alike, so a dead 0x464 with the rest of the
     // inverter still talking would leave the thermal cap running off
