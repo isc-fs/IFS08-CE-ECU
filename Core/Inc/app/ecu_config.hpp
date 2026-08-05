@@ -249,11 +249,26 @@ inline constexpr uint32_t InvTorqueFullScaleNm = 240;
 // offset. See motor_thermal.hpp for why this is a cap rather than a gain and
 // why losing the sensors does NOT mean "no limit".
 //
-// 70 degC is the motor limit, from the team (2026-08-02). It is where the cap
-// reaches its FLOOR, not where it starts: a limiter that waits for the limit has
-// already let the winding get there. Backing off from 60 degC keeps it away.
-inline constexpr int16_t  MotorTempDerateStartDegC = 60;   // begin capping
-inline constexpr int16_t  MotorTempLimitDegC       = 70;   // floor reached here
+// EMRAX 228 MV (10 pole pairs -- consistent with MotorPolePairs above). EMRAX
+// rates the WINDING to ~120 degC, so the floor sits at 110: 10 degC of margin,
+// deliberately unspent. The cap reaches its floor AT the limit rather than
+// starting there -- a limiter that waits has already let the winding arrive.
+//
+// >>> THE SENSOR CANNOT SEE THE PART THAT ACTUALLY DIES. <<<
+// The thermistor is in the STATOR WINDING. What fails permanently is the ROTOR
+// MAGNETS (irreversible demagnetisation), and the rotor has no direct cooling
+// path, so under sustained load it can run hotter than the winding while 0x464
+// reports something comfortable. The 10 degC held back from the winding limit is
+// rotor headroom that no reading here will ever show. Do NOT spend it chasing
+// lap time.
+//
+// COMMISSION -- VERIFY THE SENSOR SCALING BEFORE TRUSTING ANY OF THIS. EMRAX
+// ships with PT100 or KTY81-210 depending on the order; if the inverter is
+// configured for the wrong one then every temperature is wrong and the failure
+// is silent. With the motor COLD, temp_motor1_degC on 0x706 must read ambient.
+// Thirty seconds, and it validates the entire thermal chain.
+inline constexpr int16_t  MotorTempDerateStartDegC = 90;   // begin capping
+inline constexpr int16_t  MotorTempLimitDegC       = 110;  // floor reached here
 // Heat goes as torque squared, so 20 % torque is ~4 % of the heating -- the
 // motor cools under any realistic load while the car can still drive off track.
 // A thermal limiter that strands the car has traded one failure for another.
