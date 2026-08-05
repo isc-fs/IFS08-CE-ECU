@@ -21,7 +21,7 @@
  * normal, CLEAR is the anomaly. Names mirror manual 9.2.1 / 9.2.2 verbatim.
  */
 
-CAN_MSG(PitDiag_inv_faults, 0x708, 6, "VCU", 100)
+CAN_MSG(PitDiag_inv_faults, 0x708, 7, "VCU", 100)
     /* --- L1: power stage (manual 9.2.1). Bits 0-8. --- */
     FIELD_LE_BITS (pwrstg_alive,         uint8_t,  0, 1, 1, 0, "bit")
     FIELD_LE_BITS (pwrstg_enable,        uint8_t,  1, 1, 1, 0, "bit")
@@ -70,4 +70,13 @@ CAN_MSG(PitDiag_inv_faults, 0x708, 6, "VCU", 100)
      * access (which the pit adapter does not have). */
     FIELD_LE      (inv_state_age_ms,     uint8_t,  4, 8, 1, 0, "ms")
     FIELD_LE      (inv_state_seq,        uint8_t,  5, 8, 1, 0, "count")
+    /* Wrapping count of times Active fell back to WaitInvStandby because the
+     * inverter left the drive with the TS still up (#191) -- an overspeed
+     * parking it in Standby(3) being the case that found this. The event is
+     * TRANSIENT once the fallback exists: the inverter recovers and the FSM
+     * climbs again within a couple of ticks, so without a counter it leaves no
+     * trace at all and a driver reporting "it cut out for a second" has nothing
+     * to point at. Byte 6 is APPENDED -- bytes 0-5 keep their offsets, so
+     * existing decoders are unaffected. */
+    FIELD_LE      (inv_redrive_count,    uint8_t,  6, 8, 1, 0, "count")
 CAN_MSG_END(PitDiag_inv_faults)

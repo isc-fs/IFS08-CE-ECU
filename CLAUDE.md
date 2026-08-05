@@ -94,6 +94,16 @@ vistazo en el código:
 - **La recuperación de fallo del inversor corre ANTES de `Active`, no sólo dentro.**
   El inversor puede arrancar ya latcheado en hard fault; si sólo se intentara
   desde `Active`, la FSM se quedaría esperando para siempre en `WaitInvStandby`.
+- **`Active` exige que el inversor SIGA en la marcha, no sólo que no esté en
+  fallo (#191).** Si `inv_state` sale de `Ready(4)`/`TorqueEnable(6)` con la TS
+  todavía arriba, se vuelve a `WaitInvStandby` para re-escalar. Lo encontró un
+  overspeed: el inversor se aparca en `Standby(3)`, que **no es estado de fallo**,
+  así que la ráfaga de recuperación no disparaba, y `Standby < SoftFault` hacía
+  que se siguiera mandando `TorqueEnable` a 100 Hz para siempre. Como la TS nunca
+  caía, la única salida de `Active` (`ok_precharge`) tampoco. Sin power-cycle de
+  LV no había forma de re-armar. Se cuenta en `0x708 inv_redrive_count`.
+  **La marcha se reanuda en cuanto vuelve a `Ready`, sin R2D nuevo** — decisión
+  del equipo (2026-08-02): prima la recuperación rápida.
 - **El par va NEGADO** hacia el inversor: restricción mecánica del montaje del
   motor, no un bug (ver `inverter.cpp`).
 - **La calibración de pedales es RUNTIME** (#169): los umbrales de APPS y freno
