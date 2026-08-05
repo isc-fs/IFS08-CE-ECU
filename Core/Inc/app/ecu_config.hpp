@@ -404,6 +404,16 @@ inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (
 inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)
 inline constexpr uint32_t InvRxTempId          = 0x464u;     // EMC_TX_STATE_5 (board/stage/motor temps, raw -50 = degC)
 inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (DCBus_Voltage_V)
+// The inverter's own view of what it is doing and what it is willing to do.
+// All three were arriving already -- FDCAN1 accepts every standard ID into
+// FIFO0 -- and were simply never decoded, which left "is the INVERTER limiting
+// us?" unanswerable from the car (#177).
+inline constexpr uint32_t InvRxCtrlModeId      = 0x465u;     // EMC_TX_STATE_6 (Cmd_Src/Ctrl_Type/Ctrl_Mode/PosFb_Src)
+inline constexpr uint32_t InvRxTorqueLimId     = 0x467u;     // EMC_TX_STATE_8 (Torque_Max_Feas + Setpoint_App_D/Q_A)
+inline constexpr uint32_t InvRxTorqueEstId     = 0x468u;     // EMC_TX_STATE_9 (Torque_Est_Nm)
+// 0x463/0x465/0x467/0x468 freshness. The inverter cyclics are fast; 200 ms is
+// the same window the rest of the inverter feedback uses.
+inline constexpr uint32_t InvFeedbackStaleMs   = 200;
 
 // ---- Inverter (NX/EMC) TX setpoints (FDCAN1, standard IDs) -----------------
 // IDs / mode words / byte layout / torque map all verified against the original

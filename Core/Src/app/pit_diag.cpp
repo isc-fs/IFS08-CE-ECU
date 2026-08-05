@@ -101,6 +101,40 @@ CanFrame PitDiag::build_pack_temp(const PackThermalState& s) noexcept {
     return make_acu(PitDiag_pack_temp_ID, b);
 }
 
+CanFrame PitDiag::build_inv_foc(const VehicleState& v, std::uint32_t now_ms) noexcept {
+    PitDiag_inv_foc_t d{};
+    d.current_d_A  = v.inv_current_d_raw;
+    d.current_q_A  = v.inv_current_q_raw;
+    d.volt_modulus = v.inv_volt_modulus;
+    d.ctrl_mode    = v.inv_ctrl_mode;
+    d.ctrl_type    = v.inv_ctrl_type;
+    d.cmd_src      = v.inv_cmd_src;
+    // Per-frame freshness. The shared inverter tick cannot say that 0x467 in
+    // particular went quiet, and a frozen ceiling reads as a healthy one.
+    d.s4_fresh = VehicleService::is_fresh(now_ms, v.last_inv_s4_tick, config::InvFeedbackStaleMs) ? 1u : 0u;
+    d.s6_fresh = VehicleService::is_fresh(now_ms, v.last_inv_s6_tick, config::InvFeedbackStaleMs) ? 1u : 0u;
+    d.s8_fresh = VehicleService::is_fresh(now_ms, v.last_inv_s8_tick, config::InvFeedbackStaleMs) ? 1u : 0u;
+    d.s9_fresh = VehicleService::is_fresh(now_ms, v.last_inv_s9_tick, config::InvFeedbackStaleMs) ? 1u : 0u;
+    std::uint8_t b[PitDiag_inv_foc_DLC];
+    encode_PitDiag_inv_foc(d, b);
+    return make_acu(PitDiag_inv_foc_ID, b);
+}
+
+CanFrame PitDiag::build_inv_torque(const VehicleState& v,
+                                   std::int16_t torque_req_nm) noexcept {
+    PitDiag_inv_torque_t d{};
+    // The WIRE value from the same builder that produced 0x362, not a
+    // re-derivation -- so this is directly comparable with what the inverter
+    // reports back, sign and all.
+    d.torque_req      = torque_req_nm;
+    d.torque_max_feas = v.inv_torque_max_feas;   // RAW: unit unresolved, see the .def
+    d.torque_est      = v.inv_torque_est_nm;
+    d.setpoint_q      = v.inv_setpoint_q_raw;
+    std::uint8_t b[PitDiag_inv_torque_DLC];
+    encode_PitDiag_inv_torque(d, b);
+    return make_acu(PitDiag_inv_torque_ID, b);
+}
+
 CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_pedals_t p{};
     p.apps1_raw = io.apps1_raw;

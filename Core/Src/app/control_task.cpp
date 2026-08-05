@@ -309,6 +309,11 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
             can_tx_post(PitDiag::build_cell(ctrl.cell_derate()));  // 0x709 low-cell estimator
             can_tx_post(PitDiag::build_pack_temp(ctrl.pack_thermal()));  // 0x70A pack thermal cap
+            can_tx_post(PitDiag::build_inv_foc(veh, now));               // 0x70B inverter FOC feedback
+            // Same wire value we put on 0x362 this cycle, so ask/ceiling/
+            // delivered can be read off one frame without correlating.
+            can_tx_post(PitDiag::build_inv_torque(
+                veh, Inverter::torque_to_nm_req(out.torque_pct)));       // 0x70C
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh, ctrl.motor_thermal()));

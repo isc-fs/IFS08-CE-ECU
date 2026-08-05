@@ -207,6 +207,24 @@ BO_ 1802 PitDiag_pack_temp: 6 VCU
  SG_ pack_unknown : 45|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ pack_capped : 46|1@1+ (1,0) [0|0] "bit" Vector__XXX
 
+BO_ 1803 PitDiag_inv_foc: 8 VCU
+ SG_ current_d_A : 0|16@1- (0.03125,0) [0|0] "A" Vector__XXX
+ SG_ current_q_A : 16|16@1- (0.03125,0) [0|0] "A" Vector__XXX
+ SG_ volt_modulus : 32|16@1+ (1,0) [0|0] "permil" Vector__XXX
+ SG_ ctrl_mode : 48|4@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ ctrl_type : 52|4@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ cmd_src : 56|4@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ s4_fresh : 60|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ s6_fresh : 61|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ s8_fresh : 62|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ s9_fresh : 63|1@1+ (1,0) [0|0] "bit" Vector__XXX
+
+BO_ 1804 PitDiag_inv_torque: 8 VCU
+ SG_ torque_req : 0|16@1- (1,0) [0|0] "Nm" Vector__XXX
+ SG_ torque_max_feas : 16|16@1- (1,0) [0|0] "raw" Vector__XXX
+ SG_ torque_est : 32|16@1- (1,0) [0|0] "Nm" Vector__XXX
+ SG_ setpoint_q : 48|16@1- (0.03125,0) [0|0] "A" Vector__XXX
+
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -288,6 +306,8 @@ BA_ "GenMsgCycleTime" BO_ 1796 1000;
 BA_ "GenMsgCycleTime" BO_ 1799 100;
 BA_ "GenMsgCycleTime" BO_ 1801 100;
 BA_ "GenMsgCycleTime" BO_ 1802 100;
+BA_ "GenMsgCycleTime" BO_ 1803 100;
+BA_ "GenMsgCycleTime" BO_ 1804 100;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;
