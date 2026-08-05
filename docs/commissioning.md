@@ -368,6 +368,13 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
   > used to trip above `BrakePressedRaw` was deleted along with the rule in FS-Rules
   > 2024 (#177), so brake pressure no longer gates torque in either mode.
 - **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
+
+> **All five bench stubs are announced on the ungated `0x704`** —
+> `stub_no_ams`, `stub_no_inverter`, `stub_start`, `stub_brake` and
+> `stub_torque_cap`. A flight build reports **all zero**. Check this before
+> chasing anything else: `TorqueCap < 100` is applied *after* the control core,
+> so it trips **none** of the derate `capped` flags, and a car quietly limited to
+> 80 % looks exactly like a derate that no derate can explain.
   ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
   (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
 
