@@ -218,6 +218,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.ams_fsm_state      = decode_ams_fsm_state(f.data);
             state_.v_cell_min_mV      = decode_ams_min_cell(f.data);
             state_.module_online_mask = f.data[2];
+            state_.last_ams_status_tick = f.timestamp_ms;   // 0x4A0 only
             state_.last_ams_tick = f.timestamp_ms;
             return true;
         }
@@ -280,7 +281,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.tmax_module[1] = be16_s(&f.data[2]);
             state_.tmax_module[2] = be16_s(&f.data[4]);
             state_.last_ams_tick  = f.timestamp_ms;
-            state_.last_tmax_tick = f.timestamp_ms;   // per-signal: see the header
+            state_.last_tmax_a_tick = f.timestamp_ms;   // 0x136 only -- see the header
             return true;
         }
         if (f.id == config::AcuTmaxModuleBId) {             // 0x137
@@ -289,7 +290,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.tmax_module[4] = be16_s(&f.data[2]);
             state_.tmax_dcdc      = be16_s(&f.data[4]);
             state_.last_ams_tick  = f.timestamp_ms;
-            state_.last_tmax_tick = f.timestamp_ms;   // per-signal: see the header
+            state_.last_tmax_b_tick = f.timestamp_ms;   // 0x137 only -- see the header
             return true;
         }
         return false;

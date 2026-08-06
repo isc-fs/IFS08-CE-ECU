@@ -129,8 +129,19 @@ extern "C" void ecu_control_task_run(void *argument) {
                 ci.tmax_module[m] = veh.tmax_module[m];
             }
             ci.module_online_mask = veh.module_online_mask;
-            ci.ams_status_fresh   = ams_fresh;
-            ci.pack_temps_fresh   = VehicleService::is_fresh(now, veh.last_tmax_tick,
+            // 0x4A0's OWN tick, not the bus-level ams_fresh that ten AMS frames
+            // refresh. If 0x4A0 never arrives at all the mask stays at its zero
+            // initialiser -- "no module reporting" -- and trusting it would skip
+            // every module and park the pack cap at its unknown value for the
+            // whole run.
+            ci.ams_status_fresh   = VehicleService::is_fresh(now, veh.last_ams_status_tick,
+                                                             config::AmsStatusStaleMs);
+            // BOTH temperature frames, not either. They carry different modules
+            // (0x136 = 0-2, 0x137 = 3-4); with one shared tick, losing 0x137
+            // froze modules 3-4 forever while this still read fresh.
+            ci.pack_temps_fresh   = VehicleService::is_fresh(now, veh.last_tmax_a_tick,
+                                                             config::AcuTmaxStaleMs) &&
+                                    VehicleService::is_fresh(now, veh.last_tmax_b_tick,
                                                              config::AcuTmaxStaleMs);
         }
         // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
@@ -141,7 +152,19 @@ extern "C" void ecu_control_task_run(void *argument) {
         ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
         ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
         // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL (#177).
-        ci.motor_rpm_mech = veh.inv_rpm / config::MotorPolePairs;
+        //
+        // GATED, like every other safety input on this page. 0x463 is the only
+        // signal feeding the 80 kW envelope, and last_inv_tick is stamped by
+        // 0x461/0x463/0x464/0x466 alike -- so 0x463 alone can die while the
+        // inverter still looks perfectly healthy. A frozen rpm then feeds the
+        // envelope forever, and if it froze at 0 (the uninitialised value)
+        // power_cap_pct returns 100 % and the only power limiter in the vehicle
+        // is silently gone, with power_capped correctly reading 0 the whole
+        // time. Stale -> assume max rpm, which caps hard instead.
+        ci.motor_rpm_mech = VehicleService::is_fresh(now, veh.last_inv_s4_tick,
+                                                     config::InvFeedbackStaleMs)
+                            ? veh.inv_rpm / config::MotorPolePairs
+                            : config::MotorRpmStaleAssumed;
         // Motor temperatures for the thermal cap, on their OWN freshness window
         // (0x464 can die while the rest of the inverter keeps talking, and a
         // frozen temperature reads as a healthy one).
