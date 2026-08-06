@@ -605,6 +605,116 @@ static void test_pack_thermal() {
     }
 }
 
+// Endurance-review fixes (#193). Five places where a single lost frame, or one
+// mis-scaled constant, silently removed a protection or stranded the car.
+static void test_endurance_guards() {
+    std::printf("[endurance_guards]\n");
+
+    // ---- 1. every cap FLOOR must command real torque ----------------------
+    // The percentage the core works in is NOT a linear 0..100 scale to 240 Nm:
+    // InvTorqueMap* is re-based so DeadbandLowPct (5) maps to EXACTLY 0 Nm. So
+    // a floor written as "5 %" commanded nothing at all, while reading -- and
+    // being commented -- as a limp-home. Asserting on the Nm, not the percent,
+    // is the whole point: a percent-only check is what missed it.
+    CHECK(torque_pct_to_nm(CellVDerateFloorPct)  > 0, "cell floor commands real torque");
+    CHECK(torque_pct_to_nm(MotorTempFloorPct)    > 0, "motor floor commands real torque");
+    CHECK(torque_pct_to_nm(PackTempFloorPct)     > 0, "pack floor commands real torque");
+    CHECK(torque_pct_to_nm(DeadbandLowPct)      == 0, "...and DeadbandLowPct IS the zero point");
+    CHECK(CellVDerateFloorPct > DeadbandLowPct,       "cell floor sits above the zero point");
+
+    // Through the real controller: at the floor the car must still crawl.
+    {
+        Controller c; uint32_t t = 1000;
+        drive_to_active(c, t);
+        CtrlInputs in = good_drive_inputs();
+        in.v_cell_min_mV = CellVDerateFloorMv - 50;   // deep, but above the raw backstop
+        in.current_accu_dA = 0; in.current_fresh = true;
+        CtrlOutput o{};
+        for (int i = 0; i < 2000; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
+        CHECK(c.cell_derate().cap_pct == CellVDerateFloorPct, "at the floor");
+        CHECK(o.torque_pct > 0,  "floored cell cap still commands torque");
+        CHECK(o.torque_nm  > 0,  "...and it is non-zero in Nm -- the car can limp off track");
+    }
+
+    // ---- 2. a stale rpm must CAP, never uncap -----------------------------
+    // power_cap_pct(0) == 100 is correct (a stationary car draws no power), but
+    // 0 is also the uninitialised value, so falling back to it would hand out
+    // full torque for the rest of a run while power_capped read 0 all the way.
+    CHECK(power_cap_pct(0) == 100, "0 rpm -> no cap (correct, and the trap)");
+    CHECK(power_cap_pct(MotorRpmStaleAssumed) < 100,
+          "the stale-rpm fallback CAPS rather than uncapping");
+    CHECK(power_cap_pct(MotorRpmStaleAssumed) > MotorTempFloorPct,
+          "...but still drives the car off the track");
+
+    // ---- 3+4. per-frame ticks really are independent ----------------------
+    {
+        auto& vs = VehicleService::instance();
+        auto acu = [](uint32_t id, uint8_t dlc, uint32_t ts) {
+            CanFrame f{};
+            f.bus = static_cast<uint8_t>(CanBus::Acu);
+            f.id = id; f.dlc = dlc; f.timestamp_ms = ts;
+            return f;
+        };
+        // 0x136 alone must not vouch for 0x137: they carry different modules.
+        vs.update_from_frame(acu(0x136u, 6, 1000));
+        vs.update_from_frame(acu(0x137u, 6, 1000));
+        vs.update_from_frame(acu(0x136u, 6, 5000));      // only A refreshes
+        VehicleState v = vs.snapshot();
+        CHECK(v.last_tmax_a_tick == 5000, "0x136 advanced its own tick");
+        CHECK(v.last_tmax_b_tick == 1000, "0x137 did NOT -- modules 3-4 are stale");
+
+        // An ordinary AMS frame must not vouch for 0x4A0: the module mask rides
+        // on 0x4A0 alone, and a zero mask means "nothing reporting".
+        vs.update_from_frame(acu(config::AmsStatusId, 8, 2000));
+        vs.update_from_frame(acu(config::AcuVCellMinId, 2, 9000));   // a DIFFERENT AMS frame
+        v = vs.snapshot();
+        CHECK(v.last_ams_tick == 9000,        "the bus-level AMS tick advanced");
+        CHECK(v.last_ams_status_tick == 2000, "0x4A0's own tick did NOT");
+    }
+
+    // ---- 5. losing a sensor must never RAISE a cap ------------------------
+    {
+        PackThermal pt;
+        PackThermalInputs in{};
+        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 48;
+        in.module_online_mask = 0x1F; in.mask_valid = true; in.temps_fresh = true;
+        PackThermalState s{};
+        for (int i = 0; i < 3000; ++i) s = pt.update(in);
+        const uint8_t hot = s.cap_pct;
+        CHECK(hot < PackTempUnknownCapPct, "premise: a hot pack is capped BELOW the unknown value");
+        in.temps_fresh = false;                    // frames go quiet
+        s = pt.update(in);
+        CHECK(s.unknown, "reported as unknown");
+        CHECK(s.cap_pct == hot, "losing the sensors does NOT hand back torque");
+    }
+    {
+        MotorThermal mt;
+        MotorThermalInputs in{};
+        const uint8_t raw105 = static_cast<uint8_t>(105 - MotorTempRawOffsetDegC);
+        in.fresh = true; in.temp_motor1_raw = raw105; in.temp_motor2_raw = raw105;
+        MotorThermalState s{};
+        for (int i = 0; i < 3000; ++i) s = mt.update(in);
+        const uint8_t hot = s.cap_pct;
+        CHECK(hot < MotorTempUnknownCapPct, "premise: a hot motor is capped below the unknown value");
+        in.fresh = false;
+        s = mt.update(in);
+        CHECK(s.unknown, "reported as unknown");
+        CHECK(s.cap_pct == hot, "losing the sensors does NOT hand back torque");
+    }
+    // ...and from a COOL state the unknown cap still applies (it ratchets down,
+    // it does not simply freeze whatever was there).
+    {
+        PackThermal pt;
+        PackThermalInputs in{};
+        for (std::size_t m = 0; m < PackModuleCount; ++m) in.tmax_module[m] = 25;
+        in.module_online_mask = 0x1F; in.mask_valid = true; in.temps_fresh = true;
+        for (int i = 0; i < 100; ++i) pt.update(in);
+        in.temps_fresh = false;
+        const PackThermalState s = pt.update(in);
+        CHECK(s.cap_pct == PackTempUnknownCapPct, "cool -> unknown still caps to 60 %");
+    }
+}
+
 // T.11.8.9 APPS disagreement, including the 100 ms persistence window.
 static void test_t11_8_9_window() {
     std::printf("[t11_8_9]\n");
@@ -2488,6 +2598,7 @@ static void run_all() {
     test_dynamic_states();
     test_precharge_no_ack();
     test_active_torque_and_deadband();
+    test_endurance_guards();
     test_t11_8_9_window();
     test_ams_error();
     test_cell_v_derate();
@@ -2526,6 +2637,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-boot"))             { test_cold_start(); test_boot_sequence(); }
     else if (!std::strcmp(m, "--test-full-cycle"))       { test_boot_sequence(); test_active_torque_and_deadband(); }
     else if (!std::strcmp(m, "--test-inv-leaves-drive"))   test_inv_leaves_drive();
+    else if (!std::strcmp(m, "--test-endurance-guards")) test_endurance_guards();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

@@ -43,8 +43,12 @@ MotorThermalState MotorThermal::update(const MotorThermalInputs& in) noexcept {
         // is drivable but cannot cook a motor nobody can see.
         seeded_      = false;
         st.unknown   = true;
-        st.cap_pct   = MotorTempUnknownCapPct;
-        st.capped    = (MotorTempUnknownCapPct < 100u);
+        // NEVER RELAX -- same reasoning as pack_thermal.cpp. A motor genuinely
+        // at 105 degC, correctly capped to 40 %, must not jump to 60 % because
+        // 0x464 went quiet. Ratchets down only.
+        st.cap_pct   = (MotorTempUnknownCapPct < last_.cap_pct)
+                       ? MotorTempUnknownCapPct : last_.cap_pct;
+        st.capped    = (st.cap_pct < 100u);
         st.temp_degC = 0;
         last_ = st;
         return st;

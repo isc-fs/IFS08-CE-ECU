@@ -168,7 +168,18 @@ inline constexpr uint16_t CellVDerateKneeMv    = 2800;  // at/above: no derate
 // before any endurance run. Too low and the AMS opens the AIRs mid-corner with
 // the car still at 5 % torque instead of coasting down.
 inline constexpr uint16_t CellVDerateFloorMv   = 2500;  // at/below: flat floor pct
-inline constexpr uint8_t  CellVDerateFloorPct  = 5;     // limp-home, deliberately non-zero
+// 13 %, NOT 5 %. The percentage the core works in is not a linear 0..100 scale
+// to 240 Nm -- InvTorqueMap* is re-based so that DeadbandLowPct (5) maps to
+// EXACTLY 0 Nm, which is what stops the pedal deadband and the map deadband
+// stacking. So a floor of "5 %" commanded literally nothing: 5*240/95 -
+// 1200/95 = 12 - 12 = 0. The comment here used to claim "deliberately
+// non-zero" and was simply wrong -- both paths that reach this floor (the ramp
+// and the raw backstop) cut torque completely while the FSM stays in Active
+// with TorqueEnable asserted, which from the driver's seat is indistinguishable
+// from the car breaking. 13 % is 20 Nm: a real limp-home, same intent as the
+// two thermal floors (20 % -> 38 Nm). The static_assert below is what stops
+// this recurring.
+inline constexpr uint8_t  CellVDerateFloorPct  = 13;    // -> 20 Nm; see the assert below
 inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
 
 // ---- IR compensation (what makes the derate tolerant of accelerations) -----
@@ -208,6 +219,14 @@ static_assert(CellVDerateFloorMv < CellVDerateKneeMv,
               "cell derate floor must be below the knee (the ramp divides by their span)");
 static_assert(CellVDerateFloorPct <= 100,
               "cell derate floor pct is a percentage");
+// The floor must command REAL torque. Expressed against the torque map rather
+// than as "> 0", because the map's zero point is DeadbandLowPct, not 0 --
+// checking the percentage alone is exactly the mistake this is guarding.
+// (The two thermal floors assert > 0 only; they are at 20 % and clear of the
+// zero point, but the same reasoning applies if either is ever lowered.)
+static_assert(CellVDerateFloorPct > DeadbandLowPct,
+              "the cell derate floor must be ABOVE the torque map's zero point "
+              "(DeadbandLowPct), or it commands 0 Nm and strands the car");
 static_assert(CellVDefaultMv >= CellVDerateKneeMv,
               "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
 static_assert(CellVRawFloorMv <= CellVDerateFloorMv,
@@ -371,6 +390,10 @@ inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
 // WHOLE fail-safe for the uninitialised case (0 degC is a real pack
 // temperature, so no value check can catch it) -- do not widen it casually.
 inline constexpr uint32_t AcuTmaxStaleMs       = 1000;
+// 0x4A0 AMS_status is 500 ms cyclic; 1500 ms is three missed. Only gates whether
+// module_online_mask is trustworthy -- losing it does not fault the pack cap, it
+// falls back to using every plausible reading.
+inline constexpr uint32_t AmsStatusStaleMs     = 1500;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
 // 0x464 temperatures, tracked separately from the inverter block (see
 // VehicleState). Feeds the motor thermal cap, which must fall back to its
@@ -418,6 +441,19 @@ inline constexpr uint32_t InvRxTorqueEstId     = 0x468u;     // EMC_TX_STATE_9 (
 // 0x463/0x465/0x467/0x468 freshness. The inverter cyclics are fast; 200 ms is
 // the same window the rest of the inverter feedback uses.
 inline constexpr uint32_t InvFeedbackStaleMs   = 200;
+// Mechanical rpm ASSUMED when 0x463 goes stale, for the EV 2.2.1 envelope only.
+//
+// It must be HIGH, and the reason is not obvious. power_cap_pct(0) returns
+// 100 % -- correct, because a stationary car draws no power however much torque
+// is commanded. But an uninitialised VehicleState reads 0 too, and so does a
+// value frozen at boot. So the ONE fallback that must never be chosen is the
+// natural-looking one: falling back to 0 rpm hands out full torque for the rest
+// of the run while power_capped correctly reports "not limiting".
+//
+// Assuming max rpm instead caps at ~54 %, which is legal at any speed this car
+// reaches and still drives it off the track. Slow and obvious beats fast and
+// unlimited.
+inline constexpr int32_t  MotorRpmStaleAssumed  = 5500;  // EMRAX 228 max-ish
 
 // ---- Inverter (NX/EMC) TX setpoints (FDCAN1, standard IDs) -----------------
 // IDs / mode words / byte layout / torque map all verified against the original

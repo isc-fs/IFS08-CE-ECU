@@ -54,8 +54,14 @@ PackThermalState PackThermal::update(const PackThermalInputs& in) noexcept {
         // temperature and cannot be rejected the way the motor's -50 could.
         seeded_      = false;
         st.unknown   = true;
-        st.cap_pct   = PackTempUnknownCapPct;
-        st.capped    = (PackTempUnknownCapPct < 100u);
+        // NEVER RELAX. Losing sight of the pack must not hand the car more
+        // torque than it had while the pack was visible: a pack genuinely at
+        // 48 degC, correctly capped to 36 %, would otherwise JUMP to 60 % the
+        // moment 0x136/0x137 went quiet -- 78 % more torque on a pack nobody can
+        // see any more. Ratchets down only; a real reading restores the ramp.
+        st.cap_pct   = (PackTempUnknownCapPct < last_.cap_pct)
+                       ? PackTempUnknownCapPct : last_.cap_pct;
+        st.capped    = (st.cap_pct < 100u);
         st.temp_degC = 0;
         last_ = st;
         return st;

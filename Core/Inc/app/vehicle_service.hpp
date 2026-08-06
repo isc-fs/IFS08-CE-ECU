@@ -91,6 +91,13 @@ struct VehicleState {
     // module's slot still holds whatever arrived last, and stale-warm misleads
     // exactly as much as stale-cold.
     std::uint8_t  module_online_mask = 0;     // 0x4A0 byte2
+    // 0x4A0's OWN tick. last_ams_tick is refreshed by ten different AMS frames,
+    // so it cannot say that 0x4A0 in particular never arrived -- and if it never
+    // does, module_online_mask sits at its zero initialiser meaning "no module
+    // is reporting" while the consumer believes the mask is trustworthy. Every
+    // module is then skipped and the pack cap sits at its unknown value for the
+    // whole run, unannunciated.
+    std::uint32_t last_ams_status_tick = 0;   // 0x4A0 seen
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
     // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---
@@ -116,7 +123,15 @@ struct VehicleState {
     // every AMS frame, and for the pack thermal cap freshness is not a backstop
     // -- 0 degC is a real pack temperature, so staleness is the ONLY thing that
     // can catch an uninitialised state.
-    std::uint32_t last_tmax_tick    = 0;      // 0x136/0x137 seen
+    // TWO ticks, not one. The per-module maxima arrive in two frames (0x136 =
+    // modules 0-2, 0x137 = modules 3-4) and both used to stamp a single tick, so
+    // losing 0x137 alone left modules 3-4 frozen at their last value FOREVER
+    // while pack_temps_fresh stayed true -- and 0x70A went on reporting
+    // mod3_used/mod4_used = 1. The frame whose purpose is catching a silently
+    // EXCLUDED module was blind to a silently FROZEN one. Frozen cold is the
+    // dangerous direction: those two modules cook with the cap reading 100 %.
+    std::uint32_t last_tmax_a_tick  = 0;      // 0x136 seen (modules 0-2)
+    std::uint32_t last_tmax_b_tick  = 0;      // 0x137 seen (modules 3-4)
 };
 
 class VehicleService {
