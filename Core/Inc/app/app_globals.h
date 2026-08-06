@@ -47,6 +47,11 @@ extern uint16_t g_last_apps2_raw;
 extern uint16_t g_last_brake_raw;
 extern uint8_t  g_last_start_button;
 extern uint8_t  g_last_t11_8_9;
+// #198 DC-link discharge, mirrored for DiagTask/telemetry. engaged is the
+// COMMANDED state (no auxiliary-contact readback is wired); fault means the
+// hold timed out without the link falling.
+extern uint8_t  g_discharge_engaged;
+extern uint8_t  g_discharge_fault;
 
 /* Count of frames dropped by can_tx_post() because the TX queue was full (its
  * osMessageQueuePut timed out at 0). Free-running, never reset. 0 on a healthy

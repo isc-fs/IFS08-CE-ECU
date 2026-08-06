@@ -104,6 +104,13 @@ struct VehicleState {
     // module is then skipped and the pack cap sits at its unknown value for the
     // whole run, unannunciated.
     std::uint32_t last_ams_status_tick = 0;   // 0x4A0 seen
+    // 0x021 discharge request (#198). Own tick, and it must NOT be refreshed by
+    // any other AMS frame: losing THIS one is what stops a NEW discharge being
+    // started, so it has to be attributable to this frame alone. (Losing it
+    // mid-discharge is harmless -- the ECU latches and releases on its own
+    // voltage measurement, never on the request going away.)
+    std::uint8_t  discharge_request     = 0;  // 0x021 byte0 bit0
+    std::uint32_t last_discharge_req_tick = 0;
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
     // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---

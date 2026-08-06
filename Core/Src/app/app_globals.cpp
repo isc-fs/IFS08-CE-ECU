@@ -19,6 +19,8 @@ uint16_t g_last_apps2_raw = 0;
 uint16_t g_last_brake_raw = 0;
 uint8_t  g_last_start_button = 0;
 uint8_t  g_last_t11_8_9 = 0;
+uint8_t  g_discharge_engaged = 0;
+uint8_t  g_discharge_fault   = 0;
 }
 
 extern "C" void ecu_app_globals_init(void) {

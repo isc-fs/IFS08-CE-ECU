@@ -141,9 +141,20 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 
 **TX propias de la ECU**
 
-- **`0x100` VCU_heartbeat** (DC-bus V, LE u16) → bus ACU, cada ciclo, **en todos los
+- **`0x100` VCU_heartbeat** (DLC **3**) → bus ACU, cada ciclo (10 ms), **en todos los
   estados**. Contrato cargado ECU↔AMS: la AMS arma un watchdog `VcuStale` (200 ms) en Car
   mode y abre los AIRs si para.
+  - `dc_bus_voltage` (LE u16, V) — **publica 0 si `0x466` está stale**, no el último
+    valor. La trama sale cada 10 ms pase lo que pase, así que la TRAMA siempre está
+    fresca mientras el VALOR era una lectura retransmitida sin caducidad: un inversor
+    callado dejaba emitiendo tensión de pack a 100 Hz para siempre y el check de
+    frescura de la AMS no puede verlo. Congelado alto satisface su criterio de
+    precarga (≥95 % del pack) → **una precarga muerta pasaría su propio autotest** (#198).
+  - `discharge_engaged` (bit 16) — la ECU está manteniendo el bleed conectado. **Estado
+    COMANDADO**: no hay readback de contacto auxiliar, así que no detecta un relé
+    atascado abierto. Ver `discharge.hpp`.
+  - `dc_bus_valid` (bit 17) — `dc_bus_voltage` es una medida ACTUAL. 0 = no usar el
+    valor en NINGUNA dirección.
 - **Setpoints inversor** (`inverter.cpp` / `ecu_config.hpp`, aún **fuera del DSL** por E2E):
   - `0x360` EMC_RX_SETPOINT_1 — mode word (`App_State_Req` @ byte2, DLC 3).
   - `0x362` EMC_RX_SETPOINT_3 — `Torque_Nm_Req` (s16 LE @ bytes 2-3, DLC 4).

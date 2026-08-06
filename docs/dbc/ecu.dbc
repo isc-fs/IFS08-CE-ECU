@@ -37,8 +37,10 @@ BU_: AMS VCU ECU UDV Pit_Tool
 BA_DEF_ BO_  "GenMsgCycleTime" INT 0 65535;
 BA_DEF_DEF_  "GenMsgCycleTime" 0;
 
-BO_ 256 VCU_heartbeat: 2 VCU
+BO_ 256 VCU_heartbeat: 3 VCU
  SG_ dc_bus_voltage : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
+ SG_ discharge_engaged : 16|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ dc_bus_valid : 17|1@1+ (1,0) [0|0] "bit" Vector__XXX
 
 BO_ 1284 VCU_ts_active: 1 VCU
  SG_ ts_active : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
@@ -235,6 +237,9 @@ BO_ 1805 PitDiag_power: 8 VCU
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
+BO_ 33 ACU_discharge_request: 1 AMS
+ SG_ request : 0|1@1+ (1,0) [0|0] "bit" Vector__XXX
+
 BO_ 300 ACU_v_cell_min: 2 AMS
  SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
 
@@ -317,6 +322,7 @@ BA_ "GenMsgCycleTime" BO_ 1803 100;
 BA_ "GenMsgCycleTime" BO_ 1804 100;
 BA_ "GenMsgCycleTime" BO_ 1805 100;
 BA_ "GenMsgCycleTime" BO_ 32 100;
+BA_ "GenMsgCycleTime" BO_ 33 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;
 BA_ "GenMsgCycleTime" BO_ 306 100;
