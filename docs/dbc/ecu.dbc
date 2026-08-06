@@ -226,6 +226,12 @@ BO_ 1804 PitDiag_inv_torque: 8 VCU
  SG_ torque_est : 32|16@1- (1,0) [0|0] "Nm" Vector__XXX
  SG_ setpoint_q : 48|16@1- (0.03125,0) [0|0] "A" Vector__XXX
 
+BO_ 1805 PitDiag_power: 8 VCU
+ SG_ shaft_power : 0|16@1- (10,0) [0|0] "W" Vector__XXX
+ SG_ ac_power : 16|16@1- (10,0) [0|0] "W" Vector__XXX
+ SG_ dc_bus_V : 32|16@1+ (1,0) [0|0] "V" Vector__XXX
+ SG_ accu_current : 48|16@1- (0.1,0) [0|0] "A" Vector__XXX
+
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -309,6 +315,7 @@ BA_ "GenMsgCycleTime" BO_ 1801 100;
 BA_ "GenMsgCycleTime" BO_ 1802 100;
 BA_ "GenMsgCycleTime" BO_ 1803 100;
 BA_ "GenMsgCycleTime" BO_ 1804 100;
+BA_ "GenMsgCycleTime" BO_ 1805 100;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;

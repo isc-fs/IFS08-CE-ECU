@@ -42,6 +42,7 @@
 #include "pit_diag_pack_temp.def"   /* 0x70A  accumulator thermal cap          */
 #include "pit_diag_inv_foc.def"     /* 0x70B  inverter FOC currents + modulus  */
 #include "pit_diag_inv_torque.def"  /* 0x70C  ask / ceiling / delivered torque */
+#include "pit_diag_power.def"       /* 0x70D  shaft vs AC vs DC -> efficiency  */
 
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */

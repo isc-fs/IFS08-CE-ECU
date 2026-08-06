@@ -65,6 +65,24 @@ std::uint16_t VehicleService::decode_inv_dc_bus_V(const std::uint8_t* d) noexcep
         d[2] | ((static_cast<std::uint16_t>(d[3]) & 0x03u) << 8));
 }
 
+std::int32_t VehicleService::decode_inv_ac_power_W(const std::uint8_t* d) noexcept {
+    // ACBus_Power_W: 26|16@1- in the vendor DBC. Little-endian and NOT
+    // byte-aligned, so the 16 bits straddle three bytes:
+    //   bits 26-31 -> byte3 bits 2-7   (the 6 LSBs)
+    //   bits 32-39 -> byte4            (the next 8)
+    //   bits 40-41 -> byte5 bits 0-1   (the top 2)
+    std::uint32_t raw = (static_cast<std::uint32_t>(d[3]) >> 2) |
+                        (static_cast<std::uint32_t>(d[4]) << 6) |
+                        ((static_cast<std::uint32_t>(d[5]) & 0x03u) << 14);
+    if (raw & 0x8000u) raw |= 0xFFFF0000u;          // sign-extend bit 15
+    const std::int32_t counts = static_cast<std::int32_t>(raw);
+    // 32.767 W/LSB, folded in here so no caller carries the scale. Integer:
+    // multiply by 32767 then divide by 1000. Worst case |counts| = 32768, so the
+    // product is ~1.07e9 -- inside int32 (2.1e9), but only just, which is why
+    // this is done in one place with a comment rather than at each call site.
+    return counts * config::InvAcPowerScaleMilli / 1000;
+}
+
 std::int32_t VehicleService::decode_udv_torque_cmd(const std::uint8_t* d) noexcept {
     // 0x507: torque command as an INTEGER percent, int32 little-endian on the
     // wire (agreed with the DV team; replaced the original float32 idea).
@@ -193,6 +211,13 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.id == config::InvRxDcBusId) {                 // 0x466
             if (f.dlc < 4) return false;
             state_.inv_dc_bus_V      = decode_inv_dc_bus_V(f.data);
+            // ACBus_Power_W needs the full DLC 6. Guarded SEPARATELY from the
+            // dlc >= 4 above, same pattern as 0x461's fault layers: a short
+            // frame must still yield the DC-bus voltage (which gates Precharge)
+            // rather than dropping the whole update.
+            if (f.dlc >= 6) {
+                state_.inv_ac_power_W = decode_inv_ac_power_W(f.data);
+            }
             state_.last_vconfig_tick = f.timestamp_ms;
             state_.last_inv_tick     = f.timestamp_ms;
             return true;

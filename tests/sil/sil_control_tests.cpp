@@ -715,6 +715,79 @@ static void test_endurance_guards() {
     }
 }
 
+// EV 2.2.1 margin + the AC-power decode that lets it be measured (#195).
+static void test_power_margin() {
+    std::printf("[power_margin]\n");
+
+    // ---- the envelope now targets 76 kW, not 80 ---------------------------
+    // Deliberate margin. The envelope caps COMMANDED SHAFT torque while the rule
+    // is judged at the TSAC outlet, and the bridge between them
+    // (DrivetrainEffPct) has never been measured. At 80 kW the design point sat
+    // at 99.97 % of the limit on that unmeasured constant.
+    CHECK(PowerLimitW == 76000, "envelope targets 76 kW (5 % margin)");
+
+    // Sweep every mechanical rpm and find the worst commanded shaft power. The
+    // cap is only meaningful at its WORST point, which is the knee -- not at an
+    // arbitrary sample.
+    std::int32_t worst_shaft_W = 0;
+    std::int32_t worst_rpm = 0;
+    for (std::int32_t rpm = 1; rpm <= 20000; ++rpm) {
+        const std::uint8_t cap = power_cap_pct(rpm);
+        const std::int32_t nm  = torque_pct_to_nm(cap);
+        const std::int32_t w   = nm * rpm * 1047 / 10000;
+        if (w > worst_shaft_W) { worst_shaft_W = w; worst_rpm = rpm; }
+    }
+    std::printf("        worst commanded shaft: %d W at %d rpm\n", worst_shaft_W, worst_rpm);
+    // At the assumed 90 % this must clear 80 kW with real room, not by 22 W.
+    const std::int32_t at_assumed_eff = worst_shaft_W * 100 / static_cast<std::int32_t>(DrivetrainEffPct);
+    CHECK(at_assumed_eff < 80000, "worst case is under 80 kW at the assumed efficiency");
+    CHECK(at_assumed_eff < 77000, "...with real margin, not a rounding error");
+    // The margin is what buys tolerance to the efficiency being WRONG. Solve for
+    // the efficiency at which the worst case would breach 80 kW.
+    const std::int32_t breach_eff_pct = worst_shaft_W * 100 / 80000;
+    std::printf("        breaches 80 kW only below eta = %d %%\n", breach_eff_pct);
+    CHECK(breach_eff_pct <= 86, "stays legal down to at least 86 % real efficiency");
+
+    // ---- ACBus_Power_W decode: 26|16@1- straddling three bytes ------------
+    // The whole value of decoding this is that the bit layout matches the vendor
+    // DBC exactly, so that is what gets pinned -- against hand-built frames.
+    {
+        auto inv466 = [](std::initializer_list<std::uint8_t> bytes, std::uint8_t dlc) {
+            CanFrame f{};
+            f.bus = static_cast<std::uint8_t>(CanBus::Inv);
+            f.id = config::InvRxDcBusId; f.dlc = dlc; f.timestamp_ms = 1000;
+            std::uint8_t i = 0;
+            for (std::uint8_t b : bytes) { if (i < 8) f.data[i++] = b; }
+            return f;
+        };
+        auto& vs = VehicleService::instance();
+
+        // counts = 1000 -> 1000 * 32.767 = 32767 W.
+        // 1000 = 0x3E8. bits: [5:0] -> byte3[7:2], [13:6] -> byte4, [15:14] -> byte5[1:0]
+        //   byte3 = (1000 & 0x3F) << 2 = (0x28) << 2 = 0xA0
+        //   byte4 = (1000 >> 6) & 0xFF = 15 = 0x0F
+        //   byte5 = (1000 >> 14) & 0x03 = 0
+        vs.update_from_frame(inv466({0, 0, 0, 0xA0, 0x0F, 0x00}, 6));
+        VehicleState v = vs.snapshot();
+        CHECK(v.inv_ac_power_W == 32767, "ACBus_Power_W: +1000 counts -> 32767 W");
+
+        // Negative: counts = -1000 -> 0xFC18 in 16 bits.
+        //   byte3 = (0xFC18 & 0x3F) << 2 = 0x18 << 2 = 0x60
+        //   byte4 = (0xFC18 >> 6) & 0xFF = 0xF0
+        //   byte5 = (0xFC18 >> 14) & 0x03 = 0x03
+        vs.update_from_frame(inv466({0, 0, 0, 0x60, 0xF0, 0x03}, 6));
+        v = vs.snapshot();
+        CHECK(v.inv_ac_power_W == -32767, "ACBus_Power_W is SIGNED (regen / decode check)");
+
+        // A DLC-4 frame must still yield the DC-bus voltage -- it gates
+        // Precharge -- and must NOT read past the end for the power.
+        vs.update_from_frame(inv466({0, 0, 0x2C, 0x01, 0, 0}, 4));
+        v = vs.snapshot();
+        CHECK(v.inv_dc_bus_V == 300, "short 0x466 still decodes the DC bus");
+        CHECK(v.inv_ac_power_W == -32767, "...and leaves AC power untouched, not zeroed");
+    }
+}
+
 // T.11.8.9 APPS disagreement, including the 100 ms persistence window.
 static void test_t11_8_9_window() {
     std::printf("[t11_8_9]\n");
@@ -1364,8 +1437,15 @@ static void test_power_envelope() {
     for (unsigned si = 0; si < sizeof(kSpeeds)/sizeof(kSpeeds[0]); ++si) {
         const std::int32_t rpm = kSpeeds[si];
         const double kw = shaft_kw(rpm);
-        CHECK(kw < 74.0, "capped shaft power stays under the 72 kW budget + rounding");
-        CHECK(kw > 68.0, "...and is not needlessly conservative");
+        // Budget is now 76 kW * 0.90 = 68.4 kW of SHAFT power, not 72 -- the
+        // envelope target was lowered to buy explicit margin against an
+        // unmeasured DrivetrainEffPct (#195). Bounds track the constants rather
+        // than being re-hardcoded, so the next change to either shows up as a
+        // deliberate edit here instead of a mystery failure.
+        const double budget_kw =
+            static_cast<double>(PowerLimitW) * DrivetrainEffPct / 100.0 / 1000.0;
+        CHECK(kw < budget_kw + 2.0, "capped shaft power stays under the budget + rounding");
+        CHECK(kw > budget_kw - 4.0, "...and is not needlessly conservative");
     }
     // Uncapped, the map would blow straight through it -- this is the finding.
     {
@@ -2599,6 +2679,7 @@ static void run_all() {
     test_precharge_no_ack();
     test_active_torque_and_deadband();
     test_endurance_guards();
+    test_power_margin();
     test_t11_8_9_window();
     test_ams_error();
     test_cell_v_derate();
@@ -2638,6 +2719,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-full-cycle"))       { test_boot_sequence(); test_active_torque_and_deadband(); }
     else if (!std::strcmp(m, "--test-inv-leaves-drive"))   test_inv_leaves_drive();
     else if (!std::strcmp(m, "--test-endurance-guards")) test_endurance_guards();
+    else if (!std::strcmp(m, "--test-power-margin"))       test_power_margin();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

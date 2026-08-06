@@ -37,6 +37,12 @@ struct VehicleState {
     std::uint8_t  inv_emctrl_bits   = 0;  // 0x461 bits 39-46, L2 EMCtrl_FOC_BitState (8 bits)
     std::int32_t  inv_rpm           = 0;  // 0x463 EMachine_Speed_erpm (20-bit signed)
     std::uint16_t inv_dc_bus_V      = 0;  // 0x466 DCBus_Voltage_V (10-bit)
+    // The inverter's OWN measurement of its AC output power, on the SAME frame
+    // as the DC-bus voltage. It was arriving and being discarded: the 0x466
+    // handler guarded dlc < 4 and never looked at bytes 3-5. This is the
+    // cheapest path to a measured drivetrain efficiency, which is the entire
+    // margin of the EV 2.2.1 envelope (#177).
+    std::int32_t  inv_ac_power_W    = 0;  // 0x466 ACBus_Power_W, decoded to WATTS
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
     std::uint8_t  inv_temp_motor1   = 0;  // 0x464 motor temp 1      (raw)
@@ -157,7 +163,12 @@ public:
     static std::uint16_t decode_ams_min_cell(const std::uint8_t* d) noexcept;  // 0x4A0 BE16 @ b4-5
     static std::uint8_t  decode_inv_state(const std::uint8_t* d)   noexcept;   // 0x461 b4 & 0x7F
     static std::int32_t  decode_inv_rpm(const std::uint8_t* d)     noexcept;   // 0x463 20-bit signed @ bit44
-    static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
+    static std::uint16_t decode_inv_dc_bus_V(const std::uint8_t* d) noexcept;
+    // 0x466 ACBus_Power_W: 16-bit SIGNED little-endian at frame bit 26, so it
+    // straddles three bytes (byte3 bits 2-7, byte4, byte5 bits 0-1). Returns
+    // WATTS -- the 32.767 W/LSB scale is folded in here so no caller has to
+    // carry it. Requires dlc >= 6.
+    static std::int32_t  decode_inv_ac_power_W(const std::uint8_t* d) noexcept;  // 0x466 10-bit @ bit16
     static std::int32_t  decode_udv_torque_cmd(const std::uint8_t* d) noexcept; // 0x507 s32 LE (integer %)
 
     // Condition the 0x507 integer percent into what the control core consumes:
