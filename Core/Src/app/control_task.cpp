@@ -337,6 +337,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             // delivered can be read off one frame without correlating.
             can_tx_post(PitDiag::build_inv_torque(
                 veh, Inverter::torque_to_nm_req(out.torque_pct)));       // 0x70C
+            can_tx_post(PitDiag::build_power(out, veh));                 // 0x70D shaft/AC/DC
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh, ctrl.motor_thermal()));

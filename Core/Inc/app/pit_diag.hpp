@@ -54,6 +54,11 @@ public:
     static CanFrame build_inv_foc(const VehicleState& v, std::uint32_t now_ms) noexcept;
     static CanFrame build_inv_torque(const VehicleState& v,
                                      std::int16_t torque_req_nm) noexcept;
+    // 0x70D -- commanded shaft power next to the inverter's measured AC power
+    // and the DC bus. This is the frame that retires DrivetrainEffPct as a
+    // guess: it is the entire compliance margin of the EV 2.2.1 envelope and it
+    // has never been measured (#177).
+    static CanFrame build_power(const CtrlOutput& c, const VehicleState& v) noexcept;
     static CanFrame build_pedals(const IoInputs& io,
                                  const PedalCal& cal) noexcept;  // 0x701
     // 0x702. inv_mode_cmd is the App_State_Req the ECU is COMMANDING on 0x360

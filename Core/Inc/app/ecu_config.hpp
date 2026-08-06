@@ -251,7 +251,29 @@ inline constexpr int32_t  MotorPolePairs       = 10;
 // "The TS power at the outlet of the TSAC must not exceed 80 kW", judged on a
 // 500 ms moving average (D 10.4.1). Nothing in the vehicle enforced this before
 // -- see power_limit.hpp.
-inline constexpr uint32_t PowerLimitW          = 80000;
+// 76 kW, NOT the 80 kW of the rule. This is DELIBERATE MARGIN, and it is
+// lowered here rather than by fudging DrivetrainEffPct because the two mean
+// different things -- one is the rule, the other is a physical property of the
+// drivetrain, and conflating them would hide the assumption instead of bounding
+// it.
+//
+// WHY. The envelope caps COMMANDED SHAFT torque; EV 2.2.1 is judged on a 500 ms
+// moving average at the TSAC OUTLET (D 10.4.1). The bridge between them is
+// DrivetrainEffPct, which has never been measured. At 80 kW the design point sat
+// at 71.98 kW of shaft power at the knee -- 79.98 kW at the assumed 90 %, i.e.
+// 99.97 % of the legal limit, on an unmeasured constant. And there is no relief
+// from the averaging window: the capped power is a flat plateau above the knee,
+// and a plateau's moving average IS its instantaneous value.
+//
+// 76 kW gives 5 % headroom, so the envelope stays legal down to eta = 0.855. It
+// costs ~5 % of straight-line power and moves the knee from 2864 to 2721 rpm.
+// A 5 % power loss is cheap; a disqualification is not.
+//
+// RAISE THIS BACK TOWARDS 80000 ONLY once the real efficiency is measured -- see
+// 0x70D, which now publishes commanded shaft power next to the inverter's own
+// AC power measurement and the DC bus, so the number can be read off the car
+// rather than assumed.
+inline constexpr uint32_t PowerLimitW          = 76000;
 // Assumed inverter+motor efficiency. The rule is on ELECTRICAL power at the
 // TSAC outlet but we can only cap SHAFT torque, so the shaft budget is the
 // electrical limit times efficiency. 90 % is an assumption, not a measurement:
@@ -438,6 +460,12 @@ inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (
 inline constexpr uint32_t InvRxCtrlModeId      = 0x465u;     // EMC_TX_STATE_6 (Cmd_Src/Ctrl_Type/Ctrl_Mode/PosFb_Src)
 inline constexpr uint32_t InvRxTorqueLimId     = 0x467u;     // EMC_TX_STATE_8 (Torque_Max_Feas + Setpoint_App_D/Q_A)
 inline constexpr uint32_t InvRxTorqueEstId     = 0x468u;     // EMC_TX_STATE_9 (Torque_Est_Nm)
+// ACBus_Power_W rides on 0x466 (EMC_TX_STATE_7) alongside the DC-bus voltage we
+// already decode -- 16-bit signed at frame bit 26, 32.767 W/LSB. The handler
+// guarded dlc < 4 and dropped bytes 3-5, so the inverter's OWN measurement of
+// its AC output power was arriving and being discarded. It is the cheapest
+// route to a real drivetrain efficiency (#177).
+inline constexpr int32_t  InvAcPowerScaleMilli = 32767;      // W per LSB * 1000
 // 0x463/0x465/0x467/0x468 freshness. The inverter cyclics are fast; 200 ms is
 // the same window the rest of the inverter feedback uses.
 inline constexpr uint32_t InvFeedbackStaleMs   = 200;

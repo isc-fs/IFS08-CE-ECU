@@ -135,6 +135,28 @@ CanFrame PitDiag::build_inv_torque(const VehicleState& v,
     return make_acu(PitDiag_inv_torque_ID, b);
 }
 
+CanFrame PitDiag::build_power(const CtrlOutput& c, const VehicleState& v) noexcept {
+    PitDiag_power_t d{};
+    // Commanded MECHANICAL power: P = T * omega, omega = rpm * 2*pi/60. Integer
+    // via 2*pi/60 ~= 0.10472 -> *1047/10000. Reported in 10 W units.
+    const std::int32_t rpm_mech = v.inv_rpm / config::MotorPolePairs;
+    const std::int32_t shaft_W  =
+        static_cast<std::int32_t>(c.torque_nm) * rpm_mech * 1047 / 10000;
+    auto to_daW = [](std::int32_t w) -> std::int16_t {
+        std::int32_t v10 = w / 10;
+        if (v10 >  32767) v10 =  32767;
+        if (v10 < -32768) v10 = -32768;
+        return static_cast<std::int16_t>(v10);
+    };
+    d.shaft_power  = to_daW(shaft_W);
+    d.ac_power     = to_daW(v.inv_ac_power_W);
+    d.dc_bus_V     = v.inv_dc_bus_V;
+    d.accu_current = v.current_accu_dA;   // AMS 0x135, the OTHER bus
+    std::uint8_t b[PitDiag_power_DLC];
+    encode_PitDiag_power(d, b);
+    return make_acu(PitDiag_power_ID, b);
+}
+
 CanFrame PitDiag::build_pedals(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_pedals_t p{};
     p.apps1_raw = io.apps1_raw;
