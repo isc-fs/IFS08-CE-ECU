@@ -417,6 +417,12 @@ inline constexpr uint32_t AcuTmaxStaleMs       = 1000;
 // falls back to using every plausible reading.
 inline constexpr uint32_t AmsStatusStaleMs     = 1500;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
+// 0x466 DCBus_Voltage_V specifically, for the 0x100 heartbeat we publish to the
+// AMS. DELIBERATELY GENEROUS: this frame's cycle time is recorded NOWHERE -- not
+// in the vendor DBC (it carries no GenMsgCycleTime at all) and not measured on
+// the car -- so a tight window would false-trip and republish 0 V during normal
+// running. Narrow it once the period is captured; see #198.
+inline constexpr uint32_t InvDcBusStaleMs      = 500;
 // 0x464 temperatures, tracked separately from the inverter block (see
 // VehicleState). Feeds the motor thermal cap, which must fall back to its
 // unknown-sensor cap when the TEMPERATURES stop, not when the inverter does.

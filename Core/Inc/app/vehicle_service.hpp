@@ -150,6 +150,37 @@ public:
 
     [[nodiscard]] VehicleState snapshot() const noexcept;
 
+    // The DC-bus voltage to PUBLISH on the 0x100 heartbeat, given a snapshot and
+    // the current tick. Pure, so the SIL pins it -- and it is worth pinning,
+    // because the failure it prevents is silent on both sides of the wire.
+    //
+    // THE PROBLEM IT SOLVES. 0x100 is emitted every 10 ms in EVERY state, so the
+    // FRAME is always fresh. But the VALUE is a relayed 0x466 reading held in
+    // VehicleState, and nothing invalidated it -- so when the inverter stops
+    // transmitting, we went on broadcasting its last value at 100 Hz forever.
+    // The AMS gates on 0x100 freshness and cannot catch that: frame freshness
+    // and data freshness are different things.
+    //
+    // The dangerous direction is FROZEN HIGH. The AMS's precharge-complete
+    // criterion is dc_bus_V >= 95 % of pack, so a value frozen at pack voltage
+    // satisfies it before precharge even starts -- the precharge resistor never
+    // carries current and a DEAD PRECHARGE PATH PASSES ITS OWN SELF-TEST (#198).
+    //
+    // Stale therefore publishes 0 V, which is the fail-safe direction for that
+    // criterion: 0 is never >= 95 % of pack, so the AMS keeps precharging rather
+    // than taking the shortcut. The frame keeps flowing, so the AMS VcuStale
+    // watchdog is not disturbed and the AIRs are not dropped by this.
+    //
+    // >>> 0 IS NOT FAIL-SAFE FOR EVERY CONSUMER. <<< For the discharge gate
+    // proposed in #198 ("hold the bleed until the link is below threshold") a
+    // frozen-low reading would release the gate EARLY. That case needs an
+    // explicit validity bit alongside the voltage, which is a two-sided change
+    // to the 0x100 contract and is being agreed on that issue. This function is
+    // the unilateral half: it removes the frozen-HIGH hazard, which is live
+    // today, without changing the frame layout.
+    [[nodiscard]] static std::uint16_t heartbeat_dc_bus_V(const VehicleState& v,
+                                                          std::uint32_t now) noexcept;
+
     // Rollover-safe freshness (future-tick safe): a tick stamped slightly ahead
     // of `now` counts as just-seen, never ancient. Pure; public for tests.
     [[nodiscard]] static bool is_fresh(std::uint32_t now, std::uint32_t last,

@@ -261,7 +261,11 @@ extern "C" void ecu_control_task_run(void *argument) {
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
             VCU_heartbeat_t hb{};
-            hb.dc_bus_voltage = veh.inv_dc_bus_V;
+            // NOT veh.inv_dc_bus_V directly: that is a held 0x466 reading with
+            // no expiry, and this frame is emitted every 10 ms regardless -- so a
+            // silent inverter left us broadcasting pack voltage forever while the
+            // AMS's own staleness check saw a perfectly healthy frame (#198).
+            hb.dc_bus_voltage = VehicleService::heartbeat_dc_bus_V(veh, now);
             uint8_t b[VCU_heartbeat_DLC];
             encode_VCU_heartbeat(hb, b);
             CanFrame f{};

@@ -788,6 +788,48 @@ static void test_power_margin() {
     }
 }
 
+// The 0x100 heartbeat must not publish a STALE DC-bus reading (#198).
+static void test_heartbeat_freshness() {
+    std::printf("[heartbeat_freshness]\n");
+
+    VehicleState v{};
+    v.inv_dc_bus_V      = 400;      // pack voltage
+    v.last_vconfig_tick = 1000;     // 0x466 arrived at t=1000
+
+    // Fresh -> publish the measurement.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000) == 400, "fresh -> the real reading");
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000 + InvDcBusStaleMs) == 400,
+          "still fresh at the edge of the window");
+
+    // Stale -> 0, NOT the held value. THE REGRESSION: 0x100 is emitted every
+    // 10 ms in every state, so the FRAME is always fresh; publishing the held
+    // reading meant a silent inverter left us broadcasting pack voltage forever
+    // while the AMS's own staleness check saw a perfectly healthy frame. The
+    // AMS's precharge-complete criterion is dc_bus_V >= 95 % of pack, so a
+    // frozen-high value satisfies it before precharge even starts -- a dead
+    // precharge path would pass its own self-test.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000 + InvDcBusStaleMs + 1) == 0,
+          "stale -> 0 V, never the frozen reading");
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 60000) == 0, "long stale -> still 0");
+
+    // Never received at all: last_vconfig_tick == 0 means is_fresh is false by
+    // construction, so a boot-time reading cannot masquerade as a measurement.
+    {
+        VehicleState nv{};
+        nv.inv_dc_bus_V = 400;      // whatever happened to be in the field
+        CHECK(VehicleService::heartbeat_dc_bus_V(nv, 5000) == 0,
+              "0x466 never seen -> 0, not the uninitialised field");
+    }
+
+    // 0 is the FAIL-SAFE direction for the AMS precharge criterion specifically:
+    // 0 is never >= 95 % of pack, so the AMS keeps precharging rather than
+    // taking the shortcut. It is NOT fail-safe for the discharge gate proposed
+    // in #198 -- that needs an explicit validity bit, which is a two-sided
+    // change to the 0x100 contract.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 60000) < 400 * 95 / 100,
+          "the stale substitute cannot satisfy a 95%-of-pack criterion");
+}
+
 // T.11.8.9 APPS disagreement, including the 100 ms persistence window.
 static void test_t11_8_9_window() {
     std::printf("[t11_8_9]\n");
@@ -2679,6 +2721,7 @@ static void run_all() {
     test_precharge_no_ack();
     test_active_torque_and_deadband();
     test_endurance_guards();
+    test_heartbeat_freshness();
     test_power_margin();
     test_t11_8_9_window();
     test_ams_error();
@@ -2720,6 +2763,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inv-leaves-drive"))   test_inv_leaves_drive();
     else if (!std::strcmp(m, "--test-endurance-guards")) test_endurance_guards();
     else if (!std::strcmp(m, "--test-power-margin"))       test_power_margin();
+    else if (!std::strcmp(m, "--test-heartbeat-fresh"))    test_heartbeat_freshness();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }
