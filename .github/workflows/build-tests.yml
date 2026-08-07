@@ -156,6 +156,14 @@ jobs:
         continue-on-error: true
         with:
           repository: isc-fs/IFS08-CE-AMS
+          # dev, NOT the default branch. Both repos develop on dev and release
+          # via main, so dev-vs-dev is the comparison a PR should be held to.
+          # Checking against AMS main immediately flagged a REAL divergence the
+          # first time this ran: their main still has 0x100 at DLC 2 and no
+          # 0x021 at all, because the #198 work lives on their dev. That is a
+          # RELEASE ordering hazard -- documented in docs/flashing.md -- not
+          # something an ECU pull request can fix, so it does not belong here.
+          ref: dev
           path: _ams
           token: ${{ secrets.AMS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Diff the shared frames
