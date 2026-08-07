@@ -196,7 +196,7 @@ inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data
 //
 // Measure it without a dyno: stream pit-diag, do one acceleration run, plot
 // est_ocv_mV from 0x709. Still dips under load -> raise it. Humps upward ->
-// lower it. Flat -> correct. tools/packlog.py fits the same number off a log.
+// lower it. Flat -> correct.
 // 0 disables compensation entirely (derate on raw loaded voltage, as before).
 inline constexpr uint16_t CellIrMilliOhm       = 1;     // COMMISSION: measure on car
 // Ceiling on the correction, so a current sensor reading nonsense cannot mask
@@ -278,7 +278,8 @@ inline constexpr uint32_t PowerLimitW          = 76000;
 // TSAC outlet but we can only cap SHAFT torque, so the shaft budget is the
 // electrical limit times efficiency. 90 % is an assumption, not a measurement:
 // too high and we exceed the limit, too low and we leave performance unused.
-// Confirm against a real 500 ms average from scripts/packlog.py and adjust.
+// Confirm against a real 500 ms average measured on the car (0x70D gives the
+// commanded shaft power next to the inverter's own AC measurement) and adjust.
 inline constexpr uint32_t DrivetrainEffPct     = 90;
 // Folded constant: K = P * eta * 60/(2*pi), so T_max[Nm] = K / rpm_mech.
 // 60/(2*pi) = 9.5493, carried as 9549/1000. Ordered to stay inside uint32:

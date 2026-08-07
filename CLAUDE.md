@@ -2,6 +2,34 @@
 
 Guía de contexto para sesiones futuras. Leer antes de tocar código.
 
+> **New to this repo? Start here, in this order.** Docs are being migrated to
+> English; the code, every `.def` and the generated DBC are already English.
+>
+> | | |
+> |---|---|
+> | 1 | This file — architecture, the FSM, the CAN contract, and the traps |
+> | 2 | [`docs/flashing.md`](docs/flashing.md) — build, flash, **and un-brick**. Read the recovery section BEFORE you need it |
+> | 3 | [`docs/derating.md`](docs/derating.md) — the four torque caps and how they compose |
+> | 4 | [`docs/commissioning.md`](docs/commissioning.md) — on-car bring-up and every unmeasured constant |
+>
+> **The four things most likely to cost you a weekend, all of them deliberate
+> and none of them bugs:**
+>
+> 1. **Bench stubs are config values, not build flags.** `TorqueCap`,
+>    `StubNoAms`, `StubNoInverter`, `StubStart`, `StubBrakeRaw` in
+>    `ecu_config.hpp`. A flight build has `TorqueCap = 100` and the rest
+>    `false`. All five are announced on the **ungated `0x704`** — check the bus,
+>    not the source tree.
+> 2. **The torque sent to the inverter is NEGATED.** Mechanical constraint of
+>    the motor mounting (`inverter.cpp`). Remove it and the car drives backwards.
+> 3. **PA5/PA6/PA7 are nRF24 bit-bang, not SPI1**, and **PB6 is the DC-link
+>    discharge**, not a spare GPIO. See [`docs/PINES_RUTEADOS_IOC.md`](docs/PINES_RUTEADOS_IOC.md).
+> 4. **MessageRAM offsets must be re-applied after every CubeMX regen** — see
+>    the warning in the CAN section below.
+>
+> **Anything under [`docs/historical/`](docs/historical/) describes firmware that
+> no longer exists.** Do not cite it.
+
 ---
 
 ## Qué es este proyecto
@@ -350,6 +378,12 @@ ficheros).
 |---------|----------|
 | `Core/Src/app/control.cpp` · `Core/Inc/app/control.hpp` | Núcleo `ecu::Controller`: FSM + torque + plausibilidad. Sin HAL. |
 | `Core/Inc/app/ecu_config.hpp` | **Todas** las constantes tunables. Calibración `COMMISSION` aquí. |
+| `Core/Inc/app/cell_derate.hpp` · `Core/Src/app/cell_derate.cpp` | Cap por celda baja sobre **OCV estimado** (compensación IR). Puro, en el SIL. Ver [`docs/derating.md`](docs/derating.md). |
+| `Core/Inc/app/motor_thermal.hpp` · `.cpp` | Cap térmico de motor (EMRAX 228). Puro. |
+| `Core/Inc/app/pack_thermal.hpp` · `.cpp` | Cap térmico de acumulador (por módulo, con `module_online_mask`). Puro. |
+| `Core/Inc/app/power_limit.hpp` · `.cpp` | Envolvente EV 2.2.1. Feed-forward, entero. Puro. |
+| `Core/Inc/app/derate_ramp.hpp` | La rampa descendente que comparten los dos caps térmicos. |
+| `Core/Inc/app/discharge.hpp` · `Core/Src/app/discharge.cpp` | Descarga del DC-link mantenida por la ECU (#198). Latch sobre `0x021`, suelta con **medida propia**. Puro. |
 | `Core/Src/app/control_task.cpp` | Tarea realtime 10 ms. `0x100` en todo estado + único kicker IWDG. |
 | `Core/Src/app/can_rx_task.cpp` | Drena RX, despacha, único escritor de VehicleService. |
 | `Core/Src/app/can_tx_task.cpp` | Único punto TX del FDCAN; selecciona bus por `frame.bus`. |
@@ -369,6 +403,8 @@ ficheros).
 | `Core/Src/app/gps_task.cpp` · `gps_service.cpp` · `gps_tx.cpp` | Tarea GPS (ISR USART10 → anillo SPSC → parser), snapshot compartido y builders `0x508`/`0x509`. |
 | `Core/Src/app/{bootloader,error_latch,reset_cause,firmware_info,pit_diag,watchdog}.cpp` | Trigger BL (0x002), latch de fault en BKPxR, reset cause, fwinfo (0x703), builders pit-diag, helpers IWDG. |
 | `Core/Inc/can/messages/*.def` + `all_messages.inc` | DSL CAN (fuente de verdad). |
+| `Core/Src/app/app_globals.cpp` · `Core/Inc/app/app_globals.h` | Espejos `g_last_*` que la telemetría y el dashboard leen sin tocar el core. Incluye el anuncio de stubs de `0x704`. |
+| `Core/Src/app/can_isr.cpp` | ISR RX de los tres FDCAN → `can_rx_queue`. Único productor. |
 | `Core/Src/{main,fdcan,freertos}.c` | Handoff BL (#48), MX FDCAN + offset 387w, attrs de tareas. |
 | `docs/dbc/ecu.dbc` | DBC generado del DSL (dbcinator lo mantiene). |
 | `docs/commissioning.md` | **Runbook operativo**: calibración APPS/freno + stubs de banco. Léelo antes de tocar el coche. |

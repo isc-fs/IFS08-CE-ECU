@@ -123,3 +123,26 @@ jobs:
             arm-none-eabi-size --format=berkeley build-fw/ECU08.elf
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Cross-repo CAN contract. Added after the 0x021 incident (Aug 2026): the ECU
+  # and the AMS agreed on a frame ID while disagreeing about its fields, and
+  # nothing in either repo could notice. This diffs the two generated DBCs.
+  #
+  # continue-on-error: the AMS repo is a separate private repo, so a checkout
+  # failure (permissions, rename) must not block an ECU PR. The check SKIPS
+  # cleanly when the DBC is absent; this only guards the checkout step itself.
+  ams-contract:
+    name: Cross-repo CAN contract (AMS)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out IFS08-CE-AMS alongside
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: isc-fs/IFS08-CE-AMS
+          path: ../IFS08-CE-AMS
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Diff the shared frames
+        run: python3 scripts/check_ams_contract.py
