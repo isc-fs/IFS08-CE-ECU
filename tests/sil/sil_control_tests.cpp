@@ -793,9 +793,15 @@ static void test_power_margin() {
 static void test_discharge_hold() {
     std::printf("[discharge_hold]\n");
 
-    auto in_at = [](bool req, uint16_t v, bool valid, uint32_t t) {
+    // The AMS sends two RAW OBSERVATIONS on 0x021 -- fsm_in_start and tsms --
+    // never a pre-computed request. The ECU supplies the third term (a charged
+    // link it can see itself) and combines all three. This helper mirrors that:
+    // `strand` sets BOTH AMS bits, which together with a charged, valid reading
+    // is what "the link is stranded" means.
+    auto in_at = [](bool strand, uint16_t v, bool valid, uint32_t t) {
         DischargeInputs d{};
-        d.request = req; d.dc_bus_V = v; d.dc_bus_valid = valid; d.now_ms = t;
+        d.fsm_in_start = strand; d.tsms = strand;
+        d.dc_bus_V = v; d.dc_bus_valid = valid; d.now_ms = t;
         return d;
     };
 
@@ -842,6 +848,42 @@ static void test_discharge_hold() {
         CHECK(s.secure, "stale reading cannot release, however low it reads");
         s = d.update(in_at(true, 0, true, 1400));       // now valid
         CHECK(!s.secure, "a VALID low reading releases");
+    }
+
+    // ---- ALL THREE terms are required to SECURE (#198 contract) -----------
+    // The first cut of the 0x021 decode read bit 0 as a complete request and
+    // ignored bit 1, so "the AMS is in Start" alone armed a discharge. Each of
+    // these is that bug, isolated.
+    {
+        Discharge d; DischargeInputs x{};
+        x.dc_bus_V = 400; x.dc_bus_valid = true; x.now_ms = 100;
+        x.fsm_in_start = true;  x.tsms = false;
+        CHECK(!d.update(x).secure, "fsm_in_start alone does NOT secure -- tsms is required");
+    }
+    {
+        Discharge d; DischargeInputs x{};
+        x.dc_bus_V = 400; x.dc_bus_valid = true; x.now_ms = 100;
+        x.fsm_in_start = false; x.tsms = true;
+        CHECK(!d.update(x).secure, "tsms alone does NOT secure -- Start is required");
+    }
+    {
+        // A drained link with a STALE reading. This is the case that used to
+        // secure on every entry to Start and hold to the 30 s timeout, because
+        // the release path needs a valid reading that never arrives.
+        Discharge d; DischargeInputs x{};
+        x.fsm_in_start = true; x.tsms = true;
+        x.dc_bus_V = 0; x.dc_bus_valid = false; x.now_ms = 100;
+        CHECK(!d.update(x).secure, "no VALID reading -> do not secure (was a 30 s hang)");
+        x.now_ms = 100 + DischargeTimeoutMs + 1000;
+        const DischargeState s = d.update(x);
+        CHECK(!s.secure && !s.fault, "...and no spurious timeout fault either");
+    }
+    {
+        // Already drained, reading valid: nothing to do.
+        Discharge d; DischargeInputs x{};
+        x.fsm_in_start = true; x.tsms = true;
+        x.dc_bus_V = DischargeReleaseV; x.dc_bus_valid = true; x.now_ms = 100;
+        CHECK(!d.update(x).secure, "an already-drained link does not need securing");
     }
 
     // ---- timeout: the link never falls ------------------------------------
