@@ -407,7 +407,7 @@ inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuSt
 // The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
 // compensation gives up and the derate falls back to raw loaded voltage.
 inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
-inline constexpr uint32_t AcuDischargeReqId    = 0x021u;   // AMS -> ECU discharge request (#198)
+inline constexpr uint32_t AcuDischargeInterlockId = 0x021u;  // AMS fsm_in_start + tsms (#198)
 // 0x136/0x137 per-module temperatures, 250 ms cyclic. Four missed in a row
 // before the pack cap falls back to its unknown-sensor value. This window is the
 // WHOLE fail-safe for the uninitialised case (0 degC is a real pack

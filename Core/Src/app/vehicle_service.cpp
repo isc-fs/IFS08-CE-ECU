@@ -241,9 +241,11 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_ams_tick = f.timestamp_ms;
             return true;
         }
-        if (f.id == config::AcuDischargeReqId) {            // 0x021 (#198)
+        if (f.id == config::AcuDischargeInterlockId) {      // 0x021 (#198)
             if (f.dlc < 1) return false;
-            state_.discharge_request      = static_cast<std::uint8_t>(f.data[0] & 0x01u);
+            // Bit 0 fsm_in_start, bit 1 tsms -- mirrors the AMS's own .def.
+            state_.ams_fsm_in_start        = static_cast<std::uint8_t>(f.data[0] & 0x01u);
+            state_.ams_tsms                = static_cast<std::uint8_t>((f.data[0] >> 1) & 0x01u);
             state_.last_discharge_req_tick = f.timestamp_ms;
             state_.last_ams_tick           = f.timestamp_ms;
             return true;

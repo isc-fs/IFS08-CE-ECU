@@ -237,8 +237,9 @@ BO_ 1805 PitDiag_power: 8 VCU
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
-BO_ 33 ACU_discharge_request: 1 AMS
- SG_ request : 0|1@1+ (1,0) [0|0] "bit" Vector__XXX
+BO_ 33 ACU_discharge_interlock: 1 AMS
+ SG_ fsm_in_start : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ tsms : 1|1@1+ (1,0) [0|0] "bool" Vector__XXX
 
 BO_ 300 ACU_v_cell_min: 2 AMS
  SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX

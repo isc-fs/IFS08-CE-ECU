@@ -29,15 +29,26 @@
 // fought the SDC for the coil; a relay in series with the BLEED could only ever
 // interrupt a discharge, which is a rules problem.
 //
-// WHO DECIDES. Not us. The AMS asks, on 0x021:
+// WHO DECIDES. Split, deliberately, and the split is the AMS's design (0x021
+// ACU_discharge_interlock). They publish two RAW OBSERVATIONS -- never a
+// pre-computed request -- and WE supply the third term and combine them:
 //
-//      request = (AMS FSM in Start) AND (TSMS on) AND (dc_bus > 60 V)
+//      secure = fsm_in_start  AND  tsms  AND  (OUR dc_bus > DischargeReleaseV)
+//               \____________ 0x021 ____________/   \____ our measurement ____/
+//
+// Their reasoning, and it is right: the third term is a measurement only the ECU
+// has, and routing the whole decision through a CAN frame would put a stale
+// value in the middle of it.
 //
 // The Start qualifier is load-bearing: TSMS-on with a charged link is ALSO true
 // in normal driving, so without it this would command a bleed across a live
-// tractive system at speed. In Start the AIRs are open, so the same reading
-// uniquely means "the shutdown circuit was cycled and the discharge did not
-// finish". The AMS knows FSM state, TSMS and AIR state; we know none of them.
+// tractive system at speed. In Start the AIRs are all commanded open, so the
+// same reading uniquely means "the shutdown circuit was cycled and the discharge
+// did not finish". The AMS knows FSM state and TSMS; we know neither.
+//
+// The dc_bus term is not optional either. Without it, entering Start with an
+// already-drained link and a stale 0x466 secures on every entry and holds to the
+// timeout -- the release needs a VALID reading, which never comes.
 //
 // Note this is a LEVEL condition, not an edge. The stranded link keeps the
 // request true for as long as it is stranded, so nothing has to catch a fast
@@ -93,7 +104,10 @@
 namespace ecu {
 
 struct DischargeInputs {
-    bool          request        = false;  // 0x021 from the AMS, ALREADY conditioned on freshness
+    // The AMS's two raw observations (0x021), ALREADY conditioned on that
+    // frame's freshness by the caller. NOT a request -- see the header note.
+    bool          fsm_in_start   = false;  // 0x021 bit 0: AIRs and precharge all open
+    bool          tsms           = false;  // 0x021 bit 1: SDC complete -> bleed disconnected
     std::uint16_t dc_bus_V       = 0;      // 0x466, relayed
     bool          dc_bus_valid   = false;  // 0x466 fresh -- a held reading is not a measurement
     std::uint32_t now_ms         = 0;

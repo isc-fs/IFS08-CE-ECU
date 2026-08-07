@@ -46,7 +46,7 @@
 
 /* ---- RX consumed (sender owns the layout) ------------------------------- */
 #include "acu_ok_precharge.def"     /* 0x020  AMS precharge-OK                */
-#include "acu_discharge_request.def"/* 0x021  AMS asks the ECU to hold a bleed */
+#include "acu_discharge_interlock.def" /* 0x021 AMS fsm_in_start + tsms       */
 #include "acu_v_cell_min.def"       /* 0x12C  AMS min cell voltage            */
 #include "acu_vmin_module_a.def"    /* 0x131  AMS per-module vmin 0..2        */
 #include "acu_vmin_module_b.def"    /* 0x132  AMS per-module vmin 3..4        */

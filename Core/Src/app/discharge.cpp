@@ -17,13 +17,24 @@ DischargeState Discharge::update(const DischargeInputs& in) noexcept {
     // tick by a request that is still true -- because the condition that
     // produced it (a stranded link) is exactly what a failed discharge leaves
     // behind. That is an oscillation, not a retry.
-    if (fault_ && !in.request) fault_ = false;
+    // Cleared when the stranding condition goes away -- keyed on the AMS's
+    // observations rather than the full `stranded` term, because after a failed
+    // discharge the link is still charged by definition, so including the
+    // voltage would make the fault unclearable.
+    if (fault_ && !(in.fsm_in_start && in.tsms)) fault_ = false;
+
+    // The ECU's half of the decision. All three terms, and the third is ours:
+    // a charged link we can actually SEE. Without it, entering Start with an
+    // already-drained link and a stale 0x466 would secure every time and hold to
+    // the timeout, because the release path needs a valid reading.
+    const bool stranded = in.fsm_in_start && in.tsms &&
+                          in.dc_bus_valid && (in.dc_bus_V > DischargeReleaseV);
 
     if (!secured_) {
-        // LATCH. Entering on the level, not an edge: the AMS's request is
-        // "the link is stranded", which stays true while it is stranded, so
-        // there is no transient to catch.
-        if (in.request && !fault_) {
+        // LATCH. On the level, not an edge: a stranded link keeps these
+        // observations true for as long as it is stranded, so there is no fast
+        // SDC transient anyone has to catch.
+        if (stranded && !fault_) {
             secured_      = true;
             secured_at_ms_ = in.now_ms;
         }
