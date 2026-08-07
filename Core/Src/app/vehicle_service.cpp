@@ -114,6 +114,15 @@ std::uint8_t VehicleService::condition_udv_torque(std::int32_t cmd) noexcept {
     return static_cast<std::uint8_t>(cmd);
 }
 
+std::uint16_t VehicleService::heartbeat_dc_bus_V(const VehicleState& v,
+                                                 std::uint32_t now) noexcept {
+    // See the header for why stale publishes 0 rather than the held value, and
+    // why 0 is the right direction for the AMS precharge criterion but NOT for
+    // the discharge gate under discussion in #198.
+    if (!is_fresh(now, v.last_vconfig_tick, config::InvDcBusStaleMs)) return 0u;
+    return v.inv_dc_bus_V;
+}
+
 // ---- freshness -------------------------------------------------------------
 
 bool VehicleService::is_fresh(std::uint32_t now, std::uint32_t last,
@@ -230,6 +239,13 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.id == config::AcuOkPrechargeId) {             // 0x020
             state_.ok_precharge  = decode_ok_precharge(f.data);
             state_.last_ams_tick = f.timestamp_ms;
+            return true;
+        }
+        if (f.id == config::AcuDischargeReqId) {            // 0x021 (#198)
+            if (f.dlc < 1) return false;
+            state_.discharge_request      = static_cast<std::uint8_t>(f.data[0] & 0x01u);
+            state_.last_discharge_req_tick = f.timestamp_ms;
+            state_.last_ams_tick           = f.timestamp_ms;
             return true;
         }
         if (f.id == config::AcuVCellMinId) {                // 0x12C

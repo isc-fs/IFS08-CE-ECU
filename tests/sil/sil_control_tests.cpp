@@ -20,6 +20,7 @@
 
 #include "app/control.hpp"
 #include "app/cal_session.hpp"
+#include "app/discharge.hpp"
 #include "app/power_limit.hpp"
 #include "app/pedal_cal_nvm.hpp"
 #include "app/bootloader.hpp"    // matches_trigger (pure, host-testable)
@@ -786,6 +787,158 @@ static void test_power_margin() {
         CHECK(v.inv_dc_bus_V == 300, "short 0x466 still decodes the DC bus");
         CHECK(v.inv_ac_power_W == -32767, "...and leaves AC power untouched, not zeroed");
     }
+}
+
+// ECU-held DC-link discharge (#198).
+static void test_discharge_hold() {
+    std::printf("[discharge_hold]\n");
+
+    auto in_at = [](bool req, uint16_t v, bool valid, uint32_t t) {
+        DischargeInputs d{};
+        d.request = req; d.dc_bus_V = v; d.dc_bus_valid = valid; d.now_ms = t;
+        return d;
+    };
+
+    // ---- idle: no request, no secure --------------------------------------
+    {
+        Discharge d;
+        const DischargeState s = d.update(in_at(false, 400, true, 0));
+        CHECK(!s.secure,  "no request -> not securing");
+        CHECK(!s.engaged, "and not reporting engaged");
+        CHECK(!s.fault,   "and no fault");
+    }
+
+    // ---- THE POINT: latch on request, release on OUR measurement ----------
+    // A lost 0x021 mid-discharge must NOT abort it. That asymmetry is the whole
+    // reason the hold lives in the ECU rather than in the AMS -- the AMS can ask,
+    // but only we can guarantee completion.
+    {
+        Discharge d;
+        DischargeState s = d.update(in_at(true, 400, true, 1000));
+        CHECK(s.secure,  "request -> secure");
+        CHECK(s.engaged, "and reported engaged");
+
+        // Request disappears (CAN dropout). Link still charged.
+        s = d.update(in_at(false, 400, true, 1100));
+        CHECK(s.secure, "a lost request does NOT abort a discharge in progress");
+        s = d.update(in_at(false, 200, true, 3000));
+        CHECK(s.secure, "still holding at 200 V");
+
+        // Only OUR measurement releases it.
+        s = d.update(in_at(false, DischargeReleaseV - 1, true, 4000));
+        CHECK(!s.secure,  "released once the link is genuinely below threshold");
+        CHECK(!s.engaged, "and reported released");
+        CHECK(!s.fault,   "a completed discharge is not a fault");
+    }
+
+    // ---- a HELD reading must not release it -------------------------------
+    // dc_bus_valid = 0 means the 0x466 relay is stale. A stale-low value would
+    // otherwise release the bleed on a link that is still charged.
+    {
+        Discharge d;
+        DischargeState s = d.update(in_at(true, 400, true, 1000));
+        CHECK(s.secure, "securing");
+        s = d.update(in_at(true, 0, false, 1200));      // 0 V but NOT valid
+        CHECK(s.secure, "stale reading cannot release, however low it reads");
+        s = d.update(in_at(true, 0, true, 1400));       // now valid
+        CHECK(!s.secure, "a VALID low reading releases");
+    }
+
+    // ---- timeout: the link never falls ------------------------------------
+    // Bleed resistor open, sense fault, relay not obeying. Holding forever would
+    // leave a car that never arms with nothing saying why.
+    {
+        Discharge d;
+        DischargeState s = d.update(in_at(true, 400, true, 0));
+        CHECK(s.secure, "securing");
+        s = d.update(in_at(true, 400, true, DischargeTimeoutMs - 1));
+        CHECK(s.secure && !s.fault, "still trying just before the timeout");
+        s = d.update(in_at(true, 400, true, DischargeTimeoutMs));
+        CHECK(!s.secure, "gives up at the timeout");
+        CHECK(s.fault,   "and reports a fault");
+
+        // MUST NOT immediately re-latch: the request is still true, because a
+        // failed discharge leaves exactly the stranded link that produced it.
+        // That would be an oscillation, not a retry.
+        s = d.update(in_at(true, 400, true, DischargeTimeoutMs + 10));
+        CHECK(!s.secure, "does not re-latch while the same request stands");
+        CHECK(s.fault,   "fault is sticky");
+
+        // Cleared only when the AMS withdraws the request.
+        s = d.update(in_at(false, 400, true, DischargeTimeoutMs + 20));
+        CHECK(!s.fault, "fault clears when the request is withdrawn");
+        s = d.update(in_at(true, 400, true, DischargeTimeoutMs + 30));
+        CHECK(s.secure, "and a fresh request is honoured again");
+    }
+
+    // ---- boot: NOT secured, because the link may be live ------------------
+    // #198 asks for "power-up default engaged". Taken literally that is unsafe
+    // here: an ECU watchdog reset mid-drive boots with the TS live and the AIRs
+    // closed, and securing would put a transient-duty bleed across a live pack.
+    // What the requirement protects against -- reporting "not engaged" before we
+    // know -- is covered by dc_bus_valid instead.
+    {
+        Discharge d;
+        const DischargeState s = d.update(in_at(false, 0, false, 0));
+        CHECK(!s.secure, "boot does not force a discharge into an unmeasured link");
+    }
+
+    // ---- the ECU can only ever ADD a discharge ----------------------------
+    // Structural, and worth pinning: there is no input combination that makes
+    // `secure` mean "prevent a discharge". The SDC keeps its authority because
+    // PB6 only interrupts the coil.
+    {
+        Discharge d;
+        bool mirrors = true;
+        for (int i = 0; i < 200; ++i) {
+            const DischargeState s = d.update(in_at(i % 3 == 0, static_cast<uint16_t>(i * 3),
+                                                    i % 2 == 0, static_cast<uint32_t>(i * 10)));
+            if (s.secure != s.engaged) mirrors = false;
+        }
+        CHECK(mirrors, "reported state mirrors the command across 200 mixed inputs");
+    }
+}
+
+// The 0x100 heartbeat must not publish a STALE DC-bus reading (#198).
+static void test_heartbeat_freshness() {
+    std::printf("[heartbeat_freshness]\n");
+
+    VehicleState v{};
+    v.inv_dc_bus_V      = 400;      // pack voltage
+    v.last_vconfig_tick = 1000;     // 0x466 arrived at t=1000
+
+    // Fresh -> publish the measurement.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000) == 400, "fresh -> the real reading");
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000 + InvDcBusStaleMs) == 400,
+          "still fresh at the edge of the window");
+
+    // Stale -> 0, NOT the held value. THE REGRESSION: 0x100 is emitted every
+    // 10 ms in every state, so the FRAME is always fresh; publishing the held
+    // reading meant a silent inverter left us broadcasting pack voltage forever
+    // while the AMS's own staleness check saw a perfectly healthy frame. The
+    // AMS's precharge-complete criterion is dc_bus_V >= 95 % of pack, so a
+    // frozen-high value satisfies it before precharge even starts -- a dead
+    // precharge path would pass its own self-test.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 1000 + InvDcBusStaleMs + 1) == 0,
+          "stale -> 0 V, never the frozen reading");
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 60000) == 0, "long stale -> still 0");
+
+    // Never received at all: last_vconfig_tick == 0 means is_fresh is false by
+    // construction, so a boot-time reading cannot masquerade as a measurement.
+    {
+        VehicleState nv{};
+        nv.inv_dc_bus_V = 400;      // whatever happened to be in the field
+        CHECK(VehicleService::heartbeat_dc_bus_V(nv, 5000) == 0,
+              "0x466 never seen -> 0, not the uninitialised field");
+    }
+
+    // 0 is the FAIL-SAFE direction for the AMS precharge criterion specifically:
+    // 0 is never >= 95 % of pack, so the AMS keeps precharging rather than
+    // taking the shortcut. It is NOT fail-safe for the discharge gate proposed
+    // in #198 -- that needs an explicit validity bit, which is a two-sided
+    // change to the 0x100 contract.
+    CHECK(VehicleService::heartbeat_dc_bus_V(v, 60000) < 400 * 95 / 100,
+          "the stale substitute cannot satisfy a 95%-of-pack criterion");
 }
 
 // T.11.8.9 APPS disagreement, including the 100 ms persistence window.
@@ -2679,6 +2832,8 @@ static void run_all() {
     test_precharge_no_ack();
     test_active_torque_and_deadband();
     test_endurance_guards();
+    test_heartbeat_freshness();
+    test_discharge_hold();
     test_power_margin();
     test_t11_8_9_window();
     test_ams_error();
@@ -2720,6 +2875,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-inv-leaves-drive"))   test_inv_leaves_drive();
     else if (!std::strcmp(m, "--test-endurance-guards")) test_endurance_guards();
     else if (!std::strcmp(m, "--test-power-margin"))       test_power_margin();
+    else if (!std::strcmp(m, "--test-heartbeat-fresh"))    test_heartbeat_freshness();
+    else if (!std::strcmp(m, "--test-discharge"))          test_discharge_hold();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

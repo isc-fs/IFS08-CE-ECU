@@ -12,6 +12,7 @@
 #include "app/app_globals.h"
 #include "app/can_tx.hpp"
 #include "app/control.hpp"
+#include "app/discharge.hpp"
 #include "app/ecu_config.hpp"
 #include "app/inverter.hpp"
 #include "app/io_signals.hpp"
@@ -35,6 +36,7 @@ extern "C" void ecu_control_task_run(void *argument) {
     (void)argument;
 
     Controller ctrl;
+    Discharge  discharge;
     IoSignals  io;
     // The ACTIVE pedal calibration, loaded ONCE at task start from the
     // bootloader NVM sector (#169). load_cal_from_nvm never fails: absent,
@@ -258,10 +260,42 @@ extern "C" void ecu_control_task_run(void *argument) {
             }
         }
 
+        // --- ECU-held DC-link discharge (#198) -----------------------------
+        // The SDC still drives the discharge relay exactly as before; PB6 only
+        // interrupts its COIL, so the ECU can add a reason to discharge and can
+        // never take one away. The AMS decides WHEN (0x021: its FSM in Start,
+        // TSMS on, link still charged -- conditions only it can see); the ECU
+        // owns the HOLD, releasing on its own voltage rather than on the request,
+        // so a lost frame mid-discharge cannot re-strand the link.
+        const bool dc_bus_valid =
+            VehicleService::is_fresh(now, veh.last_vconfig_tick, config::InvDcBusStaleMs);
+        DischargeInputs di{};
+        di.request      = (veh.discharge_request != 0u) &&
+                          VehicleService::is_fresh(now, veh.last_discharge_req_tick,
+                                                   config::DischargeReqStaleMs);
+        di.dc_bus_V     = veh.inv_dc_bus_V;
+        di.dc_bus_valid = dc_bus_valid;
+        di.now_ms       = now;
+        const DischargeState dis = discharge.update(di);
+        // ACTIVE-HIGH = secure = open the coil path = force the bleed on.
+        // Reset state is high-Z, which the hardware must pull to PERMIT: a
+        // floating pin during bootloader + init must not command a discharge
+        // into a link nobody has looked at. Confirm the pull with electronics.
+        HAL_GPIO_WritePin(D3_GPIO_Port, D3_Pin,
+                          dis.secure ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        g_discharge_engaged = dis.engaged ? 1u : 0u;
+        g_discharge_fault   = dis.fault ? 1u : 0u;
+
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
             VCU_heartbeat_t hb{};
-            hb.dc_bus_voltage = veh.inv_dc_bus_V;
+            // NOT veh.inv_dc_bus_V directly: that is a held 0x466 reading with
+            // no expiry, and this frame is emitted every 10 ms regardless -- so a
+            // silent inverter left us broadcasting pack voltage forever while the
+            // AMS's own staleness check saw a perfectly healthy frame (#198).
+            hb.dc_bus_voltage = VehicleService::heartbeat_dc_bus_V(veh, now);
+            hb.dc_bus_valid   = dc_bus_valid ? 1u : 0u;
+            hb.discharge_engaged = dis.engaged ? 1u : 0u;
             uint8_t b[VCU_heartbeat_DLC];
             encode_VCU_heartbeat(hb, b);
             CanFrame f{};

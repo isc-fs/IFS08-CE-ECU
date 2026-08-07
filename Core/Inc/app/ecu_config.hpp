@@ -407,6 +407,7 @@ inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuSt
 // The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
 // compensation gives up and the derate falls back to raw loaded voltage.
 inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
+inline constexpr uint32_t AcuDischargeReqId    = 0x021u;   // AMS -> ECU discharge request (#198)
 // 0x136/0x137 per-module temperatures, 250 ms cyclic. Four missed in a row
 // before the pack cap falls back to its unknown-sensor value. This window is the
 // WHOLE fail-safe for the uninitialised case (0 degC is a real pack
@@ -417,6 +418,35 @@ inline constexpr uint32_t AcuTmaxStaleMs       = 1000;
 // falls back to using every plausible reading.
 inline constexpr uint32_t AmsStatusStaleMs     = 1500;
 inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback considered stale
+// 0x466 DCBus_Voltage_V specifically, for the 0x100 heartbeat we publish to the
+// AMS. DELIBERATELY GENEROUS: this frame's cycle time is recorded NOWHERE -- not
+// in the vendor DBC (it carries no GenMsgCycleTime at all) and not measured on
+// the car -- so a tight window would false-trip and republish 0 V during normal
+// running. Narrow it once the period is captured; see #198.
+inline constexpr uint32_t InvDcBusStaleMs      = 500;
+
+// ---- ECU-held DC-link discharge (#198) -------------------------------------
+// See discharge.hpp for the topology, why the ECU can only ever ADD a reason to
+// discharge, and why the AMS -- not the ECU -- decides when one is needed.
+//
+// RELEASE THRESHOLD. 60 V, matching the FS rule (link below 60 V within 5 s of
+// the SDC opening) and the AMS's own proposed gate. Agreed on #198 so the two
+// sides do not fight over the boundary: theirs sits at or above ours, so by the
+// time we release they are already satisfied.
+inline constexpr uint16_t DischargeReleaseV     = 60;
+// Give up after this long without the link falling -- bleed resistor gone open,
+// sense fault, or the coil-interrupt relay not obeying. Holding forever would
+// leave a car that never arms with nothing indicating why.
+//
+// GENEROUS ON PURPOSE: the discharge curve has never been measured (#198 says
+// they no longer need it to proceed, so it may stay that way for a while). The
+// FS rule requires below 60 V within 5 s, so 30 s is 6x that. Narrow it once
+// the real time constant is on a log.
+inline constexpr uint32_t DischargeTimeoutMs    = 30000;
+// 0x021 is 100 ms cyclic. 500 ms is five missed before we stop believing the
+// request -- but note that losing it does NOT abort a discharge in progress:
+// the latch releases on OUR measurement, never on the request going away.
+inline constexpr uint32_t DischargeReqStaleMs   = 500;
 // 0x464 temperatures, tracked separately from the inverter block (see
 // VehicleState). Feeds the motor thermal cap, which must fall back to its
 // unknown-sensor cap when the TEMPERATURES stop, not when the inverter does.
