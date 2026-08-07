@@ -144,7 +144,7 @@ inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
 // drive build *** -- unlike the old off-by-default ECU_BRINGUP_TORQUE_CAP_PCT build
 // flag this is ALWAYS applied; lower it only on stands.
-inline constexpr uint8_t  TorqueCap            = 60;
+inline constexpr uint8_t  TorqueCap            = 100;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
 
@@ -155,33 +155,6 @@ inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persis
 // the exact 3500/2800 knee/floor it was fitted to, so moving a threshold left
 // the curve silently wrong. Now the thresholds are the only tunables.
 //
-// KNEE = 2800, not 3500. The old 3500 mV knee fired during NORMAL driving: a
-// healthy pack sags well past 3500 mV under race current, so the derate was
-// effectively always active and the car ran permanently scaled back. This is
-// end-of-pack protection, not a load limiter. Bounding power is the EV 2.2.1
-// envelope's job (#177); this only has to keep the last of the pack from being
-// pulled under the AMS cut.
-inline constexpr uint16_t CellVDerateKneeMv    = 2800;  // at/above: no derate
-// COMMISSION: must sit at or above the AMS undervoltage cut, which lives in the
-// AMS firmware and is NOT visible from this repo. 2500 mV is the usual Li-ion
-// NMC discharge floor; confirm against the AMS config and the cell datasheet
-// before any endurance run. Too low and the AMS opens the AIRs mid-corner with
-// the car still at 5 % torque instead of coasting down.
-inline constexpr uint16_t CellVDerateFloorMv   = 2500;  // at/below: flat floor pct
-// 13 %, NOT 5 %. The percentage the core works in is not a linear 0..100 scale
-// to 240 Nm -- InvTorqueMap* is re-based so that DeadbandLowPct (5) maps to
-// EXACTLY 0 Nm, which is what stops the pedal deadband and the map deadband
-// stacking. So a floor of "5 %" commanded literally nothing: 5*240/95 -
-// 1200/95 = 12 - 12 = 0. The comment here used to claim "deliberately
-// non-zero" and was simply wrong -- both paths that reach this floor (the ramp
-// and the raw backstop) cut torque completely while the FSM stays in Active
-// with TorqueEnable asserted, which from the driver's seat is indistinguishable
-// from the car breaking. 13 % is 20 Nm: a real limp-home, same intent as the
-// two thermal floors (20 % -> 38 Nm). The static_assert below is what stops
-// this recurring.
-inline constexpr uint8_t  CellVDerateFloorPct  = 13;    // -> 20 Nm; see the assert below
-inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
-
 // ---- IR compensation (what makes the derate tolerant of accelerations) -----
 // The derate runs on an ESTIMATED open-circuit voltage, not on the loaded
 // reading: v_ocv = v_cell_min + I_pack * R_cell. See cell_derate.hpp for why
@@ -190,23 +163,83 @@ inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data
 // *** COMMISSION -- THE ONE VALUE THAT MUST COME FROM THE CAR. ***
 // Per-SERIES-ELEMENT resistance in milliohms (one cell, or one parallel group
 // if the pack is xSyP), including its share of busbar and contact resistance.
-// Shipped low ON PURPOSE: under-compensating leaves some sag in the estimate
-// and derates EARLIER, which is the safe direction. Over-compensating hides a
-// genuinely empty pack.
 //
 // Measure it without a dyno: stream pit-diag, do one acceleration run, plot
 // est_ocv_mV from 0x709. Still dips under load -> raise it. Humps upward ->
 // lower it. Flat -> correct.
-// 0 disables compensation entirely (derate on raw loaded voltage, as before).
+//
+// NOTE this now MOVES THE DERATE KNEE, by design -- see the derivation below.
+// It is no longer "shipped low is the safe direction": too low a value pulls
+// the knee down towards the AMS trip and shrinks the window the derate has to
+// work in. Commission it properly.
 inline constexpr uint16_t CellIrMilliOhm       = 1;     // COMMISSION: measure on car
 // Ceiling on the correction, so a current sensor reading nonsense cannot mask
 // an empty pack without limit. 500 A is the EV 2.2.2 cap, so at the shipped
 // 1 mOhm this only binds on an implausible reading.
 inline constexpr uint16_t CellIrCompMaxMv      = 500;
+// Peak per-element current the knee has to survive at FULL torque. ~230 A
+// follows from the 76 kW envelope at the bottom of the usable bus voltage; the
+// EV 2.2.2 ceiling is 500 A but the car never commands it. Only used to size
+// the derate window below.
+inline constexpr uint16_t PeakPackCurrentA     = 230;
+
+// ---- Low-cell-voltage torque derate ---------------------------------------
+//
+// >>> THE AMS TRIP POINT IS FIXED. THE DERATE HAS TO FIT ABOVE IT. <<<
+//
+// The AMS faults and OPENS THE AIRS when the RAW LOADED minimum cell falls
+// below CellUnderVoltageMv (IFS08-CE-AMS ams_config.hpp, consumed as an
+// AIR-opening predicate in their safety_predicates.hpp). That value is theirs
+// and cannot be changed.
+//
+// We derate on IR-COMPENSATED OCV, which under load is ALWAYS HIGHER than the
+// loaded reading they trip on. So thresholds set at or below their trip point
+// can never engage: the AIRs open while this ECU is still commanding 100 %.
+// That was live until #177 follow-up -- knee and floor were 2800/2500 against
+// an AMS trip of 2800, so the ENTIRE ramp sat underneath it and the derate was
+// decorative. At 230 A and 1 mOhm a loaded 2799 mV reads as 3029 mV here.
+//
+// So the thresholds are DERIVED, not chosen:
+//
+//   floor = AMS trip + margin        loaded ~= OCV at floor torque, so a small
+//                                    margin is enough to stay off their trip
+//   knee  = floor + I_peak * R       at the knee, FULL torque pulls the loaded
+//                                    voltage down to exactly the floor
+//
+// which gives the invariant worth remembering: **at the knee, full torque lands
+// the loaded cell on the floor; below the knee the derate cuts torque, which
+// cuts current, which is what actually protects the loaded voltage.** The AMS
+// then only trips when the pack is genuinely exhausted rather than because we
+// were still asking for everything.
+//
+// Deriving also means COMMISSIONING CellIrMilliOhm MOVES THE KNEE AUTOMATICALLY.
+// Hand-picked numbers would have silently stopped being correct the moment that
+// value changed, which is exactly how the first version broke.
+//
+// >>> MIRRORED FROM THE AMS -- diff on any AMS bump. <<<
+inline constexpr uint16_t AmsCellUnderVoltageMv = 2800;  // ams_config.hpp CellUnderVoltageMv
+// Headroom above their trip at floor torque. At 13 % (20 Nm) the current is
+// small, so loaded ~= OCV and 100 mV is plenty.
+inline constexpr uint16_t CellDerateMarginMv    = 100;
+
+inline constexpr uint16_t CellVDerateFloorMv =
+    static_cast<uint16_t>(AmsCellUnderVoltageMv + CellDerateMarginMv);
+inline constexpr uint16_t CellVDerateKneeMv =
+    static_cast<uint16_t>(CellVDerateFloorMv + PeakPackCurrentA * CellIrMilliOhm);
+// 13 %, NOT 5 %. The percentage the core works in is not a linear 0..100 scale
+// to 240 Nm -- InvTorqueMap* is re-based so that DeadbandLowPct (5) maps to
+// EXACTLY 0 Nm. So a floor of "5 %" commanded literally nothing while reading
+// as a limp-home. 13 % is 20 Nm. The static_assert below is what stops this
+// recurring -- it asserts on the Nm, not the percent.
+inline constexpr uint8_t  CellVDerateFloorPct  = 13;    // -> 20 Nm
+inline constexpr uint16_t CellVDefaultMv       = 3600;  // assumed when AMS data not yet fresh (no derate)
 // Backstop: a RAW loaded cell at/below this derates to the floor regardless of
-// what the compensation claims. Sits under the derate floor -- by here the AMS
-// is about to open the AIRs and coasting down beats being cut mid-corner.
-inline constexpr uint16_t CellVRawFloorMv      = 2400;
+// what the compensation claims. It sits just ABOVE the AMS trip, not below it:
+// below, the AMS would already have opened the AIRs and the backstop could
+// never fire. Its job is to cut torque in the last 50 mV before they give up,
+// when a wrong CellIrMilliOhm is masking a genuinely flat cell.
+inline constexpr uint16_t CellVRawFloorMv =
+    static_cast<uint16_t>(AmsCellUnderVoltageMv + 50);
 // Trim filter on the compensated estimate, as a right-shift: tau ~= (1 <<
 // shift) * ControlPeriodMs. 7 -> ~1.3 s, long enough to swallow AMS
 // quantisation and a stray frame, far too short to hide a real discharge.
@@ -229,9 +262,23 @@ static_assert(CellVDerateFloorPct > DeadbandLowPct,
               "(DeadbandLowPct), or it commands 0 Nm and strands the car");
 static_assert(CellVDefaultMv >= CellVDerateKneeMv,
               "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
-static_assert(CellVRawFloorMv <= CellVDerateFloorMv,
-              "the raw backstop must sit under the derate floor -- above it, it would "
-              "pre-empt the ramp and undo the IR compensation it exists to guard");
+// >>> THE ASSERT THAT WOULD HAVE CAUGHT THE ORIGINAL BUG. <<<
+// The AMS opens the AIRs on the RAW LOADED cell below AmsCellUnderVoltageMv. We
+// derate on IR-compensated OCV, which under load reads HIGHER. Any threshold at
+// or below their trip is unreachable -- the AIRs open first and the derate is
+// decorative. Both of these held wrong values (2800/2500 against a 2800 trip)
+// and nothing complained.
+static_assert(CellVDerateFloorMv > AmsCellUnderVoltageMv,
+              "the derate floor must sit ABOVE the AMS undervoltage trip, or the AIRs "
+              "open before the derate can do anything");
+static_assert(CellVDerateKneeMv > CellVDerateFloorMv,
+              "knee above floor (the ramp divides by their span)");
+static_assert(CellVRawFloorMv > AmsCellUnderVoltageMv,
+              "the raw backstop must be able to fire BEFORE the AMS gives up, so it too "
+              "has to sit above their trip");
+static_assert(CellVRawFloorMv < CellVDerateFloorMv,
+              "...but below the ramp floor, so it stays a last resort rather than "
+              "pre-empting the ramp");
 static_assert(CellVFilterShift < 24,
               "filter shift must leave headroom in the q8 accumulator");
 
