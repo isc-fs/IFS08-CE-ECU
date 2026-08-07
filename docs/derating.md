@@ -71,17 +71,37 @@ the ones whose absence changes behaviour most:
 - **`DrivetrainEffPct`** — the *entire* EV 2.2.1 compliance margin. `0x70D` puts commanded shaft power next to the inverter's own AC measurement and the DC bus, so one capture at steady full throttle gives the real number.
 - **`PackTempLimitDegC`, `CellVDerateFloorMv`** — must be checked against what the **AMS** actually trips on. See below.
 
-## ⚠️ Cross-check the AMS, always
+## ⚠️ The AMS trip point is fixed, and the derate is derived from it
 
-The AMS opens the AIRs on its own thresholds. **An ECU cap set below the AMS trip point can
-never engage** — the AIRs open first and the derate is decorative. This is a live example
-worth understanding before you touch any threshold:
+The AMS opens the AIRs when the **raw loaded** minimum cell falls below its
+`CellUnderVoltageMv`. That value is theirs and **cannot be changed**.
 
-- AMS `CellUnderVoltageMv` trips on **raw loaded** min cell
-- The ECU cell cap ramps on **IR-compensated OCV**, which under load is always *higher*
+This ECU derates on **IR-compensated OCV**, which under load is always *higher*
+than the loaded reading they trip on. So any threshold at or below their trip
+**can never engage** — the AIRs open while the ECU is still commanding 100 %.
 
-So the ECU must sit **above** the AMS trip with enough margin to cover the IR drop, or the
-protection inverts. Both values are `COMMISSION` on both sides — agree one number across the
-two repos rather than tuning either in isolation.
+That was live: knee and floor were 2800/2500 against a 2800 mV trip, so the
+entire ramp sat underneath it and the derate was decorative. At 230 A and 1 mΩ a
+loaded 2799 mV reads as 3029 mV here.
 
-`IFS08-CE-AMS/Core/Inc/app/ams_config.hpp` is a sibling checkout. Read it.
+So the thresholds are **derived, not chosen** (`ecu_config.hpp`):
+
+```
+floor = AMS trip + margin
+knee  = floor + I_peak x CellIrMilliOhm
+```
+
+giving the invariant worth remembering: **at the knee, full torque pulls the
+loaded cell down to exactly the floor.** Below the knee the derate cuts torque,
+which cuts current, which is what actually protects the loaded voltage.
+
+Deriving it also means **commissioning `CellIrMilliOhm` moves the knee
+automatically**. Hand-picked numbers would silently stop being correct the moment
+that value changed — which is precisely how the first version broke.
+
+`static_assert`s enforce that the floor and the raw backstop both sit above the
+AMS trip. Nothing complained about the old values because nothing checked the
+relationship.
+
+**`IFS08-CE-AMS/Core/Inc/app/ams_config.hpp` is a sibling checkout — read it, and
+run `scripts/check_ams_contract.py` before any PR that touches a shared frame.**

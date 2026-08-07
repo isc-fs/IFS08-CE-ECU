@@ -628,7 +628,7 @@ static void test_endurance_guards() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        in.v_cell_min_mV = CellVDerateFloorMv - 50;   // deep, but above the raw backstop
+        in.v_cell_min_mV = static_cast<uint16_t>(CellVDerateFloorMv - 20);   // at the floor, above the raw backstop
         in.current_accu_dA = 0; in.current_fresh = true;
         CtrlOutput o{};
         for (int i = 0; i < 2000; ++i) { o = c.step(in, t); t += ControlPeriodMs; }
@@ -1047,11 +1047,23 @@ static void test_cell_v_derate() {
     // ---- the knee is 2800, NOT 3500 (#177) --------------------------------
     // The regression this pins: a healthy pack under race current routinely
     // sits in the low 3000s, and the old 3500 knee derated it the whole time.
-    CHECK(CellVDerateKneeMv == 2800, "cell derate knee is 2800 mV");
+    // The thresholds are DERIVED from the AMS trip point now, not chosen -- so
+    // assert the RELATIONSHIP, not the number. A literal here would have to be
+    // edited every time CellIrMilliOhm is commissioned, and would go stale
+    // silently if someone forgot.
+    CHECK(CellVDerateFloorMv > AmsCellUnderVoltageMv,
+          "floor sits ABOVE the AMS undervoltage trip");
+    CHECK(CellVDerateKneeMv == CellVDerateFloorMv + PeakPackCurrentA * CellIrMilliOhm,
+          "knee = floor + the IR drop at peak current");
     CHECK(cell_derate_pct(3600) == 100, "3600 mV -> no derate");
-    CHECK(cell_derate_pct(3200) == 100, "3200 mV -> no derate (was 59 % under the old knee)");
-    CHECK(cell_derate_pct(3000) == 100, "3000 mV -> no derate (was 32 % under the old knee)");
-    CHECK(cell_derate_pct(2900) == 100, "2900 mV -> no derate (was 18 % under the old knee)");
+    CHECK(cell_derate_pct(static_cast<uint16_t>(CellVDerateKneeMv + 200)) == 100, "above the knee -> no derate");
+    CHECK(cell_derate_pct(static_cast<uint16_t>(CellVDerateKneeMv + 1)) == 100, "just above the knee -> no derate");
+    // THE REGRESSION. The AMS opens the AIRs on the RAW LOADED cell below
+    // AmsCellUnderVoltageMv, and we ramp on IR-compensated OCV which reads
+    // HIGHER under load. Thresholds at or below their trip can never engage.
+    // Until #177 follow-up the whole ramp (2800->2500) sat under a 2800 trip.
+    CHECK(cell_derate_pct(AmsCellUnderVoltageMv) == CellVDerateFloorPct,
+          "at the AMS trip we are ALREADY at the floor, not still at 100 %");
     CHECK(cell_derate_pct(CellVDerateKneeMv) == 100, "exactly at the knee -> no derate");
     // One mV under the knee must not fall off a cliff: the derived ramp starts
     // at 100 there. The old hand-fitted double form truncated to 99.
@@ -1062,8 +1074,11 @@ static void test_cell_v_derate() {
     const uint8_t expect_mid = static_cast<uint8_t>(
         CellVDerateFloorPct + (100u - CellVDerateFloorPct) / 2u);
     CHECK(mid >= expect_mid - 1 && mid <= expect_mid + 1, "midpoint sits on the linear ramp");
-    CHECK(cell_derate_pct(2700) > cell_derate_pct(2600), "ramp is monotonically decreasing");
-    CHECK(cell_derate_pct(2600) > cell_derate_pct(CellVDerateFloorMv), "still falling near the floor");
+    CHECK(cell_derate_pct(static_cast<uint16_t>(CellVDerateFloorMv + 150)) >
+          cell_derate_pct(static_cast<uint16_t>(CellVDerateFloorMv + 50)),
+          "ramp is monotonically decreasing");
+    CHECK(cell_derate_pct(static_cast<uint16_t>(CellVDerateFloorMv + 50)) >
+          cell_derate_pct(CellVDerateFloorMv), "still falling near the floor");
 
     // ---- floor ------------------------------------------------------------
     CHECK(cell_derate_pct(CellVDerateFloorMv) == CellVDerateFloorPct, "at the floor -> floor pct");
@@ -1081,7 +1096,7 @@ static void test_cell_v_derate() {
         Controller c; uint32_t t = 1000;
         drive_to_active(c, t);
         CtrlInputs in = good_drive_inputs();
-        in.v_cell_min_mV = 2700;      // mid-ramp
+        in.v_cell_min_mV = static_cast<uint16_t>((CellVDerateKneeMv + CellVDerateFloorMv) / 2);  // mid-ramp
         in.current_accu_dA = 0;       // no IR correction, so est == raw
         in.current_fresh = true;
 
@@ -1132,7 +1147,12 @@ static void test_cell_ir_compensation() {
         // 3000 mV resting is a pack near the end of a stint but in no trouble;
         // 300 A of acceleration pulls it to 2700 mV, which the curve derates to
         // 68 %. That gap IS the bug this module exists to close.
-        const uint16_t rest_mV  = 3000;
+        // Resting just ABOVE the knee, so an uncompensated reading would fall
+        // below it under load and a compensated one must not. Expressed against
+        // the knee rather than as a literal: the thresholds are derived from the
+        // AMS trip now, so a hard-coded 3000 mV silently stopped being "above
+        // the knee" the moment that derivation landed.
+        const uint16_t rest_mV  = static_cast<uint16_t>(CellVDerateKneeMv + 50);
         const int16_t  accel_dA = 3000;
         // Sag the current would actually produce at the configured resistance.
         const int32_t  sag      = (accel_dA * static_cast<int32_t>(CellIrMilliOhm)) / 10;
@@ -1144,7 +1164,7 @@ static void test_cell_ir_compensation() {
         cruise.current_dA = 0;
         cruise.i_fresh = true;
         CellDerateState s = settle(cd, cruise, 400);
-        CHECK(s.cap_pct == 100, "cruising at 3100 mV -> no derate");
+        CHECK(s.cap_pct == 100, "cruising just above the knee -> no derate");
         const uint16_t est_cruise = s.est_ocv_mV;
 
         // Now floor it: the cell sags by exactly I*R and the current appears.
