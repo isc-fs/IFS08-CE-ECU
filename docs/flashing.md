@@ -50,6 +50,34 @@ python3 scripts/check_flash_layout.py build-fw/ECU08.elf
 This is what stops an image that has grown into sector 0 or sector 7 — such an image
 flashes cleanly and then never boots.
 
+### ⚠️ Check the AMS branch before you flash
+
+The ECU and the AMS share CAN contracts, and **the two repos can be out of step**.
+Right now:
+
+| | `0x100` | `0x021` |
+|---|---|---|
+| AMS **`dev`** | DLC 3, decodes `discharge_engaged` | present |
+| AMS **`main`** | **DLC 2** | **absent** |
+| ECU `dev` | sends DLC 3 | decodes it |
+
+An ECU built from `dev` sends a 3-byte `0x100`. An AMS built from **`main`** has
+never seen byte 2. Their `dev` decoder handles the short frame deliberately
+(`if dlc >= 3`), so the pairing degrades safely in that direction — but the
+reverse has not been verified, and neither has `main`'s decoder.
+
+**Before a session, confirm which AMS branch is on the car**, and prefer flashing
+both from `dev` or both from `main`. To check the shared frames yourself with
+`IFS08-CE-AMS` checked out alongside:
+
+```bash
+python3 scripts/check_ams_contract.py
+```
+
+It compares every frame both repos touch and fails on any conflicting bit layout.
+This exists because the ECU once decoded `0x021` bit 0 as a completely different
+signal from the one the AMS was sending there — see the header of that script.
+
 ### Before every flight build, confirm the bench values are off
 
 These are **config toggles, not build flags**, so nothing warns you:
