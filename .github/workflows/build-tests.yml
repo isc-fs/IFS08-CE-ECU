@@ -126,23 +126,43 @@ jobs:
 
   # Cross-repo CAN contract. Added after the 0x021 incident (Aug 2026): the ECU
   # and the AMS agreed on a frame ID while disagreeing about its fields, and
-  # nothing in either repo could notice. This diffs the two generated DBCs.
+  # nothing in either repo could notice.
   #
-  # continue-on-error: the AMS repo is a separate private repo, so a checkout
-  # failure (permissions, rename) must not block an ECU PR. The check SKIPS
-  # cleanly when the DBC is absent; this only guards the checkout step itself.
+  # >>> THIS ONLY DOES REAL WORK IF AMS_REPO_TOKEN IS SET. <<<
+  # GITHUB_TOKEN is scoped to THIS repository, so it cannot check out the AMS.
+  # Without a cross-repo token the script SKIPs and the job passes green while
+  # comparing nothing -- which is worse than no check, so the skip says so
+  # loudly in the log. To make it live, add a repo secret AMS_REPO_TOKEN (a PAT
+  # or GitHub App token with read access to isc-fs/IFS08-CE-AMS).
+  #
+  # Until then this is a LOCAL pre-flight: run it yourself before any PR that
+  # touches a shared frame --
+  #     python3 scripts/check_ams_contract.py
+  # with IFS08-CE-AMS checked out alongside this repo.
+  #
+  # continue-on-error: a token or permissions problem in another repo must never
+  # block an ECU PR.
   ams-contract:
     name: Cross-repo CAN contract (AMS)
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Check out IFS08-CE-AMS alongside
+      # Must land INSIDE the workspace -- actions/checkout rejects a path above
+      # it, which is how the first version of this job silently skipped.
+      - name: Check out IFS08-CE-AMS
+        id: ams
         uses: actions/checkout@v4
         continue-on-error: true
         with:
           repository: isc-fs/IFS08-CE-AMS
-          path: ../IFS08-CE-AMS
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: _ams
+          token: ${{ secrets.AMS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Diff the shared frames
-        run: python3 scripts/check_ams_contract.py
+        run: |
+          if [ ! -f _ams/docs/dbc/ams.dbc ]; then
+            echo "::warning::AMS checkout unavailable -- this check compared NOTHING."
+            echo "::warning::Set the AMS_REPO_TOKEN secret to make it real. Run it locally meanwhile."
+            exit 0
+          fi
+          python3 scripts/check_ams_contract.py _ams/docs/dbc/ams.dbc
