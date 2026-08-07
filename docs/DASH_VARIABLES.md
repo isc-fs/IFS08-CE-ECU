@@ -1,5 +1,13 @@
 # Dash Variables
 
+> **⚠️ This is a WISHLIST, not a contract.** It records variables the team would
+> *like* on the dashboard. It does **not** describe what the ECU actually sends.
+>
+> The live dashboard contract — the 18 frames `0x510`–`0x521` on FDCAN3, with
+> real byte offsets that another team's decoder depends on — is
+> [`CAN3_MAP.md`](CAN3_MAP.md). If the two disagree, `CAN3_MAP.md` and
+> `Core/Src/app/telemetry_task.cpp` are right and this file is aspiration.
+
 Objetivo de variables que queremos poder mostrar en el dashboard.
 
 Importante:

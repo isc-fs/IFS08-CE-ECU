@@ -25,7 +25,7 @@
 // WHAT THIS IS NOT. It is an open-loop envelope derived from commanded torque
 // and measured speed, using an ASSUMED drivetrain efficiency. It is not a
 // measurement of delivered power and it does not replace measuring the real
-// 500 ms average on the car (scripts/packlog.py does that). Treat it as
+// 500 ms average on the car. Treat it as
 // "cannot obviously exceed the limit", not as proof of compliance.
 
 #ifndef POWER_LIMIT_HPP_

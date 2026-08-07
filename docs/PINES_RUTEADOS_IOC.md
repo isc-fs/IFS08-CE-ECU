@@ -37,14 +37,14 @@ aparezcan con alias genericos como `D1`, `D2`, `A1` o `A2`.
 | 5 | GPS_RX | Funcional | PG12 | - | `USART10_TX` | `Asynchronous` | OK |
 | 6 | RTDS | Funcional | PB4 | `D1` | `GPIO_Output` | - | OK |
 | 7 | START_FIL | Funcional | PB5 | `D2` | `GPIO_Output` | - | OK |
-| 8 | GPIO3 | Generico | PB6 | `D3` | `GPIO_Output` | - | OK |
-| 9 | GPIO4 | Generico | PB7 | `D4` | `GPIO_Output` | - | OK |
+| 8 | **DC-LINK DISCHARGE** | **EN USO (#198)** | PB6 | `D3` | `GPIO_Output` | - | ⚠ **NO REUTILIZAR** |
+| 9 | GPIO4 | Generico | PB7 | `D4` | `GPIO_Output` | - | Libre (candidato a readback auxiliar del relé de descarga, #198) |
 | 10 | GPIO5 | Generico | PB8 | `D5` | `GPIO_Output` | - | OK |
 | 11 | GPIO6 | Generico | PB9 | `D6` | `GPIO_Output` | - | OK |
 | 12 | S_BRAKE_FIL | Funcional | PF7 | `A1` | `ADC3_INP3` | `IN3-Single-Ended` | OK |
 | 13 | APPS_1 | Funcional | PF8 | `A2` | `SharedAnalog_PF8` | - | Revisar ADC |
 | 14 | APPS_2 | Funcional | PF9 | `A3` | `ADC3_INP2` | `IN2-Single-Ended` | OK |
-| 15 | GPIO10 | Generico | PF10 | `A4` | `ADC3_INP6` | `IN6-Single-Ended` | OK |
+| 15 | GPIO10 | Generico | PF10 | `A4` | `ADC3_INP6` | `IN6-Single-Ended` | Libre **y con ADC** — candidato a sensado propio del DC-link (#198/#177) |
 | 16 | GPIO11 | Generico | PC0 | `A5` | `ADCx_INP10` | - | OK |
 | 17 | GPIO12 | Generico | PC1 | `A6` | `ADCx_INP11` | - | OK |
 | 18 | GPIO13 | Generico | PC2 | - | - | - | No aparece en `.ioc` |
@@ -153,3 +153,17 @@ El ruteo funcional relevante queda fijado asi:
 - `PC2 / GPIO13`
 - uso ADC efectivo de `PF8 / APPS_1` en firmware
 
+
+---
+
+## ⚠ Pines que NO son genéricos aunque lo parezcan
+
+Esta tabla se lee para buscar un pin libre. Antes de reutilizar cualquiera,
+comprobar aquí:
+
+| Pin | Señal | Por qué no se puede tocar |
+|---|---|---|
+| **PB6** (`D3`) | Interrupción de bobina del relé de descarga del DC-link (#198) | Sale a un **NPN → relé NC en serie con la bobina del relé de descarga**. `HIGH = descargar`. Reutilizarlo o dejarlo flotante rompe la descarga del bus DC: o impide una descarga que debe completarse, o conecta la resistencia de bleed (régimen transitorio) sobre un pack vivo. Lógica en [`Core/Inc/app/discharge.hpp`](../Core/Inc/app/discharge.hpp). **Requiere pull-down externo en la base** (ya presente en la placa nueva): el pin es alta impedancia desde el reset hasta `MX_GPIO_Init`, y el bootloader corre antes. |
+| **PA5 / PA6 / PA7** | nRF24 por **bit-bang**, NO SPI1 | El `.ioc` los declara SPI1 y `MX_SPI1_Init()` se ejecuta, pero el driver los mueve como GPIO. El SPI1 hardware lee MISO clavado a 0xFF en esta placa. No "arreglarlo" pasando el driver a `hspi1` — ya se intentó y la radio queda muda. |
+| **PB5** (`D2`) | `START_FIL` (botón de arranque) | Gatea el R2D manual. |
+| **PB4** (`D1`) | `RTDS` | Zumbador reglamentario. |

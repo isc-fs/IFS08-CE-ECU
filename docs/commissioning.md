@@ -175,7 +175,7 @@ car. **No dyno required** — one acceleration run is enough.
 
 `comp_mV` on the same frame shows how much correction is being applied, so the
 two effects can be read apart rather than inferred from the sum.
-`tools/packlog.py` fits the same number off a log if you would rather not eyeball it.
+(There is no offline fitting script — this is an eyeball job off the trace.)
 
 > ⚠️ **Shipped at 1 mΩ, deliberately low.** Under-compensating leaves some sag in
 > the estimate and derates *earlier* — the safe direction. Over-compensating

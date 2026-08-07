@@ -53,8 +53,7 @@
 // COMMISSIONING. R_cell is the one number that has to come from the car. It is
 // measurable without a dyno: enable the pit-diag stream, drive one acceleration
 // run, and plot est_ocv_mV (0x709) against time. Too low and the trace still
-// dips under load; too high and it humps upward. Flat means correct. tools/
-// packlog.py fits the same number off a log.
+// dips under load; too high and it humps upward. Flat means correct.
 
 #ifndef CELL_DERATE_HPP_
 #define CELL_DERATE_HPP_
