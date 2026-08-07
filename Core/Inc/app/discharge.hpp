@@ -59,9 +59,15 @@
 // -- so a single lost CAN frame mid-discharge cannot abort it and re-strand the
 // link. That asymmetry is the entire value the ECU adds.
 //
+// RELEASE AT 10 V, not the 60 V of the rule. Well below the AMS's own gate, so
+// their re-arm is satisfied before we let go. Note this may be BELOW what the
+// inverter can report -- see the constant in ecu_config.hpp; if 0x466 dies on
+// the way down, the release can never be confirmed and every discharge ends in
+// the timeout below instead of completing.
+//
 // TIMEOUT. If we secure and the link does NOT fall -- bleed resistor gone open,
-// sense fault -- an indefinite hold would leave a car that never arms with
-// nothing indicating why. So: give up after DischargeTimeoutMs, report a fault,
+// sense fault, or a measurement that stops before the threshold -- an indefinite
+// hold would leave a car that never arms with nothing indicating why. So: give up after DischargeTimeoutMs, report a fault,
 // and stop securing. Releasing is safe because the AMS gates on its OWN voltage
 // too; it simply will not arm, which is the correct outcome, but now with a
 // reason attached.

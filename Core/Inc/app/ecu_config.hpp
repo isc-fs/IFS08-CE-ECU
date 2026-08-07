@@ -429,11 +429,33 @@ inline constexpr uint32_t InvDcBusStaleMs      = 500;
 // See discharge.hpp for the topology, why the ECU can only ever ADD a reason to
 // discharge, and why the AMS -- not the ECU -- decides when one is needed.
 //
-// RELEASE THRESHOLD. 60 V, matching the FS rule (link below 60 V within 5 s of
-// the SDC opening) and the AMS's own proposed gate. Agreed on #198 so the two
-// sides do not fight over the boundary: theirs sits at or above ours, so by the
-// time we release they are already satisfied.
-inline constexpr uint16_t DischargeReleaseV     = 60;
+// RELEASE THRESHOLD. 10 V, deliberately far below the 60 V of the FS rule and
+// of the AMS's own gate (their DcBusDischargedV = 60).
+//
+// The cross-repo invariant still holds and in fact holds more strongly. #198
+// asks that the AMS gate sit AT OR ABOVE ours so the two never fight over the
+// boundary: at 10 vs 60 the AMS is already satisfied long before we release, so
+// no AMS change is needed for this.
+//
+// >>> 10 V MAY BE BELOW WHAT THE INVERTER CAN REPORT. <<<
+// The link voltage is not measured by the ECU -- it is relayed from the
+// inverter's 0x466, and the W90's nominal DC-link operating range starts around
+// 48 V. If the inverter browns out or its measurement pins before the link
+// reaches 10 V, dc_bus_valid goes false and the release condition can NEVER be
+// satisfied: the hold runs to DischargeTimeoutMs and reports a fault EVERY time,
+// instead of completing. At 60 V we sat above that floor; at 10 V we are well
+// under it.
+//
+// This is the measurement nobody has taken yet (#198): open the SDC and watch
+// whether 0x466 keeps counting down past 10 V or stops. If it stops, either
+// raise this back towards the inverter's floor or give the ECU its own DC-link
+// sense -- PF10 (GPIO10) is free and ADC-capable.
+//
+// The timeout margin also shrinks. The FS rule requires below 60 V within 5 s;
+// on a simple RC decay from ~400 V that is about 1.9 time constants, so tau is
+// roughly 2.6 s and reaching 10 V takes about 9.6 s. Still inside the 30 s
+// timeout, but the margin goes from ~6x to ~3x.
+inline constexpr uint16_t DischargeReleaseV     = 10;
 // Give up after this long without the link falling -- bleed resistor gone open,
 // sense fault, or the coil-interrupt relay not obeying. Holding forever would
 // leave a car that never arms with nothing indicating why.

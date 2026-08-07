@@ -805,6 +805,16 @@ static void test_discharge_hold() {
         return d;
     };
 
+    // ---- the cross-repo invariant (#198) ----------------------------------
+    // The AMS gates its re-arm on dc_bus <= DcBusDischargedV (60 V in
+    // IFS08-CE-AMS ams_config.hpp). #198 requires OUR release threshold to sit
+    // at or below theirs, so that by the time we drop discharge_engaged their
+    // own voltage gate is already satisfied and the two never fight over the
+    // boundary. Pinned here because nothing else would catch someone raising
+    // this constant past 60 in a hurry.
+    CHECK(DischargeReleaseV <= 60, "release threshold is at or below the AMS gate (60 V)");
+    CHECK(DischargeReleaseV > 0,   "and non-zero -- 0 could never be reached");
+
     // ---- idle: no request, no secure --------------------------------------
     {
         Discharge d;
