@@ -46,17 +46,15 @@ jobs:
           set -u
           SIL=build-sil/tests/sil/ecu08_sil
           test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
-          # Flag set matches the post-rewrite SIL (tests/sil/sil_control_tests.cpp).
-          # Dropped vs the pre-rewrite suite: --test-error-temp (the ECU has no
-          # temperature sensor -- cell temp is the AMS's domain) and --test-pit-diag
-          # (the pit-diag builders pull firmware_info getters that need HAL stubs to
-          # link host-side; SIL coverage deferred -- see #9).
-          flags="--test-integration --test-boot --test-full-cycle \
-                 --test-rtos-startup --test-error-voltage \
-                 --test-safety-brake --test-dynamic-states \
-                 --test-legacy-compat --test-precharge-no-ack \
-                 --test-bootloader-trigger --test-ams-error \
-                 --test-dsl-parity"
+          # ONE flag: --test-all. This used to be a hand-maintained list of twelve
+          # suite flags, and it had rotted into a trap. --test-safety-brake was
+          # retired with the EV.2.3 removal, and an UNRECOGNISED flag makes this
+          # binary run the whole suite -- so that one dead entry was silently the
+          # only reason every suite added this season was covered at all. Tidying
+          # the dead flag away would have quietly dropped CI to eleven suites.
+          # The release workflow already gates on --test-all; matching it here
+          # means PR CI and the release gate run the same thing on purpose.
+          flags="--test-all"
           fail=0
           for flag in $flags; do
             out=$("$SIL" $flag 2>&1) ; code=$?

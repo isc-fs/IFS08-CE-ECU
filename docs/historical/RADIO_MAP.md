@@ -3,7 +3,7 @@
 > ⚠️ **SUPERSEDED (2026-07-05).** This documents the old RF_FAST/RF_SLOW
 > multi-kind protocol (version `0x02`), which the ground station **no longer
 > parses**. The current radio contract is the v2 fragmented snapshot —
-> see **[RADIO_SNAPSHOT_MAP.md](RADIO_SNAPSHOT_MAP.md)**. Kept for history.
+> see **[RADIO_SNAPSHOT_MAP.md](../RADIO_SNAPSHOT_MAP.md)**. Kept for history.
 
 Contrato actual de radio entre la ECU y `IFS08-TE-main`.
 
@@ -21,8 +21,8 @@ Como en `docs/CAN3_MAP.md`: los campos marcados **PLACEHOLDER** se mandan en
 
 Origen en codigo:
 
-- serializacion radio: [Core/Src/app/telemetry_task.cpp](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app/telemetry_task.cpp:157)
-- transporte nRF24: [Core/Src/nrf24.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/nrf24.c:478)
+- serializacion radio: `Core/Src/app/telemetry_task.cpp`
+- transporte nRF24: `Core/Src/nrf24.c`
 - parser receptor (ground truth): `IFS08-TE-main/ISC_REAL_TIME_25/ISC_RTT_serial.py` (`parse_radio_v2_frame`)
 
 ## Cabecera comun

@@ -68,7 +68,7 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 
 | Tarea          | Prioridad     | Período | Rol |
 |----------------|---------------|---------|-----|
-| `App_InitTask` | High (one-shot)| —      | Levanta FDCAN1/2 y se autodestruye. Corazón del fix #48. |
+| `App_InitTask` | High (one-shot)| —      | Levanta FDCAN1/2 (filtros + notif. RX) y arranca FDCAN3 (sólo TX), luego se autodestruye. Corazón del fix #48. |
 | `ControlTask`  | **Realtime**  | 10 ms   | Único actor de seguridad. Lee IO, snapshot, `step()`, salidas, `0x100` **en todos los estados**, stream pit-diag opcional, **único que patea el IWDG**. |
 | `CanRxTask`    | AboveNormal   | ~RX     | Drena `can_rx_queue`. Despacha: trigger BL → cmd pit-diag → VehicleService. |
 | `CanTxTask`    | AboveNormal   | ~TX     | Drena `can_tx_queue` → `HAL_FDCAN_AddMessageToTxFifoQ`. |
@@ -144,8 +144,8 @@ vistazo en el código:
 
 | Bus       | FDCAN  | Rol |
 |-----------|--------|-----|
-| **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x464/0x466 · TX 0x360/0x362. |
-| **ACU**   | FDCAN2 | AMS + Pit-Tool + uDV (compartido). RX 0x020/0x12C/0x4A0/0x131-0x137/0x507/0x510/0x002/0x7E0 · TX 0x100 + bloque uDV + stream pit-diag. |
+| **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x464/0x465/0x466/0x467/0x468 · TX 0x360/0x362. |
+| **ACU**   | FDCAN2 | AMS + Pit-Tool + uDV (compartido). RX 0x020/0x021/0x12C/0x4A0/0x131-0x137/0x507/0x510/0x002/0x7E0/0x7E2 · TX 0x100 + bloque uDV + stream pit-diag. |
 | **DASH**  | FDCAN3 | Dashboard, **sólo TX**. 18 tramas `0x510..0x521` desde `TelemetryTask` — ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md). |
 
 El `0x600` está **retirado** (la AMS auto-dispara precarga).
@@ -209,7 +209,7 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | 0x702 | PitDiag_inverter | DC-bus V · rpm (signed) · error |
 | 0x703 | PitDiag_fwinfo   | semver + 4 bytes de git hash |
 | 0x704 | PitDiag_health   | heap · liveness por tarea (bits) · reset_cause · uptime · last_fault · **anuncio de stubs** (`stub_no_ams`/`no_inverter`/`start`/`brake`/**`torque_cap`**) |
-| 0x705 | PitDiag_brake    | presión (bar) + % (depende de la calibración de freno PENDING; `brake_pressure` está **hardcodeado a 0** hoy) |
+| 0x705 | PitDiag_brake    | `brake_pressure` en bar (mapa ABSOLUTO del EPT1400, sin calibración — `brake_pressure_dbar()`) + `brake_pct` (escalado full-ADC hasta que `BrakeRestRaw` != 0, así que marca ~13 % en reposo) |
 | 0x706 | PitDiag_inverter_temps | temps board / power-stage / motor1 / motor2 (byte crudo −50 = °C; 0xFF = sensor desconectado) **+ el cap térmico del motor** (#177): `motor_temp_used_degC` (el sensor válido más caliente, filtrado), `thermal_cap_pct`, y `temp_s1_valid` / `temp_s2_valid` / `temp_unknown` / `thermal_capped`. `temp_unknown=1` = ningún sensor usable → cap fijo `MotorTempUnknownCapPct`; **raw 0 decodifica a −50 °C, así que "parece frío" es el estado por defecto al arrancar** |
 | 0x707 | PitDiag_dv       | `dv_r2d_req` · `brake_over_limit` · `r2d_confirm` · torque uDV — diagnóstico del modo driverless |
 | 0x7E2 | PitCal_cmd (RX)  | Sesión de calibración de pedales: comando + punto de captura + guard `0xCA11B0DE` (CRC-32 del set en `COMMIT`) |
@@ -231,7 +231,8 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 - `0x020` ACU_ok_precharge — precarga OK / HV viva (la FSM gatea aquí).
 - `0x12C` ACU_v_cell_min — mín. tensión de celda (mV, BE) → derate de torque por celda baja.
 - `0x4A0` AMS_status — `fsm_state` (5=Error) / `ams_ok` → distingue Start vs Error latcheado.
-- `0x461`/`0x463`/`0x464`/`0x466` — inversor: App_State / rpm / temps / DC-bus V.
+- `0x461`/`0x463`/`0x464`/`0x465`/`0x466`/`0x467`/`0x468` — inversor: App_State / rpm /
+  temps / modo de control / DC-bus V + potencia AC / techo de par / par estimado.
 - `0x131`–`0x137` — AMS por módulo (vmin/vmax/tmax, corrientes) → radio + dashboard.
 - `0x002` BL_boot_trigger — magic `0xB007AD12` → escribe magic en RTC backup + reset.
 - `0x7E0` PitDiag_cmd — magic `0xDEADBEEF` enable / `0` disable.
@@ -355,9 +356,10 @@ ctest --test-dir build-sil --output-on-failure        # o:
 ./build-sil/tests/sil/ecu08_sil --test-all
 ```
 
-El target SIL `ecu08_sil` define `SIL_BUILD=1` y compila **exactamente 6 unidades**:
-`sil_control_tests.cpp` + `Core/Src/app/{control,inverter,vehicle_service,udv_tx,
-radio_snapshot}.cpp`. **Sin HAL, sin FreeRTOS, sin mocks** — esos ficheros no incluyen nada
+El target SIL `ecu08_sil` define `SIL_BUILD=1` y compila **16 unidades**:
+`sil_control_tests.cpp` + `Core/Src/app/{control,cell_derate,discharge,motor_thermal,
+pack_thermal,pedal_cal,power_limit,pedal_cal_nvm,cal_session,inverter,udv_tx,
+radio_snapshot,vehicle_service,gps_nmea,gps_tx}.cpp`. **Sin HAL, sin FreeRTOS, sin mocks** — esos ficheros no incluyen nada
 del HAL y `Controller::step()` recibe `now_ms` como argumento, así que el test es
 determinista. No cubre: capa de tareas, HAL/periféricos, `io_signals`, `pit_diag` (#9) ni el
 transporte nRF24 — eso es banco / HIL.
@@ -388,7 +390,7 @@ ficheros).
 | `Core/Src/app/can_rx_task.cpp` | Drena RX, despacha, único escritor de VehicleService. |
 | `Core/Src/app/can_tx_task.cpp` | Único punto TX del FDCAN; selecciona bus por `frame.bus`. |
 | `Core/Src/app/diag_task.cpp` | `0x704` health cada 1 s, separado de control. |
-| `Core/Src/app/app_init_task.cpp` | Bring-up FDCAN1/2 one-shot (fix #48). |
+| `Core/Src/app/app_init_task.cpp` | Bring-up FDCAN1/2 + arranque de FDCAN3, one-shot (fix #48). |
 | `Core/Inc/app/pedal_cal.hpp` · `Core/Src/app/pedal_cal.cpp` | `PedalCal` runtime + `validate_cal()` + `brake_pct()`. Puro, en el SIL. |
 | `Core/Src/app/pedal_cal_nvm.cpp` | Parseo del registro en el sector NVM del BL + helpers de escritura (slot, seq, entry). Puro. |
 | `Core/Src/app/pedal_cal_flash.cpp` | La única parte con HAL: programa una flash word. Fuera del SIL. |
@@ -417,9 +419,8 @@ ficheros).
 > `NRF24_BusInit()` reclama los pines después. No "arregles" esto pasando el driver a
 > `hspi1` — ya se intentó y la radio queda muda.
 
-> **Histórico — NO describen el `dev` actual:** `docs/MAIN_POLLING_MIGRATION_COMPARISON.md`,
-> `docs/ECU_LOGIC_REPORT.md`, `docs/INTEGRATION_TESTS_EXPLAINED.md`,
-> `docs/CAN_IDS_VARIABLES.md`, `docs/ECU_ACU_MENSAJES.md`, `docs/RADIO_MAP.md` y
-> `docs/RADIO_TELEMETRY_FAILURE_ANALYSIS.md` documentan el firmware en C anterior al rewrite
-> (citan `control.c` / `can.c` / `app_state.c`, que ya no existen). Para el contrato CAN
-> vigente: `Core/Inc/can/messages/*.def` → [`docs/dbc/ecu.dbc`](docs/dbc/ecu.dbc).
+> **Histórico — NO describen el `dev` actual:** los documentos archivados en
+> [`docs/historical/`](docs/historical/README.md) describen el firmware en C anterior al
+> rewrite (citan `control.c` / `can.c` / `app_state.c`, que ya no existen). Ese README los
+> enumera uno a uno y da la redirección al documento vigente de cada uno. Para el contrato
+> CAN actual: `Core/Inc/can/messages/*.def` → [`docs/dbc/ecu.dbc`](docs/dbc/ecu.dbc).

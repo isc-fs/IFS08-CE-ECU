@@ -33,7 +33,7 @@ Importante:
 | `ecu.s2_aceleracion` | `uint16_t` | `g_in.s2_aceleracion` | Pedal acelerador 2 |
 | `ecu.s_freno` | `uint16_t` | `g_in.s_freno` | Sensor de freno |
 | `ecu.torque_total` | `uint16_t` | `g_in.torque_total` | Par calculado por control |
-| `ecu.flag_ev_2_3` | `uint8_t` | `g_in.flag_EV_2_3` | Flag de seguridad EV 2.3 |
+| ~~`ecu.flag_ev_2_3`~~ | — | — | **ELIMINADA**: EV.2.3 se borro de FS-Rules 2024 y el corte con ella. El bit 0 de `fault_bits` queda RESERVADO en 0; la posicion NO se renumero. |
 | `ecu.flag_t11_8_9` | `uint8_t` | `g_in.flag_T11_8_9` | Flag de plausibilidad T11.8.9 |
 
 ## AMS

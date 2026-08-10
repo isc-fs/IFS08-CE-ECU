@@ -7,13 +7,15 @@ over CAN through the pit-diag stream — no UART, no SWD.
 
 ## Prerequisites
 
-- ECU flashed and booted; `0x100` streaming on **FDCAN2 / ACU @ 68.75 %**.
+- ECU flashed and booted; `0x100` streaming on **FDCAN2 / ACU, 500 kbit/s**
+  (sample point 68.75 %).
 - A CAN tool on the ACU bus (the pit tool, or `candump`/`cansend` decoding against
   [`docs/dbc/ecu.dbc`](dbc/ecu.dbc)).
 - Pit-diag enabled: send **`0x7E0`** with payload **`DE AD BE EF`** (bytes 0–3).
-  The ECU acks `0x7E1 = 1` and streams `0x700`–`0x708`. Disable with `0x7E0 = 0`.
+  The ECU acks `0x7E1 = 1` and streams `0x700`–`0x70D`. Disable with `0x7E0 = 0`.
   (`0x706` = inverter temps, `0x707` = DV diagnostics, `0x708` = inverter L1/L2
-  fault layers. `0x704` health is **ungated** — it streams from `DiagTask` even
+  fault layers, `0x709` = cell derate, `0x70A` = pack thermal, `0x70B`/`0x70C` =
+  inverter FOC / torque, `0x70D` = power. `0x704` health is **ungated** — it streams from `DiagTask` even
   with pit-diag off.)
 
 ---
@@ -187,7 +189,7 @@ pack look *healthier*, and all three fail towards derating sooner:
 - `0x135` stale (>200 ms) → no compensation at all, derate on the raw voltage.
   Visible as `compensated = 0` on `0x709`.
 - The correction is clamped to `CellIrCompMaxMv` (500 mV).
-- A **raw** cell at/below `CellVRawFloorMv` (2400 mV) goes straight to the floor
+- A **raw** cell at/below `CellVRawFloorMv` (2850 mV) goes straight to the floor
   derate whatever the estimate says. Visible as `raw_floor = 1`.
 
 ### The curve itself
@@ -199,16 +201,28 @@ resolution across the entire travel in order to limit a peak.)
 
 | min cell (estimated OCV) | torque cap |
 |---|---|
-| ≥ 2800 mV | 100% |
-| 2700 | 68% |
-| 2600 | 36% |
-| ≤ 2500 | 5% (limp-home) |
+| ≥ 3130 mV | 100% |
+| 3050 | 69% |
+| 3000 | 50% |
+| 2950 | 31% |
+| ≤ 2900 | 13% (limp-home, 20 Nm) |
 
-> ⚠️ `CellVDerateFloorMv` (2500 mV) is **`COMMISSION`**: it must sit at or above
-> the AMS undervoltage cut, which lives in the AMS firmware and is not visible
-> from this repo. If the AMS opens above 2500 mV the AIRs drop with the car still
-> commanding 5% torque instead of coasting down. Confirm it against the AMS
-> config and the cell datasheet before any endurance run.
+> ⚠️ **These thresholds are derived, not tuned.** `CellVDerateFloorMv` (2900 mV)
+> is `AmsCellUnderVoltageMv` (2800 mV, mirrored from the AMS `ams_config.hpp`)
+> plus `CellDerateMarginMv` (100 mV), and the knee is the floor plus the ohmic
+> drop at peak current (`PeakPackCurrentA * CellIrMilliOhm`). So commissioning
+> `CellIrMilliOhm` moves the knee on its own — do not hand-edit the knee to
+> match a measurement.
+>
+> `static_assert`s in `ecu_config.hpp` hold both the floor and the raw backstop
+> above the AMS trip. This matters because the AMS opens the AIRs on the **raw
+> loaded** cell while this derate reads **IR-compensated OCV**, which under load
+> always reads higher: until #208 the entire ramp sat *below* their trip, so the
+> AIRs opened mid-corner with the ECU still commanding 100 %.
+>
+> The value to re-check when the AMS changes anything is `AmsCellUnderVoltageMv`,
+> not the floor. It is mirrored, not shared — `check_ams_contract.py` diffs CAN
+> frames, not constants, so an AMS bump will **not** be caught for you.
 
 ---
 
@@ -347,7 +361,7 @@ engages it stays engaged. If the car "went slow and stayed slow", check
 
 R2D arms on `start_button && brake_raw > BrakeArmRaw`, and DV R2D on
 `dv_r2d_req && brake_raw > BrakeDvHardRaw` (`control.cpp`). During bring-up the brake
-line may be unpressurized and/or the start button unwired, leaving the FSM stuck in
+line may be unpressurised and/or the start button unwired, leaving the FSM stuck in
 `WaitStartBrake`. Make the app **assume** those inputs so the **real** R2D/RTDS sequence
 runs — nothing to inject, no CAN traffic, no globals. **Both are config values in
 `ecu_config.hpp`, NOT build flags** — a false/zero toggle folds away at compile time
@@ -368,6 +382,8 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
   > used to trip above `BrakePressedRaw` was deleted along with the rule in FS-Rules
   > 2024 (#177), so brake pressure no longer gates torque in either mode.
 - **`config::StubStart`** — `start_button` is taken as pressed (PB5 isn't read).
+  ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
+  (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
 
 > **All five bench stubs are announced on the ungated `0x704`** —
 > `stub_no_ams`, `stub_no_inverter`, `stub_start`, `stub_brake` and
@@ -375,8 +391,6 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
 > chasing anything else: `TorqueCap < 100` is applied *after* the control core,
 > so it trips **none** of the derate `capped` flags, and a car quietly limited to
 > 80 % looks exactly like a derate that no derate can explain.
-  ⚠ **Do NOT set this for a DV (uDV-driven) R2D test** — it takes the manual branch first
-  (`control.cpp`), preempting the `dv_r2d_req` path. `false` = read PB5 (flight).
 
 **Build the bring-up image** (never a flight build) — set the toggles in `ecu_config.hpp`
 first, then the ordinary firmware build. The **stubs** are source constants, not `-D` flags:
@@ -399,9 +413,11 @@ alone, press the real start button; `StubStart` alone, press the real brake.)
 brake full travel) and `BrakeDvHardRaw` (2500, the DV R2D gate) are still `COMMISSION`** —
 recalibrate both once the line is purged, reading `0x701 brake_raw` via pit-diag.
 
-> ⚠ Read `brake_raw` on **`0x701`**, not `0x705`: `PitDiag_brake`'s `brake_pressure` is
-> currently **hardcoded to 0** in `pit_diag.cpp` (it depends on the brake calibration that
-> does not exist yet), so `0x705` is a placeholder frame.
+> ⚠ Read the raw counts on **`0x701`**. `0x705` now carries a real
+> `brake_pressure` in bar — an **absolute** map off the EPT1400 datasheet plus the
+> board divider, so it needs no calibration — alongside `brake_pct`, which stays
+> on legacy full-ADC scaling until `BrakeRestRaw` is set and therefore reads
+> ~13 % with the pedal released.
 
 ---
 

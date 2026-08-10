@@ -15,9 +15,9 @@ Importante:
 
 Origen en codigo:
 
-- snapshot de vehiculo: [Core/Src/app/vehicle_service.cpp](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app/vehicle_service.cpp:114)
-- pedales/plausibilidad (mirror de ControlTask): [Core/Inc/app/app_globals.h](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Inc/app/app_globals.h:37)
-- publicacion CAN3: [Core/Src/app/telemetry_task.cpp](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app/telemetry_task.cpp:46)
+- snapshot de vehiculo: [Core/Src/app/vehicle_service.cpp](../Core/Src/app/vehicle_service.cpp)
+- pedales/plausibilidad (mirror de ControlTask): [Core/Inc/app/app_globals.h](../Core/Inc/app/app_globals.h)
+- publicacion CAN3: [Core/Src/app/telemetry_task.cpp](../Core/Src/app/telemetry_task.cpp)
 
 ## Flujo
 
@@ -159,8 +159,10 @@ DLC: `7`
 Bus: `FDCAN3`
 DLC: `8`
 
-**PLACEHOLDER (`0`)**: no hay driver GPS en este firmware (los pines UART
-estan ruteados segun `docs/PINES_RUTEADOS_IOC.md` pero sin consumidor).
+**PLACEHOLDER (`0`)**: el driver GPS **si existe** (`gps_task.cpp`, MTK3339 en
+USART10) y ya publica `0x508`/`0x509` en el bus ACU mas los bytes 82..95 del
+snapshot de radio. Lo que falta es solo cablear `GpsService` a estas tramas de
+dashboard en `telemetry_task.cpp`.
 
 | Bytes | Campo | Origen actual |
 |---|---|---|
@@ -281,5 +283,6 @@ sea que el AMS mande.
 - **SOC (`0x518` byte 0)**: no depende de la ECU -- el AMS no tiene estimador
   de SOC todavia (`IFS08-CE-AMS acu_tx_encoders.hpp`: "0x130 SoC % -- DEFERRED,
   no estimator"). Va a seguir en `0` hasta que el AMS lo implemente.
-- **GPS (`0x519..0x51B` salvo `tick_ms`)**: requiere agregar un driver GPS
-  (UART ya ruteado) o recibir la posicion desde otra placa por CAN.
+- **GPS (`0x519..0x51B` salvo `tick_ms`)**: el driver y el parser ya estan; solo
+  falta leer `GpsService::instance().snapshot()` en `telemetry_task.cpp` y
+  rellenar estas tramas.
