@@ -10,9 +10,9 @@
 > lista al final (`flag_T11_8_9` como placeholder) **es falso en `dev`**: T.11.8.9 está
 > implementado con su ventana de 100 ms y cubierto por SIL.
 >
-> Fuentes vigentes: [`../CLAUDE.md`](../CLAUDE.md) (arquitectura + FSM),
+> Fuentes vigentes: [`../CLAUDE.md`](../../CLAUDE.md) (arquitectura + FSM),
 > `Core/Src/app/control.cpp` (núcleo real), `Core/Inc/can/messages/*.def` →
-> [`dbc/ecu.dbc`](dbc/ecu.dbc) (contrato CAN). Se conserva sólo por historia.
+> [`dbc/ecu.dbc`](../dbc/ecu.dbc) (contrato CAN). Se conserva sólo por historia.
 
 Fecha: 23-feb-2026  
 Estado de validación SIL: 93/93 tests PASS *(de la suite pre-rewrite, ya eliminada)*

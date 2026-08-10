@@ -66,6 +66,12 @@ never seen byte 2. Their `dev` decoder handles the short frame deliberately
 (`if dlc >= 3`), so the pairing degrades safely in that direction — but the
 reverse has not been verified, and neither has `main`'s decoder.
 
+**As of the 2026 season close, the car runs AMS `dev`** — so the pairing is
+consistent and byte 2 of `0x100` is actually decoded. Treat that as the last
+known state, not as a standing guarantee: the hazard is *release ordering*. When
+the AMS merges `dev` into `main`, the ECU has to go with it, or an ECU on `dev`
+meets an AMS on `main` and byte 2 silently disappears.
+
 **Before a session, confirm which AMS branch is on the car**, and prefer flashing
 both from `dev` or both from `main`. To check the shared frames yourself with
 `IFS08-CE-AMS` checked out alongside:

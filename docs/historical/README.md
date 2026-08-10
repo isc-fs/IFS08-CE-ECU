@@ -15,7 +15,7 @@ For anything current:
 | you want | read |
 |---|---|
 | the CAN contract | `Core/Inc/can/messages/*.def` → [`../dbc/ecu.dbc`](../dbc/ecu.dbc) |
-| the control logic | [`../../Core/Src/app/control.cpp`](../../Core/Src/app/control.cpp) |
+| the control logic | ``../../Core/Src/app/control.cpp`` |
 | torque limiting | [`../derating.md`](../derating.md) |
 | the dashboard contract | [`../CAN3_MAP.md`](../CAN3_MAP.md) |
 | the radio contract | [`../RADIO_SNAPSHOT_MAP.md`](../RADIO_SNAPSHOT_MAP.md) |

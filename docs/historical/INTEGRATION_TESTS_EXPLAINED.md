@@ -7,7 +7,7 @@
 >
 > La SIL actual es `tests/sil/sil_control_tests.cpp` → target `ecu08_sil`: 6 unidades de
 > traducción, **sin mocks, sin FreeRTOS, sin HAL**. Ver la sección *"Cómo compilar y correr
-> SIL"* de [`../CLAUDE.md`](../CLAUDE.md).
+> SIL"* de [`../CLAUDE.md`](../../CLAUDE.md).
 >
 > ⚠️ Además, los valores que cita están desfasados: usa `s_freno > 3000` como umbral de
 > armado de R2D cuando hoy es `BrakeArmRaw = 750`, y su checklist de HIL (§8) manda trabajar

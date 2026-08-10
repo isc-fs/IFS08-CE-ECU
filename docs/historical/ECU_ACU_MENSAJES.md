@@ -5,9 +5,9 @@
 > a C++17**, y afirma que la ECU parsea `0x130`, cosa que no ocurre en ningún sitio de
 > `Core/`. También enlaza un `docs/CAN_MAP.md` que nunca llegó a existir.
 >
-> **Fuente de verdad actual:** `Core/Inc/can/messages/*.def` → [`dbc/ecu.dbc`](dbc/ecu.dbc).
+> **Fuente de verdad actual:** `Core/Inc/can/messages/*.def` → [`dbc/ecu.dbc`](../dbc/ecu.dbc).
 > El contrato ECU↔AMS vigente (heartbeat `0x100`, `0x020`, `0x12C`, `0x4A0`, `0x131`–`0x137`)
-> está resumido en [`../CLAUDE.md`](../CLAUDE.md). Se conserva sólo por historia.
+> está resumido en [`../CLAUDE.md`](../../CLAUDE.md). Se conserva sólo por historia.
 
 Fecha: 17-jun-2026
 

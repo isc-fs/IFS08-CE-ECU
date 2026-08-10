@@ -1,8 +1,8 @@
 # Radio telemetry — v2 fragmented snapshot (nRF24)
 
 **Status: current.** Supersedes the RF_FAST/RF_SLOW multi-kind protocol in
-[RADIO_MAP.md](RADIO_MAP.md) (the ground station no longer parses it — see
-[RADIO_TELEMETRY_FAILURE_ANALYSIS.md](RADIO_TELEMETRY_FAILURE_ANALYSIS.md) for
+[RADIO_MAP.md](historical/RADIO_MAP.md) (the ground station no longer parses it — see
+[RADIO_TELEMETRY_FAILURE_ANALYSIS.md](historical/RADIO_TELEMETRY_FAILURE_ANALYSIS.md) for
 the mismatch that this replaces).
 
 ## Source of truth
@@ -21,7 +21,7 @@ and is verified two ways:
 
 ## RF link config (nRF24, must match the receiver)
 
-`PIPE "ECU01" (45 43 55 30 31) · channel 76 · 1 Mbps · AUTO_ACK off · CRC-16 · PA_MAX`.
+`PIPE "ECU01" (45 43 55 30 31) · channel 76 · 1 Mbps · AUTO_ACK off · CRC-8 (1 byte, CRCO sin poner) · PA_MAX`.
 
 > The pipe address is the 5 ASCII bytes `ECU01`, **not** the nRF24 library default
 > `0xE7E7E7E7E7`. Source of truth: `g_nrf24Address` in
