@@ -154,12 +154,19 @@ jobs:
 
             const firstMessage = commits[0].message.trim();
 
-            const { data: issues } = await github.rest.issues.listForRepo({
+            /* PAGINATE. The max-number scan above already does; this one did
+               not, and it is the call where a cap is worse -- it is a LOOKUP
+               for one specific tracker, so truncation does not degrade it, it
+               just fails to find the issue and logs "no open issue found for
+               this branch". That is indistinguishable from the legitimate case
+               where no tracker exists, so the only symptom is a description
+               auto-fill that silently stops happening. */
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner:    context.repo.owner,
               repo:     context.repo.repo,
               labels:   type,
               state:    'open',
-              per_page: 50,
+              per_page: 100,
             });
 
             const branchIssue = issues.find(i => i.title.startsWith(`[${branch}]`));
