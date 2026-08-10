@@ -5,7 +5,7 @@ Mapa de referencia entre:
 - pin del conector de la PCB inferior,
 - senal funcional en placa,
 - pin fisico del STM32,
-- y nombre/configuracion observados en `ECU08 NSIL.ioc`.
+- y nombre/configuracion observados en `ECU.ioc`.
 
 Este documento no es solo un volcado de CubeMX. Tambien fija la asociacion
 funcional que vamos a usar en el proyecto, aunque en el `.ioc` algunos pines
@@ -13,7 +13,7 @@ aparezcan con alias genericos como `D1`, `D2`, `A1` o `A2`.
 
 ## Fuentes usadas
 
-- `ECU08 NSIL.ioc`
+- `ECU.ioc`
 - `Core/Inc/main.h`
 - `Core/Src/gpio.c`
 - descripcion de ruteo micro -> placa facilitada por el usuario
@@ -32,19 +32,19 @@ aparezcan con alias genericos como `D1`, `D2`, `A1` o `A2`.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | GND | Alimentacion | - | - | - | - | OK |
 | 2 | GND | Alimentacion | - | - | - | - | OK |
-| 3 | S_TEMP_REFRI | Funcional | PD5 | `DS18B20_REFRI` | `GPIO_Input` | - | OK |
+| 3 | S_TEMP_REFRI | Funcional | PD5 | - | - | - | ⚠ No aparece en `ECU.ioc` |
 | 4 | GPS_TX | Funcional | PG11 | - | `USART10_RX` | `Asynchronous` | OK |
 | 5 | GPS_RX | Funcional | PG12 | - | `USART10_TX` | `Asynchronous` | OK |
-| 6 | RTDS | Funcional | PB4 | `D1` | `GPIO_Output` | - | OK |
-| 7 | START_FIL | Funcional | PB5 | `D2` | `GPIO_Output` | - | OK |
-| 8 | GPIO3 | Generico | PB6 | `D3` | `GPIO_Output` | - | OK |
-| 9 | GPIO4 | Generico | PB7 | `D4` | `GPIO_Output` | - | OK |
+| 6 | RTDS | Funcional | PB4 | `RTDS` | `GPIO_Output` | - | OK |
+| 7 | START_FIL | Funcional | PB5 | `START` | `GPIO_Input` | - | OK |
+| 8 | **DC-LINK DISCHARGE** | **EN USO (#198)** | PB6 | `D3` | `GPIO_Output` | - | ⚠ **NO REUTILIZAR** |
+| 9 | GPIO4 | Generico | PB7 | `D4` | `GPIO_Output` | - | Libre (candidato a readback auxiliar del relé de descarga, #198) |
 | 10 | GPIO5 | Generico | PB8 | `D5` | `GPIO_Output` | - | OK |
 | 11 | GPIO6 | Generico | PB9 | `D6` | `GPIO_Output` | - | OK |
-| 12 | S_BRAKE_FIL | Funcional | PF7 | `A1` | `ADC3_INP3` | `IN3-Single-Ended` | OK |
-| 13 | APPS_1 | Funcional | PF8 | `A2` | `SharedAnalog_PF8` | - | Revisar ADC |
-| 14 | APPS_2 | Funcional | PF9 | `A3` | `ADC3_INP2` | `IN2-Single-Ended` | OK |
-| 15 | GPIO10 | Generico | PF10 | `A4` | `ADC3_INP6` | `IN6-Single-Ended` | OK |
+| 12 | S_BRAKE_FIL | Funcional | PF7 | `S_BRAKE` | `ADC3_INP3` | `IN3-Single-Ended` | OK |
+| 13 | APPS_1 | Funcional | PF8 | `APPS_1` | `SharedAnalog_PF8` = `ADC3_INP7` | - | OK |
+| 14 | APPS_2 | Funcional | PF9 | `APPS_2` | `ADC3_INP2` | `IN2-Single-Ended` | OK |
+| 15 | GPIO10 | Generico | PF10 | `A4` | `ADC3_INP6` | `IN6-Single-Ended` | Libre **y con ADC** — candidato a sensado propio del DC-link (#198/#177) |
 | 16 | GPIO11 | Generico | PC0 | `A5` | `ADCx_INP10` | - | OK |
 | 17 | GPIO12 | Generico | PC1 | `A6` | `ADCx_INP11` | - | OK |
 | 18 | GPIO13 | Generico | PC2 | - | - | - | No aparece en `.ioc` |
@@ -76,11 +76,11 @@ aparezcan con alias genericos como `D1`, `D2`, `A1` o `A2`.
 
 Estas asociaciones son las que conviene usar cuando hablemos de firmware:
 
-- `RTDS` -> `PB4` -> label CubeMX `D1`
-- `START_FIL` -> `PB5` -> label CubeMX `D2`
-- `S_BRAKE_FIL` -> `PF7` -> label CubeMX `A1`
-- `APPS_1` -> `PF8` -> label CubeMX `A2`
-- `APPS_2` -> `PF9` -> label CubeMX `A3`
+- `RTDS` -> `PB4` -> label CubeMX `RTDS`
+- `START_FIL` -> `PB5` -> label CubeMX `START` (entrada, no salida)
+- `S_BRAKE_FIL` -> `PF7` -> label CubeMX `S_BRAKE`
+- `APPS_1` -> `PF8` -> label CubeMX `APPS_1`
+- `APPS_2` -> `PF9` -> label CubeMX `APPS_2`
 - `GPIO10` -> `PF10` -> label CubeMX `A4`
 - `GPIO11` -> `PC0` -> label CubeMX `A5`
 - `GPIO12` -> `PC1` -> label CubeMX `A6`
@@ -89,7 +89,7 @@ Estas asociaciones son las que conviene usar cuando hablemos de firmware:
 
 ### 1. `PC2 / GPIO13` no esta configurado en el `.ioc`
 
-- No aparece en `ECU08 NSIL.ioc`.
+- No aparece en `ECU.ioc`.
 - No aparece definido en `Core/Inc/main.h`.
 - No aparece inicializado en `Core/Src/gpio.c`.
 
@@ -126,8 +126,8 @@ dispositivos.
 
 En el proyecto actual, CubeMX usa etiquetas genericas:
 
-- `D1..D6` para PB4..PB9
-- `A1..A6` para PF7, PF8, PF9, PF10, PC0, PC1
+- `D3..D6` para PB6..PB9 (PB4 y PB5 llevan sus nombres funcionales `RTDS` y `START`)
+- `A4..A6` para PF10, PC0, PC1 (PF7/PF8/PF9 llevan `S_BRAKE`, `APPS_1`, `APPS_2`)
 
 Para la migracion y el control conviene pensar en sus nombres funcionales de
 placa (`RTDS`, `START_FIL`, `S_BRAKE_FIL`, `APPS_1`, `APPS_2`, etc.), no en
@@ -151,5 +151,21 @@ El ruteo funcional relevante queda fijado asi:
 ## Pendiente de confirmacion final
 
 - `PC2 / GPIO13`
-- uso ADC efectivo de `PF8 / APPS_1` en firmware
+- ~~uso ADC efectivo de `PF8 / APPS_1` en firmware~~ — **resuelto**: `io_signals.cpp`
+  lee `apps1_raw` con `read_adc3(ADC_CHANNEL_7)`, que corresponde a
+  `SH.SharedAnalog_PF8.1=ADC3_INP7` en `ECU.ioc`.
 
+
+---
+
+## ⚠ Pines que NO son genéricos aunque lo parezcan
+
+Esta tabla se lee para buscar un pin libre. Antes de reutilizar cualquiera,
+comprobar aquí:
+
+| Pin | Señal | Por qué no se puede tocar |
+|---|---|---|
+| **PB6** (`D3`) | Interrupción de bobina del relé de descarga del DC-link (#198) | Sale a un **NPN → relé NC en serie con la bobina del relé de descarga**. `HIGH = descargar`. Reutilizarlo o dejarlo flotante rompe la descarga del bus DC: o impide una descarga que debe completarse, o conecta la resistencia de bleed (régimen transitorio) sobre un pack vivo. Lógica en [`Core/Inc/app/discharge.hpp`](../Core/Inc/app/discharge.hpp). **Requiere pull-down externo en la base** (ya presente en la placa nueva): el pin es alta impedancia desde el reset hasta `MX_GPIO_Init`, y el bootloader corre antes. |
+| **PA5 / PA6 / PA7** | nRF24 por **bit-bang**, NO SPI1 | El `.ioc` los declara SPI1 y `MX_SPI1_Init()` se ejecuta, pero el driver los mueve como GPIO. El SPI1 hardware lee MISO clavado a 0xFF en esta placa. No "arreglarlo" pasando el driver a `hspi1` — ya se intentó y la radio queda muda. |
+| **PB5** (`D2`) | `START_FIL` (botón de arranque) | Gatea el R2D manual. |
+| **PB4** (`D1`) | `RTDS` | Zumbador reglamentario. |

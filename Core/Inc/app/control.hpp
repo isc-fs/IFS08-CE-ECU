@@ -24,7 +24,12 @@
 
 #include <cstdint>
 
+#include "app/cell_derate.hpp"
+#include "app/motor_thermal.hpp"
+#include "app/pack_thermal.hpp"
 #include "app/ecu_config.hpp"
+#include "app/pedal_cal.hpp"
+#include "app/power_limit.hpp"
 
 namespace ecu {
 
@@ -68,22 +73,91 @@ struct CtrlInputs {
     bool     ok_precharge = false;       // 0x020
     bool     ams_error = false;          // 0x4A0 fsm_state == AmsFsmError
     uint16_t v_cell_min_mV = 0;          // 0x12C / 0x4A0
+    // Pack current, for the IR compensation that keeps the low-cell derate from
+    // reacting to acceleration sag (cell_derate.hpp). Deciamps, + = discharge.
+    // Freshness is tracked SEPARATELY from ams_fresh: 0x135 is its own frame at
+    // its own cadence, and a bus-level liveness flag would let a dead current
+    // signal keep compensating off a frozen value.
+    int16_t  current_accu_dA = 0;        // 0x135
+    bool     current_fresh = false;      // 0x135 recently received
+    // Motor temperatures (0x464, raw bytes; degC = raw - 50) for the thermal
+    // cap. Own freshness for the same reason as the current: the inverter can
+    // keep talking on 0x461/0x463/0x466 while 0x464 alone dies, and a frozen
+    // temperature reads as a healthy one.
+    uint8_t  inv_temp_motor1_raw = 0;    // 0x464
+    uint8_t  inv_temp_motor2_raw = 0;    // 0x464
+    bool     inv_temps_fresh = false;    // 0x464 recently received
+    // Accumulator per-module maxima (0x136/0x137, signed degC, no offset) plus
+    // the AMS's own view of which modules are reporting (0x4A0 byte2). Own
+    // freshness again -- and here it is the ONLY guard against an
+    // uninitialised state, because 0 degC is a real pack temperature.
+    int16_t  tmax_module[PackModuleCount] = {};
+    uint8_t  module_online_mask = 0;     // 0x4A0 byte2
+    bool     ams_status_fresh = false;   // 0x4A0 fresh -> the mask is trustworthy
+    bool     pack_temps_fresh = false;   // 0x136/0x137 recently received
     // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
     // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
     // and the ECU verifies it on its own brake sensor; no start button in DV.
     bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
     bool     dv_fresh = false;           // 0x507 stream fresh (UdvCmdStaleMs)
     uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
+    // MECHANICAL motor speed (0x463 erpm / MotorPolePairs). Feeds the EV 2.2.1
+    // power envelope. Feed-forward only: the cap reads this, it does not drive
+    // it on the timescale of a control tick, so no loop is closed (#177).
+    int32_t  motor_rpm_mech = 0;
+    // Pedal calibration, carried IN rather than read from a global so step()
+    // stays a pure function of its arguments and the SIL suite can vary it.
+    // Defaults reproduce the values that used to be constexpr, so an ECU with
+    // no stored calibration behaves exactly as before (#169).
+    PedalCal cal{};
 };
 
 struct CtrlOutput {
     CtrlState state = CtrlState::WaitInvVdcConfig;
     uint8_t   torque_pct = 0;    // 0..100, commanded (non-zero only in Active)
     InvMode   inv_mode = InvMode::Off;
+    // Fault-recovery FOLLOW-UP mode words: extra App_State_Req values the task
+    // sends on 0x360 AFTER inv_mode, within the SAME 10 ms cycle (n = 0 on the
+    // normal path, so nothing changes when the inverter is healthy).
+    //
+    // WHY: the W90 manual 9.3 states that going to OFF is what restarts a FAULT
+    // -- OFF is the only fault-clearing path the vendor documents (0x0D/0x13 do
+    // not even appear in its App_State_Req list). The IFS07 VCU, which DID
+    // recover without a power cycle, sent exactly this burst because its
+    // App_State switch fell through with no breaks: soft fault -> 0x13, 0x0D,
+    // 0x01; hard fault -> 0x0D, 0x01. Commanding the reset word ALONE (what we
+    // did before) means the OFF that actually clears the fault is never sent,
+    // so the inverter stays faulted and WaitInvStandby hangs forever (#148).
+    InvMode   inv_mode_follow[2] = { InvMode::Off, InvMode::Off };
+    uint8_t   inv_mode_follow_n = 0;
+    // Assert Flt_Clear (0x360 byte 2 bit 7) on the LAST follow-up word. Set only
+    // while the inverter reports a fault, so the bit is PULSED, not held: the
+    // primary word and any earlier follow word leave it clear, giving the
+    // inverter a fresh rising edge every 10 ms cycle rather than a stuck-high
+    // level (which an edge-triggered clear would see exactly once). The mode
+    // words alone do not shift a LATCHED fault -- dem_present = 0, condition
+    // already gone, inverter still parked in SoftFault(10) (#148).
+    bool      inv_flt_clear = false;
+    // EV 2.2.1 power envelope is actively limiting this tick. Annunciated on
+    // 0x700 so a driver complaining of "no power at the end of the straight"
+    // can be answered from a capture instead of a guess (#177).
+    bool      power_capped = false;
+    // Motor thermal cap is limiting this tick (including the unknown-sensor
+    // case). Annunciated on 0x706 next to the temperatures that caused it.
+    bool      thermal_capped = false;
+    // Accumulator thermal cap is limiting this tick. Annunciated on 0x70A.
+    bool      pack_thermal_capped = false;
+    // Wrapping count of times Active dropped back to WaitInvStandby because the
+    // inverter left the drive (#191). Transient by nature -- the inverter
+    // recovers and the FSM climbs again within a couple of ticks -- so without a
+    // counter the event is invisible after the fact. On 0x708.
+    uint8_t   inv_redrive_count = 0;
+    // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
+    // torque_cmd, which was hardcoded to 0 before this.
+    int16_t   torque_nm = 0;
     bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)
-    bool      ev_2_3 = false;    // brake+throttle implausibility (latched)
     bool      t11_8_9 = false;   // APPS disagreement past the 100 ms window
     // DV drive latched this cycle (the 0x510+EBS gate fired) -> torque source
     // is the uDV 0x507 command; drives the 0x511 R2D-confirm emission.
@@ -97,18 +171,44 @@ public:
     CtrlOutput step(const CtrlInputs& in, uint32_t now_ms) noexcept;
     CtrlState  state() const noexcept { return state_; }
 
+    // The low-cell estimator's working state from the last step(): the raw
+    // reading, the IR correction applied, the resulting OCV estimate and the
+    // cap. Published on pit-diag 0x709 -- R_cell is commissioned by watching
+    // est_ocv_mV stay flat through an acceleration run, which is only possible
+    // if the intermediate values leave the core.
+    const CellDerateState& cell_derate() const noexcept { return cell_derate_; }
+
+    // Motor thermal cap working state from the last step(): the filtered
+    // temperature, per-sensor validity and the resulting cap. Published on
+    // 0x706 so a thermal limit is visible rather than inferred.
+    const MotorThermalState& motor_thermal() const noexcept { return motor_thermal_; }
+
+    // Accumulator thermal cap working state from the last step(). Published on
+    // 0x70A -- which modules were actually used is the part worth seeing, since
+    // a silently-excluded module is how a hot pack goes unnoticed.
+    const PackThermalState& pack_thermal() const noexcept { return pack_thermal_; }
+
 private:
     void enter_(CtrlState s, uint32_t now_ms) noexcept;
 
     CtrlState state_ = CtrlState::WaitInvVdcConfig;
     uint32_t  state_entry_ms_ = 0;
-    bool      ev23_latched_ = false;
     bool      apps_disagree_active_ = false;
     uint32_t  apps_disagree_since_ms_ = 0;
     // The mode decision (#17): latched by WHICH trigger fired at WaitStartBrake
     // (manual start+brake vs DV 0x510+EBS-brake); cleared on any exit from the
     // drive ladder (enter_ to a pre-R2D state or AmsError). Never swaps live.
     bool      dv_latched_ = false;
+    uint8_t   inv_redrive_count_ = 0;
+    // IR-compensated low-cell estimator (cell_derate.hpp). Holds filter state,
+    // so it lives with the FSM's other history rather than being rebuilt per
+    // tick -- a filter reconstructed every call is just a passthrough.
+    CellDerate      cell_{};
+    CellDerateState cell_derate_{};
+    MotorThermal      thermal_{};
+    MotorThermalState motor_thermal_{};
+    PackThermal       pack_{};
+    PackThermalState  pack_thermal_{};
 };
 
 // APPS travel %, clamped 0..100. Exposed for the pit-diag adapter (0x701) and

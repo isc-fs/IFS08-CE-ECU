@@ -1,8 +1,8 @@
 # Radio telemetry — v2 fragmented snapshot (nRF24)
 
 **Status: current.** Supersedes the RF_FAST/RF_SLOW multi-kind protocol in
-[RADIO_MAP.md](RADIO_MAP.md) (the ground station no longer parses it — see
-[RADIO_TELEMETRY_FAILURE_ANALYSIS.md](RADIO_TELEMETRY_FAILURE_ANALYSIS.md) for
+[RADIO_MAP.md](historical/RADIO_MAP.md) (the ground station no longer parses it — see
+[RADIO_TELEMETRY_FAILURE_ANALYSIS.md](historical/RADIO_TELEMETRY_FAILURE_ANALYSIS.md) for
 the mismatch that this replaces).
 
 ## Source of truth
@@ -21,7 +21,14 @@ and is verified two ways:
 
 ## RF link config (nRF24, must match the receiver)
 
-`PIPE 0xE7E7E7E7E7 · channel 76 · 1 Mbps · AUTO_ACK off · CRC-16 · PA_MAX`.
+`PIPE "ECU01" (45 43 55 30 31) · channel 76 · 1 Mbps · AUTO_ACK off · CRC-8 (1 byte, CRCO sin poner) · PA_MAX`.
+
+> The pipe address is the 5 ASCII bytes `ECU01`, **not** the nRF24 library default
+> `0xE7E7E7E7E7`. Source of truth: `g_nrf24Address` in
+> [`Core/Src/nrf24.c`](../Core/Src/nrf24.c) (line 47), written to both `RX_ADDR_P0`
+> and `TX_ADDR` in `NRF24_ApplyDefaultConfig()`. A receiver left on the library
+> default hears **nothing**, with no CAN symptom and no error on the ECU side.
+
 Path: STM32 → nRF24 → Arduino Nano → USB-serial (`AA 55 20 <32B> <XOR>`) → PC.
 
 ## On-air fragment (each 32-byte nRF24 payload)
@@ -50,7 +57,7 @@ Five fragments reassemble the **102-byte** snapshot (`5 × 24 = 120 ≥ 102`).
 | 9..10 | apps2_raw | u16 | `g_last_apps2_raw` |
 | 11..12 | brake_raw | u16 | `g_last_brake_raw` |
 | 13..14 | torque_pct | u16 | `g_last_torque_pct` (u8 zero-ext) |
-| 15 | ev_2_3 | u8 | `g_last_ev_2_3` |
+| 15 | **reservado** | u8 | siempre `0` — era `ev_2_3`; EV.2.3 se eliminó en FS-Rules 2024 (#177). El byte se mantiene para que 16+ conserven su offset |
 | 16 | t11_8_9 | u8 | `g_last_t11_8_9` |
 | 17 | state | u8 | `g_last_ctrl_state` (ECU FSM) |
 | 18 | ok_precharge | u8 | `veh.ok_precharge` |
@@ -73,11 +80,25 @@ Five fragments reassemble the **102-byte** snapshot (`5 × 24 = 120 ≥ 102`).
 | 70..73 | inv_rpm | i32 | `veh.inv_rpm` (0x463, erpm — electrical) |
 | 74..77 | **inv_speed_actual** | i32 | **PLACEHOLDER 0** — no source decoded |
 | 78..81 | **inv_current_actual** | i32 | **PLACEHOLDER 0** — no source decoded |
-| 82..101 | reserved | 20 B | 0 |
+| 82..85 | gps_lat_deg1e7 | i32 | `GpsService` — degrees * 1e7, +N / -S |
+| 86..89 | gps_lon_deg1e7 | i32 | `GpsService` — degrees * 1e7, +E / -W |
+| 90..91 | gps_speed_kmh_x100 | u16 | km/h * 100 (converted from NMEA knots) |
+| 92..93 | gps_course_deg_x100 | u16 | course over ground, deg * 100 |
+| 94 | gps_sats | u8 | satellites in view (GGA) |
+| 95 | gps_has_fix | u8 | 1 = valid fix — **gate the four fields above on this** |
+| 96..101 | reserved | 6 B | 0 |
 
-> **No GPS in v2.** The older RF_SLOW carried GPS placeholders; the snapshot
-> layout drops them (bytes 82..101 are reserved). The USART10 GPS pins remain
-> unused (see `docs/PINES_RUTEADOS_IOC.md`).
+> **GPS is live since #147.** The MTK3339 on USART10 fills what used to be the
+> reserved tail. The wire size is UNCHANGED at 102 bytes, so an un-updated
+> ground station keeps working — it simply ignores 82..95. Source is
+> `GpsService` (a local UART peripheral), NOT `VehicleService`.
+>
+> **Always gate on `gps_has_fix`.** Position and speed carry the LAST VALID
+> values when the fix drops; they do not zero out, so an ungated display shows
+> a stale position as if it were live.
+>
+> Ground-station decode is tracked in isc-fs/IFS08-TE#1 — until that lands the
+> bytes are transmitted but not shown.
 
 ## Cadence
 

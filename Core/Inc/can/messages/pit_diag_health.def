@@ -17,10 +17,18 @@
  * A flight build reports ALL ZERO. stub_no_ams is the load-bearing one -- it
  * forces ok_precharge true, which is what 0x504 VCU_ts_active reports to the
  * uDV, so a set bit means "TS-active on this ECU is FAKE, do not trust it".
- * (stub_brake was dropped when TelemetryTask took a task-liveness bit -- it is
- * the only stub that disables NO safety gate; StubBrakeRaw!=0 shows on 0x701.)
  *
- * reset_cause: 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG, 5 WWDG, 6 LPWR/BOR.
+ * byte5 b3 stub_brake (#137) -- the 4th stub announce, restored here. It was
+ * dropped when TelemetryTask took the 5th task-liveness bit and byte4 filled up.
+ * byte5 b6 stub_torque_cap -- the 5th (config::TorqueCap < 100). See below.
+ * It disables NO safety gate (StubBrakeRaw!=0 just injects a fake brake_raw,
+ * also visible on 0x701), so it lives outside the byte4 safety-stub cluster --
+ * in the room freed by narrowing reset_cause to its true width (below).
+ *
+ * reset_cause (byte5 b0-b2, 3 bits): 0 unknown, 1 POR, 2 PIN, 3 SOFT, 4 IWDG,
+ * 5 WWDG, 6 LPWR/BOR. The STM32H7 has exactly these seven causes, so 3 bits is
+ * permanently sufficient -- the old 8-bit field wasted five bits, one of which
+ * is now stub_brake. (b4-b7 of byte5 stay free for future announces.)
  * last_fault: sticky sentinel latched in RTC backup across the reset (0 none).
  */
 
@@ -38,7 +46,24 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
     FIELD_LE_BITS (stub_no_ams,      uint8_t, 37, 1, 1, 0, "bit")
     FIELD_LE_BITS (stub_no_inverter, uint8_t, 38, 1, 1, 0, "bit")
     FIELD_LE_BITS (stub_start,       uint8_t, 39, 1, 1, 0, "bit")
-    FIELD_LE (reset_cause,   uint8_t,  5, 8,  1, 0, "enum")
+    /* byte5: reset_cause narrowed to 3 bits (b0-b2); stub_brake at b3 (#137) */
+    FIELD_LE_BITS (reset_cause,      uint8_t, 40, 3, 1, 0, "enum")
+    FIELD_LE_BITS (stub_brake,       uint8_t, 43, 1, 1, 0, "bit")
+    /* byte5 b4-b5: how the pedal calibration was loaded at boot (#169).
+     * UNGATED on purpose -- it rides this frame rather than the pit-diag
+     * stream so an operator can see, without arming anything, whether the
+     * calibration they committed is actually live or whether the ECU fell back
+     * to compile-time defaults. A silently-ignored calibration is
+     * indistinguishable from an applied one, which is the confusion this
+     * exists to prevent. The per-rule reason lives on the 0x7E3 session frame. */
+    FIELD_LE_BITS (cal_status,       uint8_t, 44, 2, 1, 0, "enum")
+    /* byte5 b6 stub_torque_cap -- the 5th stub announce. config::TorqueCap < 100
+     * clamps commanded torque for on-stands testing, and it was the ONE bench
+     * stub with no annunciation anywhere: it is applied in control_task AFTER
+     * Controller::step(), so it sets none of the capped flags on 0x700/0x706/
+     * 0x709/0x70A. A car quietly limited to 80 % looked exactly like a derate
+     * that no derate could explain. Ungated, like the rest of the announce. */
+    FIELD_LE_BITS (stub_torque_cap,  uint8_t, 46, 1, 1, 0, "bit")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)
@@ -46,6 +71,10 @@ CAN_MSG_END(PitDiag_health)
 /* Enum value tables (DBC VAL_). reset_cause mirrors ecu::ResetCause, last_fault
  * ecu::FaultCode. Host dbc_dump build only (ECU_DSL_VALUES_PASS). */
 #ifdef ECU_DSL_VALUES_PASS
+CAN_VAL(PitDiag_health, cal_status, 0, "Defaults")
+CAN_VAL(PitDiag_health, cal_status, 1, "Loaded")
+CAN_VAL(PitDiag_health, cal_status, 2, "InvalidFellBack")
+CAN_VAL(PitDiag_health, cal_status, 3, "BadVersionFellBack")
 CAN_VAL(PitDiag_health, reset_cause, 0, "Unknown")
 CAN_VAL(PitDiag_health, reset_cause, 1, "PowerOn")
 CAN_VAL(PitDiag_health, reset_cause, 2, "Pin")

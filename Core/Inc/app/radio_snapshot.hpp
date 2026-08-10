@@ -44,7 +44,10 @@ struct RadioSnapshotInputs {
     std::uint16_t apps2_raw          = 0;   // [9..10]
     std::uint16_t brake_raw          = 0;   // [11..12]
     std::uint8_t  torque_pct         = 0;   // [13..14] (u8 zero-extended)
-    std::uint8_t  ev_2_3             = 0;   // [15]
+    // [15] RESERVED, always 0. Was ev_2_3 until EV.2.3 was deleted in
+    // FS-Rules 2024. The byte stays so [16] onward keep their offsets -- the
+    // ground station decodes this by fixed offset.
+    std::uint8_t  reserved_15        = 0;   // [15]
     std::uint8_t  t11_8_9            = 0;   // [16]
     std::uint8_t  state              = 0;   // [17] ECU FSM state
     std::uint8_t  ok_precharge       = 0;   // [18]
@@ -69,7 +72,17 @@ struct RadioSnapshotInputs {
     std::int32_t  inv_rpm            = 0;   // [70..73]
     std::int32_t  inv_speed_actual   = 0;   // [74..77] PLACEHOLDER (no source)
     std::int32_t  inv_current_actual = 0;   // [78..81] PLACEHOLDER (no source)
-    // [82..101] reserved / zero
+    // --- GPS (MTK3339 / USART10, see gps_nmea.hpp). Placed in what used to be
+    //     the reserved tail, so the wire size stays 102 bytes and an OLD ground
+    //     station keeps working (it just ignores these bytes). The TE-side
+    //     _decode_snapshot() must be extended to SHOW them. ---
+    std::int32_t  gps_lat_deg1e7     = 0;   // [82..85]  degrees * 1e7, +N/-S
+    std::int32_t  gps_lon_deg1e7     = 0;   // [86..89]  degrees * 1e7, +E/-W
+    std::uint16_t gps_speed_kmh_x100 = 0;   // [90..91]  km/h * 100
+    std::uint16_t gps_course_deg_x100= 0;   // [92..93]  deg * 100
+    std::uint8_t  gps_sats           = 0;   // [94]
+    std::uint8_t  gps_has_fix        = 0;   // [95]  gate lat/lon/speed on this
+    // [96..101] reserved / zero
 };
 
 // Fill `out` (102 bytes) with the little-endian snapshot per _decode_snapshot().

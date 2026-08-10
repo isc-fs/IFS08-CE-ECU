@@ -1,5 +1,13 @@
 # Dash Variables
 
+> **⚠️ This is a WISHLIST, not a contract.** It records variables the team would
+> *like* on the dashboard. It does **not** describe what the ECU actually sends.
+>
+> The live dashboard contract — the 18 frames `0x510`–`0x521` on FDCAN3, with
+> real byte offsets that another team's decoder depends on — is
+> [`CAN3_MAP.md`](CAN3_MAP.md). If the two disagree, `CAN3_MAP.md` and
+> `Core/Src/app/telemetry_task.cpp` are right and this file is aspiration.
+
 Objetivo de variables que queremos poder mostrar en el dashboard.
 
 Importante:
@@ -25,7 +33,7 @@ Importante:
 | `ecu.s2_aceleracion` | `uint16_t` | `g_in.s2_aceleracion` | Pedal acelerador 2 |
 | `ecu.s_freno` | `uint16_t` | `g_in.s_freno` | Sensor de freno |
 | `ecu.torque_total` | `uint16_t` | `g_in.torque_total` | Par calculado por control |
-| `ecu.flag_ev_2_3` | `uint8_t` | `g_in.flag_EV_2_3` | Flag de seguridad EV 2.3 |
+| ~~`ecu.flag_ev_2_3`~~ | — | — | **ELIMINADA**: EV.2.3 se borro de FS-Rules 2024 y el corte con ella. El bit 0 de `fault_bits` queda RESERVADO en 0; la posicion NO se renumero. |
 | `ecu.flag_t11_8_9` | `uint8_t` | `g_in.flag_T11_8_9` | Flag de plausibilidad T11.8.9 |
 
 ## AMS

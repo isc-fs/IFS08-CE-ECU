@@ -1,6 +1,20 @@
 # Tests de Integración ECU08 NSIL — Explicación completa
 
+> ⚠️ **HISTÓRICO (23-feb-2026) — describe una suite que ya NO existe.** Este documento
+> explica el **antiguo harness SIL con RTOS mockeado** (`sil_main.c`, `sil_can_simulator.c`,
+> `tests/sil/mocks/`, `g_in`, `cmsis_os2_impl.c`). Esos ficheros siguen en el árbol pero
+> **no los compila ningún CMakeLists** — son inertes.
+>
+> La SIL actual es `tests/sil/sil_control_tests.cpp` → target `ecu08_sil`: 6 unidades de
+> traducción, **sin mocks, sin FreeRTOS, sin HAL**. Ver la sección *"Cómo compilar y correr
+> SIL"* de [`../CLAUDE.md`](../../CLAUDE.md).
+>
+> ⚠️ Además, los valores que cita están desfasados: usa `s_freno > 3000` como umbral de
+> armado de R2D cuando hoy es `BrakeArmRaw = 750`, y su checklist de HIL (§8) manda trabajar
+> contra USART10 y FDCAN3 de una forma que ya no aplica. Se conserva sólo por historia.
+
 > **Resultado última ejecución:** 93/93 tests PASS · 10/10 suites OK · Modo SIL · 23-feb-2026
+> *(de la suite pre-rewrite, ya eliminada — no es evidencia del firmware actual)*
 
 ---
 

@@ -11,13 +11,20 @@
  * byte7 bit0 dem_present 1 = the DEM condition is ACTIVE now, 0 = latched
  *            history (fault gone but code retained). Lets the pit tool tell a
  *            live inverter fault from a stale boot latch (0x461 byte3 bit7).
+ * byte7 b1-7 inv_mode_cmd  the App_State_Req the ECU is COMMANDING on 0x360
+ *            right now. Everything else here is what the inverter REPORTS;
+ *            without this you cannot tell "ECU commands 0x01 and the inverter
+ *            refuses to leave off" from "ECU is commanding the wrong word" --
+ *            which is exactly the ambiguity that stalled the TS-off recovery
+ *            debug (#148). 7 bits holds every mode (max 0x13 = 19).
  */
 
 CAN_MSG(PitDiag_inverter, 0x702, 8, "VCU", 100)
     FIELD_BE   (dc_bus_voltage, uint16_t, 0, 16, 1, 0, "V")
     FIELD_BE_S (inv_rpm,        int32_t,  2, 32, 1, 0, "rpm")
     FIELD_LE   (inv_error,      uint8_t,  6, 8,  1, 0, "code")
-    FIELD_LE_BITS (dem_present, uint8_t,  56, 1, 1, 0, "bit")
+    FIELD_LE_BITS (dem_present,  uint8_t, 56, 1, 1, 0, "bit")
+    FIELD_LE_BITS (inv_mode_cmd, uint8_t, 57, 7, 1, 0, "req")
 CAN_MSG_END(PitDiag_inverter)
 
 /* DEM_Code names -- EPowerLabs W90 (EMC150) DEM table, section 9.2.3 of the
@@ -40,4 +47,12 @@ CAN_VAL(PitDiag_inverter, inv_error, 12, "DPBoardOvertemp")
 CAN_VAL(PitDiag_inverter, inv_error, 13, "DRVBoardOvertemp")
 CAN_VAL(PitDiag_inverter, inv_error, 14, "AuxSupplyRange")
 CAN_VAL(PitDiag_inverter, inv_error, 15, "EmachineOverspeed")
+
+/* The mode word the ECU is COMMANDING (ecu::InvMode -> 0x360 App_State_Req).
+ * DECIMAL values here: InvMode::HardFaultReset is 0x0D = 13, Fault is 0x13 = 19. */
+CAN_VAL(PitDiag_inverter, inv_mode_cmd,  1, "Off")             /* 0x01 */
+CAN_VAL(PitDiag_inverter, inv_mode_cmd,  4, "Ready")           /* 0x04 */
+CAN_VAL(PitDiag_inverter, inv_mode_cmd,  6, "TorqueEnable")    /* 0x06 */
+CAN_VAL(PitDiag_inverter, inv_mode_cmd, 13, "HardFaultReset")  /* 0x0D */
+CAN_VAL(PitDiag_inverter, inv_mode_cmd, 19, "Fault")           /* 0x13 */
 #endif

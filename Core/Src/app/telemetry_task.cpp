@@ -4,6 +4,7 @@
 #include "app/app_tasks.h"
 #include "app/can_tx.hpp"
 #include "app/ecu_config.hpp"   // config::StubTelemetryDummy (bench dummy-telemetry toggle)
+#include "app/gps_service.hpp"
 #include "app/radio_snapshot.hpp"
 #include "app/vehicle_service.hpp"
 
@@ -63,11 +64,14 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     uint8_t d[8] = {};
 
     // 0x510 - status. Bits/bytes match docs/CAN3_MAP.md + DASH's
-    // display_telemetry_can_config.c exactly (byte2 bit0=EV.2.3, bit1=T11.8.9;
+    // display_telemetry_can_config.c exactly (byte2 bit0=RESERVED, bit1=T11.8.9;
     // byte4=start button raw from ControlTask, mirrored via g_last_*).
     d[0] = v.inv_state;
     d[1] = static_cast<uint8_t>(g_last_torque_pct);
-    d[2] = static_cast<uint8_t>((g_last_ev_2_3 ? 0x01u : 0u) | (g_last_t11_8_9 ? 0x02u : 0u));
+    // bit0 is RESERVED, always 0: it carried EV.2.3, deleted in FS-Rules 2024
+    // along with the cut. NOT reclaimed and the layout NOT shifted -- the dash
+    // decoder is owned by another team and a renumbered bit misparses silently.
+    d[2] = static_cast<uint8_t>(g_last_t11_8_9 ? 0x02u : 0u);
     d[3] = v.ok_precharge ? 1u : 0u;
     d[4] = g_last_start_button;
     put_u16(&d[6], seq);
@@ -183,7 +187,6 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
     in.apps2_raw     = g_last_apps2_raw;
     in.brake_raw     = g_last_brake_raw;
     in.torque_pct    = static_cast<uint8_t>(g_last_torque_pct);
-    in.ev_2_3        = g_last_ev_2_3;
     in.t11_8_9       = g_last_t11_8_9;
     in.state         = g_last_ctrl_state;
     in.ok_precharge  = v.ok_precharge ? 1u : 0u;
@@ -208,6 +211,19 @@ void send_radio_snapshot(const VehicleState& v, uint16_t seq, uint32_t tick_ms) 
     in.inv_rpm            = v.inv_rpm;
     in.inv_speed_actual   = 0;  // PLACEHOLDER: no inverter speed/current source.
     in.inv_current_actual = 0;
+
+    // GPS (0x508/0x509 also carry this; here it rides the radio to the pit).
+    // Straight from GpsService -- NOT from VehicleService: the GPS is a local
+    // UART peripheral, not something we receive over CAN.
+    const GpsState gps      = GpsService::instance().snapshot();
+    in.gps_lat_deg1e7       = gps.fix.lat_deg1e7;
+    in.gps_lon_deg1e7       = gps.fix.lon_deg1e7;
+    in.gps_speed_kmh_x100   = static_cast<uint16_t>(
+        gps.fix.speed_kmh_x100 > 0xFFFFu ? 0xFFFFu : gps.fix.speed_kmh_x100);
+    in.gps_course_deg_x100  = static_cast<uint16_t>(
+        gps.fix.course_deg_x100 > 0xFFFFu ? 0xFFFFu : gps.fix.course_deg_x100);
+    in.gps_sats             = gps.fix.sats;
+    in.gps_has_fix          = gps.fix.has_fix ? 1u : 0u;
 
     uint8_t snap[kRadioSnapshotWireSize];
     serialize_radio_snapshot(snap, in);

@@ -1,5 +1,13 @@
 # Radio Telemetry Failure Analysis
 
+> ⚠️ **HISTÓRICO (2026-06-18).** Informe de incidencia sobre ficheros que ya no existen
+> (`telemetry.c`, `app_tasks.c`, `build_firmware.ps1`) y sobre el predecesor de
+> `StubTelemetryDummy` con su nombre de macro antiguo. Sus enlaces "origen en código"
+> apuntan a rutas Windows de otra máquina.
+>
+> El enlace de radio vigente (nRF24, snapshot v2 de 102 B) está en
+> [`RADIO_SNAPSHOT_MAP.md`](../RADIO_SNAPSHOT_MAP.md). Se conserva sólo por historia.
+
 Fecha: 2026-06-18
 
 ## Resumen
@@ -31,7 +39,7 @@ En el codigo actual de `IFS08-CE-ECU`:
 
 Referencia:
 
-- [telemetry.h](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Inc/telemetry.h:8)
+- [telemetry.h](../../Core/Inc/telemetry.h)
 
 La telemetria por radio deberia salir asi:
 
@@ -41,10 +49,10 @@ La telemetria por radio deberia salir asi:
 
 Referencias:
 
-- [freertos.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/freertos.c:1336)
-- [freertos.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/freertos.c:1360)
-- [freertos.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/freertos.c:1379)
-- [telemetry.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/telemetry.c:362)
+- `freertos.c`
+- `freertos.c`
+- `freertos.c`
+- `telemetry.c`
 
 ## Problema observado
 
@@ -68,7 +76,7 @@ TE estaba recibiendo exactamente lo que salia por radio. El parser no inventaba 
 
 Archivo revisado:
 
-- [ISC_RTT_serial.py](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-TE-main/ISC_REAL_TIME_25/ISC_RTT_serial.py)
+- `ISC_RTT_serial.py` (in the separate `IFS08-TE` repo, `ISC_REAL_TIME_25/`)
 
 ### 2. El firmware actual del STM no deberia emitir `kind=1` por radio
 
@@ -82,7 +90,7 @@ No construye `TELEMETRY_FRAME_DASH` para radio.
 
 ### 3. Se encontro una segunda implementacion legacy de telemetria
 
-En [app_tasks.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app_tasks.c) habia una ruta antigua que hacia:
+En `app_tasks.c` habia una ruta antigua que hacia:
 
 ```c
 Telemetry_BuildFrame(&in_snap, NULL, &frame);
@@ -92,7 +100,7 @@ Como `Telemetry_BuildFrame(..., NULL, ...)` genera `TELEMETRY_FRAME_DASH`, esa r
 
 Referencia:
 
-- [telemetry.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/telemetry.c:134)
+- `telemetry.c`
 
 ### 4. La telemetria estaba forzada a datos dummy
 
@@ -103,8 +111,8 @@ Esto no explica `kind=1`, pero si afecta a la validacion funcional:
 
 Referencia:
 
-- [telemetry.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/telemetry.c:8)
-- [telemetry.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/telemetry.c:197)
+- `telemetry.c`
+- `telemetry.c`
 
 El usuario confirmo que los datos dummy deben mantenerse por ahora.
 
@@ -121,7 +129,7 @@ Con esto, aunque esa implementacion secundaria se use, ya no deberia emitir `kin
 
 Archivo modificado:
 
-- [app_tasks.c](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/Core/Src/app_tasks.c)
+- `app_tasks.c`
 
 ## Conclusion tecnica
 
@@ -137,13 +145,13 @@ Despues de corregir `app_tasks.c`, si la UART sigue mostrando:
 
 entonces la conclusion es que el binario cargado en la placa no corresponde al firmware actual generado en:
 
-- [build-fw/ECU08.elf](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/build-fw/ECU08.elf)
+- [build-fw/ECU08.elf](../../build-fw/ECU08.elf)
 
 ## Estado actual
 
-- Ruta de build limpia y estable: [build-fw](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/build-fw)
-- Binario actual: [ECU08.elf](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/build-fw/ECU08.elf)
-- Script de compilacion estable: [build_firmware.ps1](C:/Users/info/OneDrive/Documentos/4/ACU+ECU/IFS08-CE-ECU/scripts/build_firmware.ps1)
+- Ruta de build limpia y estable: [build-fw](../../build-fw)
+- Binario actual: [ECU08.elf](../../build-fw/ECU08.elf)
+- Script de compilacion estable: `build_firmware.ps1`
 
 ## Siguiente paso recomendado
 

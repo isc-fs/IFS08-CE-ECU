@@ -1,7 +1,21 @@
 # Informe técnico — Lógica completa de la ECU (ECU08 NSIL)
 
+> ⚠️ **HISTÓRICO (23-feb-2026) — NO describe el firmware actual.** Este informe documenta
+> la app en **C anterior al rewrite a C++17**: `Core/Src/control.c`, `app_state.c`, `g_in` +
+> mutex, la FSM de 6 estados `BOOT..RUN`, torque por `0x181` y pedales por CAN
+> `0x101-0x103`. **Ninguno de esos ficheros existe ya.**
+>
+> ⚠️ **El veredicto de validación "SIL: 93/93 PASS" es de aquella suite, ya borrada** — no
+> es evidencia válida del firmware que va en el coche. Igualmente, el "riesgo abierto" que
+> lista al final (`flag_T11_8_9` como placeholder) **es falso en `dev`**: T.11.8.9 está
+> implementado con su ventana de 100 ms y cubierto por SIL.
+>
+> Fuentes vigentes: [`../CLAUDE.md`](../../CLAUDE.md) (arquitectura + FSM),
+> `Core/Src/app/control.cpp` (núcleo real), `Core/Inc/can/messages/*.def` →
+> [`dbc/ecu.dbc`](../dbc/ecu.dbc) (contrato CAN). Se conserva sólo por historia.
+
 Fecha: 23-feb-2026  
-Estado de validación SIL: 93/93 tests PASS
+Estado de validación SIL: 93/93 tests PASS *(de la suite pre-rewrite, ya eliminada)*
 
 ---
 
