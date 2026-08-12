@@ -48,11 +48,11 @@ extern "C" void ecu_control_task_run(void *argument) {
     // quietly ignored it".
     const CalLoadResult cal_load =
         load_cal_from_nvm(reinterpret_cast<const void*>(CalNvmBase), CalNvmSize);
-    // NOT const: a valid commit applies immediately (apply-on-commit). Safe by
-    // construction -- a session only opens while the vehicle is quiescent, so
-    // the calibration never changes under a moving car, and the operator's
-    // read-back verification then reflects what they just committed rather
-    // than the old values plus an instruction to power-cycle.
+    // NOT const: a valid commit applies immediately (apply-on-commit). That is
+    // safe because a session only opens while the vehicle is quiescent, so the
+    // calibration never changes under a moving car. It also means the
+    // operator's read-back shows what they just committed, instead of the old
+    // values plus "now power-cycle".
     PedalCal   cal = cal_load.cal;
     CalSession cal_session;
     uint32_t   last_cal_status = 0;
@@ -261,12 +261,15 @@ extern "C" void ecu_control_task_run(void *argument) {
         }
 
         // --- ECU-held DC-link discharge -----------------------------
-        // The SDC still drives the discharge relay exactly as before; PB6 only
+        // The SDC still drives the discharge relay exactly as before. PB6 only
         // interrupts its COIL, so the ECU can add a reason to discharge and can
-        // never take one away. The AMS decides WHEN (0x021: its FSM in Start,
-        // TSMS on, link still charged -- conditions only it can see); the ECU
-        // owns the HOLD, releasing on its own voltage rather than on the request,
-        // so a lost frame mid-discharge cannot re-strand the link.
+        // never take one away.
+        //
+        // The AMS decides WHEN, on 0x021: its FSM in Start, TSMS on, and the
+        // link still charged -- conditions only it can see. The ECU owns the
+        // HOLD, and releases on its own voltage measurement rather than on the
+        // request going away, so one lost frame mid-discharge cannot re-strand
+        // the link.
         const bool dc_bus_valid =
             VehicleService::is_fresh(now, veh.last_vconfig_tick, config::InvDcBusStaleMs);
         DischargeInputs di{};
@@ -293,10 +296,10 @@ extern "C" void ecu_control_task_run(void *argument) {
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
             VCU_heartbeat_t hb{};
-            // NOT veh.inv_dc_bus_V directly: that is a held 0x466 reading with
-            // no expiry, and this frame is emitted every 10 ms regardless -- so a
-            // silent inverter left us broadcasting pack voltage forever while the
-            // AMS's own staleness check saw a perfectly healthy frame.
+            // NOT veh.inv_dc_bus_V directly. That field is a held 0x466 reading
+            // with no expiry, and this frame goes out every 10 ms regardless.
+            // A silent inverter therefore left us broadcasting pack voltage
+            // forever, and the AMS's staleness check still saw a healthy frame.
             hb.dc_bus_voltage = VehicleService::heartbeat_dc_bus_V(veh, now);
             hb.dc_bus_valid   = dc_bus_valid ? 1u : 0u;
             hb.discharge_engaged = dis.engaged ? 1u : 0u;

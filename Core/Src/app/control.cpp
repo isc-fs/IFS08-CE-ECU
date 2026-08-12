@@ -130,7 +130,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // put torque back above it, and feed-forward from measured speed so it
     // closes no loop. Before this, nothing in the vehicle enforced the 80 kW
     // limit and the map commanded roughly twice it over most of the speed
-    // range. Inert below ~2865 mech rpm, so normal cornering is untouched.
+    // range. Inert below ~2721 mech rpm, so normal cornering is untouched.
     //
     // Order among the four limiters is immaterial: cell, motor, pack and power
     // are all min() caps, so the lowest wins whatever sequence they run in. That

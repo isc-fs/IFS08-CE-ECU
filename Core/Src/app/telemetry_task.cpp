@@ -122,13 +122,16 @@ void send_dashboard(const VehicleState& v, uint16_t seq) {
     put_u16(&d[5], static_cast<uint16_t>(v.tmax_dcdc));
     send_dash(0x518u, d, 7u);
 
-    // 0x519/0x51A - GPS. PLACEHOLDER (0): no GPS driver in this firmware
-    // (UART pins are routed per docs/PINES_RUTEADOS_IOC.md but unused).
+    // 0x519/0x51A - GPS. Still zero, but NOT for lack of a driver: gps_task.cpp
+    // reads an MTK3339 on USART10, and GpsService already feeds 0x508/0x509 and
+    // the radio snapshot below. All that is missing is wiring GpsService into
+    // these two dash frames. See docs/CAN3_MAP.md.
     std::memset(d, 0, sizeof(d));
     send_dash(0x519u, d, 8u);
     send_dash(0x51Au, d, 8u);
 
-    // 0x51B - GPS longitude PLACEHOLDER (0) + tick_ms (real, RTOS tick).
+    // 0x51B - gps_longitude still zero (same wiring gap as 0x519); tick_ms is
+    // real (RTOS tick).
     std::memset(d, 0, sizeof(d));
     put_u32(&d[4], osKernelGetTickCount());
     send_dash(0x51Bu, d, 8u);

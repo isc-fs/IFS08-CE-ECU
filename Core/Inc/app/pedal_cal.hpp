@@ -2,7 +2,7 @@
 //
 // pedal_cal.hpp -- the pedal calibration set, as RUNTIME data.
 //
-// These seven values are RUNTIME data, not constants, so an operator can
+// These eight values are not constants, so an operator can
 // calibrate over CAN from the pit tool instead of editing a header, rebuilding
 // and reflashing. That matters because a calibration only a firmware engineer
 // can perform is a calibration that does not get performed.

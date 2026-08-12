@@ -67,9 +67,10 @@ MotorThermalState MotorThermal::update(const MotorThermalInputs& in) noexcept {
     }
     st.raw_max_degC = hottest;
 
-    // The sensor is 1 degC per count and the ramp is 8 points of cap per degC,
-    // so a reading dithering between two counts would step torque by 8 points at
-    // 100 Hz. Temperature is slow enough that a ~2.5 s filter costs nothing in
+    // The sensor is 1 degC per count and the ramp is
+    // (100 - MotorTempFloorPct) / (MotorTempLimitDegC - MotorTempDerateStartDegC)
+    // = 4 points of cap per degC, so a reading dithering between two counts
+    // would step torque by 4 points at 100 Hz. Temperature is slow enough that a ~2.5 s filter costs nothing in
     // response and removes the dither entirely. Seeded on the first valid
     // sample -- ramping up from 0 degC would mean no protection for the first
     // few seconds after the sensor appears.
@@ -77,8 +78,8 @@ MotorThermalState MotorThermal::update(const MotorThermalInputs& in) noexcept {
     // 16 fractional bits, NOT 8. With 8 the increment (err >> 8) truncates to
     // zero as soon as the residual drops below 1 degC, so the filter stalls up
     // to a whole degree short of the real temperature -- a thermal limiter that
-    // permanently under-reads, which at 80 degC would hold the cap at 28 %
-    // instead of 20 %. At 16 bits one degC is 65536 counts and the increment
+    // permanently under-reads. At the limit that would hold the cap 4 points
+    // high -- 24 % instead of 20 %. At 16 bits one degC is 65536 counts and the increment
     // stays 256, so it converges exactly. Worst case 205 degC * 65536 = 13.4e6,
     // comfortably inside int32.
     const std::int32_t target = static_cast<std::int32_t>(hottest) << 16;
