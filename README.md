@@ -1,9 +1,9 @@
 ![ISC Logo](http://iscracingteam.com/wp-content/uploads/2022/03/Picture5.jpg)
 
-# IFS08 — Central ECU
+# IFS08 — ECU
 
-Firmware for the **Central ECU** of the IFS08, the ISC Racing Team's Formula
-Student electric car. It reads the driver's pedals, decides how much torque the
+Firmware for the **ECU** of the IFS08, the ISC Racing Team's Formula Student
+electric car. It reads the driver's pedals, decides how much torque the
 car is allowed to make, and talks to everything else on the car over CAN.
 
 **STM32H733ZG · FreeRTOS · C++17.** The image links at `0x08020000` and is

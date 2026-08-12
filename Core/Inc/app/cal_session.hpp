@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// cal_session.hpp -- the operator calibration session state machine (#169).
+// cal_session.hpp -- the operator calibration session state machine.
 //
 // PURE. No HAL, no CAN, no flash: it takes a decoded command plus a snapshot of
 // the live pedal readings and returns what to do. The task layer decodes 0x7E2

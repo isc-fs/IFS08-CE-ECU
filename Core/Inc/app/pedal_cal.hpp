@@ -2,16 +2,14 @@
 //
 // pedal_cal.hpp -- the pedal calibration set, as RUNTIME data.
 //
-// These seven values used to be compile-time constexpr in ecu_config.hpp, so
-// calibrating a pedal meant editing a header, rebuilding and reflashing -- only
-// a firmware engineer could do it, which is why BrakePressedRaw and
-// BrakeDvHardRaw were still uncalibrated IFS06 placeholders (#169). They are
-// runtime now so an operator can calibrate over CAN from the pit tool.
+// These seven values are RUNTIME data, not constants, so an operator can
+// calibrate over CAN from the pit tool instead of editing a header, rebuilding
+// and reflashing. That matters because a calibration only a firmware engineer
+// can perform is a calibration that does not get performed.
 //
 // HAL-free and dependency-free on purpose: the pure control core includes this,
-// so it must stay host-compilable for SIL. Defaults are the values that were
-// previously constexpr, so a build with no stored calibration behaves EXACTLY
-// as before.
+// so it must stay host-compilable for SIL. The defaults in ecu_config.hpp apply
+// when no valid record is stored.
 //
 // NOT calibratable and deliberately still compile-time: the deadbands, the
 // FSAE plausibility percentages (AppsDisagree*) and every timing. Those
@@ -78,7 +76,7 @@ inline constexpr std::uint16_t CalAdcMax = 4095;   // 12-bit
 // they diverge in between -- mid-travel divergence comes from sensor
 // non-linearity, which endpoint capture cannot see. AppsSpanMismatch is a weak
 // proxy. Catching the real thing needs either a mid-travel capture point or a
-// post-commit verification sweep; see #169.
+// post-commit verification sweep.
 [[nodiscard]] std::uint8_t validate_cal(const PedalCal& c) noexcept;
 
 // Brake travel as a percentage, 0..100.
@@ -89,7 +87,7 @@ inline constexpr std::uint16_t CalAdcMax = 4095;   // 12-bit
 // brake reads about 14 % in the pit tool today (raw ~560 of 4095). That number
 // cannot be fixed without measuring rest -- scaling to a span nobody has
 // measured would just be a different wrong answer -- so it stays until an
-// operator captures BRAKE_REST (#169).
+// operator captures BRAKE_REST.
 [[nodiscard]] std::uint8_t brake_pct(std::uint16_t raw, const PedalCal& c) noexcept;
 
 // ---- Brake pressure, EPT1400 -> bar -----------------------------------------

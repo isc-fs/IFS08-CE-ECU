@@ -2,7 +2,7 @@
 //
 // Pure calibration validation. No HAL, no state -- compiled into the SIL build
 // and used by BOTH the CAN commit path and boot-time loading, so a record that
-// would be rejected over CAN can never be accepted from storage either (#169).
+// would be rejected over CAN can never be accepted from storage either.
 
 #include "app/pedal_cal.hpp"
 

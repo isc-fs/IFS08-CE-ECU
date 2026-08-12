@@ -23,7 +23,7 @@ void Controller::enter_(CtrlState s, uint32_t now_ms) noexcept {
     state_entry_ms_ = now_ms;
     // The DV latch lives for one drive cycle: any exit from the drive ladder
     // (back to a pre-R2D state, or the AmsError inhibit) clears it. The next
-    // R2D entry re-decides the mode from whichever trigger fires (#17).
+    // R2D entry re-decides the mode from whichever trigger fires.
     if (s < CtrlState::R2dDelay || s == CtrlState::AmsError) {
         dv_latched_ = false;
     }
@@ -43,7 +43,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     else if (torque > DeadbandHighPct) torque = 100;
 
     // The EV.2.3 brake+throttle plausibility cut USED TO BE HERE. It was deleted
-    // in FS-Rules 2024 and is gone from the firmware with it (#177).
+    // in FS-Rules 2024 and is gone from the firmware with it.
     //
     // It was a latching torque cut: brake above cal.brake_pressed with demand
     // over 25 % zeroed torque until the driver fully lifted. Two reasons not to
@@ -72,7 +72,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
 
     if (t11) torque = 0;
 
-    // DV torque source (#17): when the DV drive is latched the pedals are NOT
+    // DV torque source: when the DV drive is latched the pedals are NOT
     // the torque source -- the conditioned uDV 0x507 command is, and a stale
     // command stream means torque 0, NEVER a fall-back to APPS (no driver is
     // seated). T.11.8.9 is a driver-pedal rule and does not gate the DV
@@ -100,15 +100,12 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     cdi.i_fresh       = in.current_fresh;
     cell_derate_ = cell_.update(cdi);
 
-    // A CAP, not a gain (#177). This used to multiply demand, which rescaled the
-    // WHOLE pedal: at a 68 % factor a 30 % request became 20 %, even though 30 %
-    // was never the problem -- the pack can deliver it, and only the peak needed
-    // limiting. The driver lost resolution exactly when predictability matters
-    // most. Now everything under the cap passes through untouched and only the
-    // top is clipped, matching the thermal and power limiters below.
+    // All four limits are CAPS, not gains: everything under the ceiling passes
+    // through untouched and only the top is clipped. Order is therefore
+    // immaterial. See cell_derate.hpp for why capping beats scaling.
     if (torque > cell_derate_.cap_pct) torque = cell_derate_.cap_pct;
 
-    // Motor thermal cap (#177). Runs every tick so the filter is settled before
+    // Motor thermal cap. Runs every tick so the filter is settled before
     // torque is ever commanded. Losing the sensors does NOT mean no limit; see
     // motor_thermal.hpp.
     MotorThermalInputs mti{};
@@ -118,7 +115,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     motor_thermal_ = thermal_.update(mti);
     if (torque > motor_thermal_.cap_pct) torque = motor_thermal_.cap_pct;
 
-    // Accumulator thermal cap (#177). Same shape as the motor cap; the pack has
+    // Accumulator thermal cap. Same shape as the motor cap; the pack has
     // minutes of thermal mass rather than a lap's, so once this engages it stays
     // engaged for the session. That is correct, and it is why it annunciates.
     PackThermalInputs pti{};
@@ -129,7 +126,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     pack_thermal_ = pack_.update(pti);
     if (torque > pack_thermal_.cap_pct) torque = pack_thermal_.cap_pct;
 
-    // EV 2.2.1 tractive-power envelope (#177). LAST, so nothing downstream can
+    // EV 2.2.1 tractive-power envelope. LAST, so nothing downstream can
     // put torque back above it, and feed-forward from measured speed so it
     // closes no loop. Before this, nothing in the vehicle enforced the 80 kW
     // limit and the map commanded roughly twice it over most of the speed
@@ -166,7 +163,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         }
         break;
     case CtrlState::WaitStartBrake:
-        // The trigger IS the mode decision (#17): whichever gate fires latches
+        // The trigger IS the mode decision: whichever gate fires latches
         // the mode for this drive cycle. Manual = seated driver (START + brake
         // past the arm threshold). DV = the uDV R2D request (0x510, fresh)
         // WHILE the EBS holds hard braking, verified on our own brake sensor
@@ -193,7 +190,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
             enter_(CtrlState::Precharge, now_ms);
         } else if (in.inv_state != InvReadyState &&
                    in.inv_state != InvTorqueEnableState) {
-            // THE INVERTER LEFT THE DRIVE WHILE THE TS STAYED UP (#191).
+            // THE INVERTER LEFT THE DRIVE WHILE THE TS STAYED UP.
             //
             // Observed with an overspeed: the inverter trips, parks itself in
             // Standby(3) and never comes back. Standby is NOT a fault state, so
@@ -223,8 +220,8 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
             // not re-sound. That is deliberate -- the RTDS marks the driver's
             // R2D, not an inverter hiccup.
             //
-            // >>> DRIVE RESUMES AS SOON AS THE INVERTER REACHES Ready AGAIN. <<<
-            // Team decision (2026-08-02): recovery speed over a re-arm gate. The
+            // Drive resumes as soon as the inverter reaches Ready again.
+            // Team decision: recovery speed over a re-arm gate. The
             // consequence to know about is that if the driver still has the
             // throttle down when the inverter recovers, torque returns with no
             // driver action. If that ever proves too abrupt, the fix is a latch
@@ -265,23 +262,23 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
         // Off(0)/Shutdown(13) it is NOT -- this A16 config will not take Ready
         // from those states.
         //
-        // BENCH EVIDENCE (2026-07-29, firmware 44688b6, on stands at 355 V; #168):
+        // BENCH EVIDENCE (on stands at 355 V):
         // parked in WaitInvStandby with inv_state=13 Shutdown, commanding
         // Ready(0x04) at 100 Hz, L1/L2 fault layers CLEAN (PwrStg 0x001 alive,
         // EMCtrl 0x01 init_ok) and the DEM only latched history -- and the
         // inverter never moved. Nothing was blocking it; it simply does not
         // accept Ready from Shutdown.
         //
-        // THIS IS NOT A RETURN TO #144. #144 sent Off INSTEAD of Ready and never
-        // followed with Ready, so the inverter could not climb at all and #155
-        // rightly reverted it. The IFS07 VCU -- the only configuration known to
+        // NOT the same as sending Off INSTEAD of Ready. That variant was tried
+        // and reverted: without a following Ready the inverter cannot climb at
+        // all. The IFS07 VCU -- the only configuration known to
         // have recovered without a power cycle -- sent BOTH in one pass, via the
         // fall-through in its App_State switch (pre-jarama main.c:1788-1811):
         //     case 13 -> 0x01                (Shutdown: Off only)
         //     case 0  -> 0x01 then 0x04      (Off: Off THEN Ready, same pass)
         // That is what is reproduced here, using the same follow-word mechanism
         // as the fault burst. Ready is ALWAYS still sent for state 0; the Off
-        // merely precedes it. See #148.
+        // merely precedes it.
         //
         // Note the manual's 9.1 diagram shows OFF --(READY)--> READY as one
         // direct transition -- but its App_State_Req enum (1..5) does not match
@@ -324,7 +321,7 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     // The reset word is followed, IN THE SAME CYCLE, by Off(0x01) -- see
     // CtrlOutput::inv_mode_follow. Sending only the reset word leaves the fault
     // standing: manual 9.3 says going to OFF is what restarts a FAULT, and the
-    // IFS07 VCU's fall-through switch always ended on 0x01. A 2026-07-24 bench
+    // IFS07 VCU's fall-through switch always ended on 0x01. A bench
     // capture caught exactly this -- inverter latched SoftFault(10) with the DC
     // bus at 355 V while the ECU commanded 0x13 forever and it never cleared.
     if (state_ != CtrlState::AmsError) {

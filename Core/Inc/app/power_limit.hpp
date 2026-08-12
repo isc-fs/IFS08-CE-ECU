@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// power_limit.hpp -- the FS-Rules EV 2.2.1 tractive-power envelope (#177).
+// power_limit.hpp -- the FS-Rules EV 2.2.1 tractive-power envelope.
 //
 // FS-Rules 2026 EV 2.2.1: "The TS power at the outlet of the TSAC must not
 // exceed 80 kW." D 10.4.1 judges it on a 500 ms moving average taken by the
@@ -17,7 +17,7 @@
 // low-cell derate it closes no loop and cannot oscillate. That property is the
 // whole reason this lands FIRST: the low-cell derate is currently the only
 // thing limiting power, and every proposed fix to it RELEASES power, so the
-// envelope has to exist before that derate is touched (#177).
+// envelope has to exist before that derate is touched.
 //
 // Integer-only and pure, so the control core stays host-testable and free of
 // floating point in the 10 ms path.
