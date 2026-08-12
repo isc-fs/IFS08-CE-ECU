@@ -24,6 +24,7 @@
 
 #include <cstdint>
 
+#include "app/as_buzzer.hpp"
 #include "app/cell_derate.hpp"
 #include "app/motor_thermal.hpp"
 #include "app/pack_thermal.hpp"
@@ -101,6 +102,12 @@ struct CtrlInputs {
     bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
     bool     dv_fresh = false;           // 0x507 stream fresh (UdvCmdStaleMs)
     uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
+    // AS state from 0x50A, with its OWN freshness. Both are needed: losing the
+    // frame while the uDV was DRIVING or READY is itself the emergency, so the
+    // buzzer has to see the difference between "reported OFF" and "stopped
+    // reporting". See as_buzzer.hpp.
+    uint8_t  as_status = 0;              // 0x50A byte0, meaningful only when fresh
+    bool     as_fresh  = false;          // 0x50A within UdvAsStaleMs
     // MECHANICAL motor speed (0x463 erpm / MotorPolePairs). Feeds the EV 2.2.1
     // power envelope. Feed-forward only: the cap reads this, it does not drive
     // it on the timescale of a control tick, so no loop is closed.
@@ -166,7 +173,16 @@ struct CtrlOutput {
     // Commanded SHAFT torque in Nm (positive = forward). Reported on 0x700
     // torque_cmd, which was hardcoded to 0 before this.
     int16_t   torque_nm = 0;
-    bool      rtds_on = false;   // drive the RTDS buzzer (R2dDelay)
+    // Drive the RTDS buzzer. Two sources: the R2D tone in R2dDelay, and the AS
+    // Emergency pattern, which OVERRIDES it -- a driverless emergency landing
+    // during an R2D tone must not be masked by it.
+    bool      rtds_on = false;
+    // The AS Emergency tone is what is driving rtds_on this tick. Separated so
+    // the pit-diag stream can tell an emergency from a normal R2D chirp.
+    bool      as_buzzer_active = false;
+    // The running tone was started by 0x50A going SILENT, not by an EMERGENCY
+    // frame -- i.e. the uDV is gone rather than merely unhappy.
+    bool      as_buzzer_from_stale = false;
     bool      ok_to_drive = false;
     // plausibility verdicts (driven into 0x700.flags for pit-diag / Block F)
     bool      t11_8_9 = false;   // APPS disagreement past the 100 ms window
@@ -214,6 +230,7 @@ private:
     // IR-compensated low-cell estimator (cell_derate.hpp). Holds filter state,
     // so it lives with the FSM's other history rather than being rebuilt per
     // tick -- a filter reconstructed every call is just a passthrough.
+    AsBuzzer        as_buzzer_{};
     CellDerate      cell_{};
     CellDerateState cell_derate_{};
     MotorThermal      thermal_{};

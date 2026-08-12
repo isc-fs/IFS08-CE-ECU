@@ -352,7 +352,17 @@ CtrlOutput Controller::step(const CtrlInputs& in, uint32_t now_ms) noexcept {
     out.pack_thermal_capped = pack_thermal_.capped;
     out.inv_redrive_count   = inv_redrive_count_;
     out.torque_nm    = torque_pct_to_nm(cmd_torque);
-    out.rtds_on     = rtds;
+    // AS Emergency tone. Runs in EVERY state, not just the DV ones: the uDV can
+    // latch Emergency from its watchdog path with the car anywhere in the
+    // ladder, and a car sitting in Precharge with a dead autonomous system
+    // still has to make the noise.
+    const AsBuzzerState as = as_buzzer_.update({in.as_status, in.as_fresh, now_ms});
+    // OR, with the emergency winning. An emergency arriving during an R2D chirp
+    // must not be swallowed by it, and the two are audibly different anyway --
+    // 2 s continuous versus 10 s of 150 ms pulses.
+    out.rtds_on               = rtds || as.sounding;
+    out.as_buzzer_active      = as.active;
+    out.as_buzzer_from_stale  = as.from_stale;
     out.ok_to_drive = drive;
     out.t11_8_9     = t11;
     out.dv_mode     = dv_latched_;

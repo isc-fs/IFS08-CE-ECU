@@ -186,8 +186,12 @@ BO_ 1799 PitDiag_dv: 8 VCU
  SG_ ts_active : 2|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ brake_over_limit : 3|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ r2d_confirm : 4|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ as_emergency : 5|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ as_from_stale : 6|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ as_fresh : 7|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ dv_torque_pct : 8|8@1+ (1,0) [0|0] "%" Vector__XXX
  SG_ motor_rpm_mech : 16|16@1- (1,0) [0|0] "rpm" Vector__XXX
+ SG_ as_status : 32|8@1+ (1,0) [0|0] "-" Vector__XXX
 
 BO_ 1801 PitDiag_cell: 8 VCU
  SG_ raw_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
@@ -287,6 +291,9 @@ BO_ 1184 AMS_status: 8 AMS
 BO_ 1287 UDV_torque_cmd: 4 uDV
  SG_ torque_pct : 0|32@1- (1,0) [0|0] "%" Vector__XXX
 
+BO_ 1290 UDV_as_status: 1 uDV
+ SG_ as_status : 0|8@1+ (1,0) [0|0] "-" Vector__XXX
+
 BO_ 1296 UDV_r2d_request: 1 uDV
  SG_ r2d_request : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -334,6 +341,7 @@ BA_ "GenMsgCycleTime" BO_ 310 250;
 BA_ "GenMsgCycleTime" BO_ 311 250;
 BA_ "GenMsgCycleTime" BO_ 1184 500;
 BA_ "GenMsgCycleTime" BO_ 1287 20;
+BA_ "GenMsgCycleTime" BO_ 1290 100;
 
 VAL_ 2019 session_state 0 "Idle" 1 "Active" 2 "Validated" 3 "Committing" 4 "Committed" 5 "Error" ;
 VAL_ 2019 result 0 "OK" 1 "BadGuard" 2 "NotInSession" 3 "VehicleNotSafe" 4 "SampleUnstable" 5 "MissingPoints" 6 "ValidationFailed" 7 "NvmWriteFailed" 8 "UnknownCmd" ;
@@ -345,5 +353,6 @@ VAL_ 1794 inv_mode_cmd 1 "Off" 4 "Ready" 6 "TorqueEnable" 13 "HardFaultReset" 19
 VAL_ 1796 cal_status 0 "Defaults" 1 "Loaded" 2 "InvalidFellBack" 3 "BadVersionFellBack" ;
 VAL_ 1796 reset_cause 0 "Unknown" 1 "PowerOn" 2 "Pin" 3 "Software" 4 "IWDG" 5 "WWDG" 6 "LowPower" ;
 VAL_ 1796 last_fault 0 "None" 241 "HardFault" 242 "MemManage" 243 "BusFault" 244 "UsageFault" 245 "StackOverflow" 246 "MallocFailed" 247 "AssertFailed" ;
+VAL_ 1290 as_status 0 "Off" 1 "Emergency" 2 "Ready" 3 "Driving" 4 "Finished" ;
 VAL_ 2018 cmd 0 "POLL" 1 "ENTER" 2 "CAPTURE" 3 "READ_STORED" 4 "READ_STAGED" 5 "COMMIT" 6 "ABORT" 7 "RESET_DEFAULTS" ;
 VAL_ 2018 arg 1 "APPS_REST" 2 "APPS_FULL" 3 "BRAKE_REST" 4 "BRAKE_PRESSED" 5 "APPS_MID" ;

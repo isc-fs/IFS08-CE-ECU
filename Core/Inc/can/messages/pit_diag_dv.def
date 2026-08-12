@@ -12,9 +12,15 @@
  *   bit2 ts_active        ECU TX 0x504 (tractive system active view)
  *   bit3 brake_over_limit ECU TX 0x505 (EBS hard-braking verdict)
  *   bit4 r2d_confirm      ECU TX 0x511 (== DV drive latched)
+ *   bit5 as_emergency     the 10 s AS Emergency tone is running on the RTDS
+ *   bit6 as_from_stale    that tone was started by 0x50A going SILENT rather
+ *                         than by an EMERGENCY frame -- the uDV is gone, not
+ *                         merely unhappy. The two need telling apart on a bench.
+ *   bit7 as_fresh         0x50A seen within UdvAsStaleMs
  * byte1   dv_torque_pct   conditioned autonomous torque actually applied (0..100)
  * byte2-3 motor_rpm_mech  mechanical rpm streamed to uDV on 0x506 (s16 LE)
- * byte4-7 reserved (0)
+ * byte4   as_status       0x50A byte0 as received (0 when never seen)
+ * byte5-7 reserved (0)
  */
 
 CAN_MSG(PitDiag_dv, 0x707, 8, "VCU", 100)
@@ -23,6 +29,10 @@ CAN_MSG(PitDiag_dv, 0x707, 8, "VCU", 100)
     FIELD_LE_BITS (ts_active,        uint8_t,  2, 1,  1, 0, "bit")
     FIELD_LE_BITS (brake_over_limit, uint8_t,  3, 1,  1, 0, "bit")
     FIELD_LE_BITS (r2d_confirm,      uint8_t,  4, 1,  1, 0, "bit")
+    FIELD_LE_BITS (as_emergency,     uint8_t,  5, 1,  1, 0, "bit")
+    FIELD_LE_BITS (as_from_stale,    uint8_t,  6, 1,  1, 0, "bit")
+    FIELD_LE_BITS (as_fresh,         uint8_t,  7, 1,  1, 0, "bit")
     FIELD_LE      (dv_torque_pct,    uint8_t,  1, 8,  1, 0, "%")
     FIELD_LE_S    (motor_rpm_mech,   int16_t,  2, 16, 1, 0, "rpm")
+    FIELD_LE      (as_status,        uint8_t,  4, 8,  1, 0, "-")
 CAN_MSG_END(PitDiag_dv)
