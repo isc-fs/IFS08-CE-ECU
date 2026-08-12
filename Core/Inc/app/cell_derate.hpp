@@ -3,12 +3,12 @@
 // cell_derate.hpp -- turning the AMS minimum cell voltage into something worth
 // derating on.
 //
-// A CAP, NOT A GAIN. The result is a torque CEILING: torque = min(torque, cap).
-// It used to multiply demand, which rescaled the whole pedal -- at a 68 % factor
-// a 30 % request became 20 %, even though 30 % was never the problem. The pack
-// can deliver it; only the peak needed limiting. Capping leaves everything below
-// the ceiling untouched, so the driver keeps full resolution over the range that
-// is still allowed, and matches the thermal and power limiters.
+// A CAP, NOT A GAIN: the result is a torque CEILING, torque = min(torque, cap).
+// Only the peak needs limiting -- the pack can deliver a 30 % request even when
+// it cannot deliver 100 % -- so scaling the whole pedal would cost the driver
+// resolution across the entire travel to bound the top of it. Capping leaves
+// everything below the ceiling untouched, and matches how the thermal and power
+// limiters behave.
 //
 // THE PROBLEM. A cell's terminal voltage under load is not a measure of how
 // empty it is; it is mostly a measure of how hard you are accelerating. Pack

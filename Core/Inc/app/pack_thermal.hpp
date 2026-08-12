@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// pack_thermal.hpp -- accumulator over-temperature torque cap (#177).
+// pack_thermal.hpp -- accumulator over-temperature torque cap.
 //
 // Same shape as the motor cap (motor_thermal.hpp) and for the same reason: a
 // falling cap that reaches its floor AT the limit, so the pack never gets there,

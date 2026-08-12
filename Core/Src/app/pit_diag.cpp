@@ -44,12 +44,12 @@ CanFrame PitDiag::build_status(const CtrlOutput& c, const VehicleState& v,
     s.rtds_active  = c.rtds_on ? 1u : 0u;
     s.ok_precharge = v.ok_precharge ? 1u : 0u;
     s.start_button = start_button ? 1u : 0u;
-    s.dv_mode      = c.dv_mode ? 1u : 0u;   // #109: DV drive latched this cycle
-    s.tx_dropped   = (g_can_tx_dropped != 0u) ? 1u : 0u;  // #127: any TX-queue drop since boot
-    s.power_capped = c.power_capped ? 1u : 0u;            // #177: EV 2.2.1 envelope active
+    s.dv_mode      = c.dv_mode ? 1u : 0u;   // DV drive latched this cycle
+    s.tx_dropped   = (g_can_tx_dropped != 0u) ? 1u : 0u;  // any TX-queue drop since boot
+    s.power_capped = c.power_capped ? 1u : 0u;            // EV 2.2.1 envelope active
     s.torque_pct    = c.torque_pct;
     s.v_cell_min_mV = v.v_cell_min_mV;
-    s.torque_cmd    = c.torque_nm;   // #177: real commanded shaft Nm (was hardcoded 0)
+    s.torque_cmd    = c.torque_nm;   // real commanded shaft Nm (was hardcoded 0)
     std::uint8_t b[PitDiag_status_DLC];
     encode_PitDiag_status(s, b);
     return make_acu(PitDiag_status_ID, b);
@@ -242,7 +242,7 @@ CanFrame PitDiag::build_inv_faults(const VehicleState& v,
     const std::uint32_t age = static_cast<std::uint32_t>(now_ms - v.last_inv_state_tick);
     f.inv_state_age_ms      = (age > 255u) ? 255u : static_cast<std::uint8_t>(age);
     f.inv_state_seq         = v.inv_state_seq;
-    f.inv_redrive_count     = c.inv_redrive_count;   // #191: Active -> WaitInvStandby fallbacks
+    f.inv_redrive_count     = c.inv_redrive_count;   // Active -> WaitInvStandby fallbacks
     std::uint8_t b[PitDiag_inv_faults_DLC];
     encode_PitDiag_inv_faults(f, b);
     return make_acu(PitDiag_inv_faults_ID, b);
@@ -273,16 +273,16 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     h.task_can_tx    = (m.task_ran_mask >> 2) & 1u;
     h.task_telemetry = (m.task_ran_mask >> 3) & 1u;   // EcuTaskId TELEMETRY=3
     h.task_diag      = (m.task_ran_mask >> 4) & 1u;   // EcuTaskId DIAG=4
-    // Bench stub announce (#127): mirror the compile-time ecu_config toggles onto
+    // Bench stub announce: mirror the compile-time ecu_config toggles onto
     // the bus so a bring-up image can't pass for a flight one. ALL ZERO on flight.
     // stub_no_ams is the load-bearing one -- it forces ok_precharge, which is what
     // 0x504 VCU_ts_active reports to the uDV, so set => TS-active here is FAKE.
-    // Boot-time calibration outcome (#169) -- see the .def for why it is here.
+    // Boot-time calibration outcome -- see the .def for why it is here.
     h.cal_status       = static_cast<std::uint8_t>(g_cal_load_status & 0x03u);
     h.stub_no_ams      = config::StubNoAms ? 1u : 0u;
     h.stub_no_inverter = config::StubNoInverter ? 1u : 0u;
     h.stub_start       = config::StubStart ? 1u : 0u;
-    // stub_brake (#137): restored to byte5 b3 (StubBrakeRaw != 0 injects a fake
+    // stub_brake: restored to byte5 b3 (StubBrakeRaw != 0 injects a fake
     // brake_raw). Disables no safety gate -- also visible on 0x701 -- but carried
     // here so the flight-vs-bench announce on the ungated 0x704 is complete again.
     h.stub_brake       = (config::StubBrakeRaw != 0) ? 1u : 0u;

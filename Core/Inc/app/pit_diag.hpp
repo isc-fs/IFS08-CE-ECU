@@ -50,14 +50,14 @@ public:
     // 0x70B / 0x70C -- the inverter's own FOC feedback and its torque ceiling.
     // Everything here was already arriving on FDCAN1 (the filter accepts every
     // standard ID) and was simply never decoded, which left "is the INVERTER
-    // limiting us?" unanswerable from the car (#177).
+    // limiting us?" unanswerable from the car.
     static CanFrame build_inv_foc(const VehicleState& v, std::uint32_t now_ms) noexcept;
     static CanFrame build_inv_torque(const VehicleState& v,
                                      std::int16_t torque_req_nm) noexcept;
     // 0x70D -- commanded shaft power next to the inverter's measured AC power
     // and the DC bus. This is the frame that retires DrivetrainEffPct as a
     // guess: it is the entire compliance margin of the EV 2.2.1 envelope and it
-    // has never been measured (#177).
+    // has never been measured.
     static CanFrame build_power(const CtrlOutput& c, const VehicleState& v) noexcept;
     static CanFrame build_pedals(const IoInputs& io,
                                  const PedalCal& cal) noexcept;  // 0x701
@@ -75,8 +75,8 @@ public:
                                          const MotorThermalState& th) noexcept;
     // 0x708 -- the inverter's L1 (PwrStg) / L2 (EMCtrl) fault-layer bitmasks.
     // L3 (DEM) alone cannot say whether a latched fault is held up by a live
-    // hardware condition underneath (#148).
-    // now_ms is needed for inv_state_age_ms (freshness of 0x461, #148).
+    // hardware condition underneath.
+    // now_ms is needed for inv_state_age_ms (freshness of 0x461).
     static CanFrame build_inv_faults(const VehicleState& v,
                                     const CtrlOutput& c,
                                     std::uint32_t now_ms) noexcept;  // 0x708
@@ -85,7 +85,7 @@ public:
     static CanFrame build_brake(const IoInputs& io,
                                 const PedalCal& cal) noexcept;   // 0x705
     static CanFrame build_ack(bool enabled) noexcept;           // 0x7E1
-    // Calibration session (#169). cal_load mirrors the boot-time outcome so the
+    // Calibration session. cal_load mirrors the boot-time outcome so the
     // calibration view does not have to also watch 0x704.
     static CanFrame build_cal_status(const CalSessionOutput& o,
                                      std::uint8_t last_cmd,

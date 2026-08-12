@@ -2,7 +2,7 @@
 //
 // The EV 2.2.1 tractive-power envelope. Pure integer maths -- see the header
 // for why this is feed-forward and why it must land before the low-cell derate
-// is touched (#177).
+// is touched.
 
 #include "app/power_limit.hpp"
 

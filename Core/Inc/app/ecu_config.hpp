@@ -23,10 +23,10 @@ inline constexpr uint32_t ControlPeriodMs      = 10;    // the realtime ControlT
 inline constexpr uint32_t DiagPeriodMs         = 1000;  // DiagTask (0x704 health)
 inline constexpr uint32_t PitDiagStreamMs      = 100;   // 0x700-0x705 cadence while enabled
 inline constexpr uint32_t CanRxWaitMs          = 100;   // CanRxTask queue wait -> 0x704 liveness wake on a quiescent bus (< DiagPeriodMs)
-// uDV contract (#17/#127) cyclic: 0x504 ts_active / 0x505 brake_over_limit /
+// uDV contract cyclic: 0x504 ts_active / 0x505 brake_over_limit /
 // 0x511 r2d_confirm. CONTRACT with the uDV -- their AS state machine times out
 // TS-active at 400 ms (4 missed) and FS-Rules T11.9.4 caps detection at 500 ms,
-// so do NOT raise this above ~125 ms without agreeing it on #127 first.
+// so do NOT raise this above ~125 ms without agreeing it with the uDV team first.
 inline constexpr uint32_t UdvTxPeriodMs        = 100;
 
 // ---- Start / ready-to-drive FSM -------------------------------------------
@@ -39,35 +39,35 @@ inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 // come from the legacy IFS07 switch and are NOT confirmed here -- the W90
 // manual's state machine (section 9.1) lists OFF/READY/SPEED/TORQUE/CURRENT/
 // FAULT with no "standby" or "shutdown" at all, so treat them as unverified
-// until a real capture says otherwise (#148). They are kept because the pit-diag
+// until a real capture says otherwise. They are kept because the pit-diag
 // VAL tables and the SIL use them, NOT because the values are established.
 inline constexpr uint8_t  InvOffState          = 0;   // UNVERIFIED (IFS07-derived)
 inline constexpr uint8_t  InvStandbyState      = 3;   // bench-proven
 inline constexpr uint8_t  InvReadyState        = 4;   // bench-proven
 // Torque enabled -- the state the inverter reports once it accepts 0x06 from
 // Ready. Needed to answer "is the inverter still IN the drive?", which is not
-// the same question as "is it faulted?" (#191).
+// the same question as "is it faulted?".
 inline constexpr uint8_t  InvTorqueEnableState = 6;   // bench-observed
 inline constexpr uint8_t  InvSoftFaultState    = 10;  // soft fault -> reset with InvMode::Fault (0x13)
 inline constexpr uint8_t  InvHardFaultState    = 11;  // hard fault -> recover with InvMode::HardFaultReset (0x0D)
-// 13 is now BENCH-CONFIRMED (2026-07-29): observed on 0x700 inv_state after a
+// 13 is BENCH-CONFIRMED: observed on 0x700 inv_state after a
 // TS-off cycle, with the DEM cleared to latched history and L1/L2 clean -- the
 // inverter genuinely parks here and refuses Ready. 0 remains IFS07-derived.
-inline constexpr uint8_t  InvShutdownState     = 13;  // bench-confirmed 2026-07-29
+inline constexpr uint8_t  InvShutdownState     = 13;  // bench-confirmed
 
 // AMS FSM state (0x4A0 byte0) that means a latched Error (vs a re-armable Start).
 inline constexpr uint8_t  AmsFsmError          = 5;
 
 // ---- Pedals / brake (raw 12-bit ADC) --------------------------------------
 // APPS travel calibration: pct = clamp((raw - min) * 100 / (max - min), 0, 100).
-inline constexpr uint16_t Apps1AdcMin          = 2490;  // bench-cal 2026-06-22 (rest 2476 + margin)
+inline constexpr uint16_t Apps1AdcMin          = 2490;  // bench-cal (rest 2476 + margin)
 inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 - headroom)
 inline constexpr uint16_t Apps2AdcMin          = 2345;  // bench-cal (rest 2332 + margin)
 inline constexpr uint16_t Apps2AdcMax          = 3025;  // bench-cal (full 3037 - headroom)
 
 // Brake reading with the pedal fully released. NEVER MEASURED -- 0 means
 // "span unknown", which keeps brake_pct on its legacy full-ADC-range scaling.
-// Captured by the operator calibration wizard (#169); once non-zero it also
+// Captured by the operator calibration wizard; once non-zero it also
 // enables the brake-span validation rule.
 inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasured
 // Brake pressure sensor: Variohm EuroSensor EPT1400 (docs/EPT1400_pressure_sensor.pdf),
@@ -88,21 +88,19 @@ inline constexpr uint16_t BrakeRestRaw         = 0;     // COMMISSION: unmeasure
 // opaque. 4.1 bar to arm and ~31 bar for "brake pressed" are plausible; the
 // 25.2 bar DV gate still wants checking against what the EBS actually holds.
 inline constexpr uint16_t BrakeSensorFullScaleBar = 40;  // EPT1400 order code: 40 bar (04000)
-inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal 2026-06-27: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
-// Brake FULL TRAVEL, the top of the brake_pct scale. It used to also gate the
-// EV.2.3 brake+throttle cut; that rule was deleted in FS-Rules 2024 and the cut
-// with it, so this is now purely a scaling endpoint and no longer arms anything.
+inline constexpr uint16_t BrakeArmRaw          = 750;   // on-car cal: brake-to-arm (R2D); released ~580 (noise to ~730), arm just above
+// Brake FULL TRAVEL, the top of the brake_pct scale. Purely a scaling endpoint:
+// it arms nothing and gates no cut.
 inline constexpr uint16_t BrakePressedRaw      = 3000;  // COMMISSION: brake full travel
-// DV (#17): the "established" hard-braking limit. The EBS holds HARD braking for
+// DV: the "established" hard-braking limit. The EBS holds HARD braking for
 // the autonomous R2D; the ECU verifies it on its own brake sensor before honouring
 // a 0x510 R2D request, and streams the binary verdict on 0x505 (same threshold).
 inline constexpr uint16_t BrakeDvHardRaw       = 2500;  // COMMISSION: set from the brake cal
 // BRING-UP brake stub, controlled by THIS value (no build flag): != 0 makes
 // io_signals inject it as brake_raw instead of reading the ADC; 0 = real ADC
-// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D (bench: 2700).
-// It no longer has to stay below BrakePressedRaw -- the EV.2.3 cut that used to
-// trip there was deleted with the rule in FS-Rules 2024. MUST be 0 for
-// flight — folds away at compile time (constexpr), so a 0 build carries no stub.
+// (flight). Set ABOVE BrakeDvHardRaw (2500) to arm the DV R2D (bench: 2700);
+// there is no upper bound to respect. MUST be 0 for flight -- folds away at
+// compile time (constexpr), so a 0 build carries no stub.
 inline constexpr uint16_t StubBrakeRaw         = 0;
 
 // ---- BENCH STUBS (bring-up only) — config toggles, NOT build flags ----------
@@ -134,16 +132,16 @@ inline constexpr bool     StubTelemetryDummy   = false;
 // at 8 it silently dominated a 5% deadband and pushed the real onset to ~9%.
 inline constexpr uint8_t  AppsAgreementPct     = 3;     // both sensors must exceed to produce torque
 // Pedal deadband: commanded torque below this is zeroed. Lowered 10 -> 5
-// (2026-07-29, driver reported too much dead travel). NOTE this value must stay
+// (driver reported too much dead travel). NOTE this value must stay
 // in step with the InvTorqueMap* zero-crossing below -- the map is built so that
 // exactly DeadbandLowPct maps to 0 Nm, and if the two disagree you get a second,
 // invisible deadband on top of this one.
 inline constexpr uint8_t  DeadbandLowPct       = 5;     // below -> 0
 inline constexpr uint8_t  DeadbandHighPct      = 90;    // above -> 100
 // BRING-UP torque cap (% of commanded torque, applied in control_task). 100 = no cap.
-// Clamps torque for on-stands / freewheel testing. *** MUST be 100 for any flight /
-// drive build *** -- unlike the old off-by-default ECU_BRINGUP_TORQUE_CAP_PCT build
-// flag this is ALWAYS applied; lower it only on stands.
+// Clamps torque for on-stands / freewheel testing. MUST be 100 for any flight or
+// drive build: this is ALWAYS applied, there is no build flag gating it off.
+// Lower it only on stands.
 inline constexpr uint8_t  TorqueCap            = 100;
 inline constexpr uint8_t  AppsDisagreePct      = 10;    // T.11.8.9: |apps1-apps2| > this is implausible
 inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persist this long before cut
@@ -160,7 +158,7 @@ inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persis
 // reading: v_ocv = v_cell_min + I_pack * R_cell. See cell_derate.hpp for why
 // this is the mechanism and filtering alone cannot substitute for it.
 //
-// *** COMMISSION -- THE ONE VALUE THAT MUST COME FROM THE CAR. ***
+// COMMISSION -- the one value that must come from the car.
 // Per-SERIES-ELEMENT resistance in milliohms (one cell, or one parallel group
 // if the pack is xSyP), including its share of busbar and contact resistance.
 //
@@ -168,10 +166,9 @@ inline constexpr uint32_t AppsDisagreePersistMs= 100;   // T.11.8.9: must persis
 // est_ocv_mV from 0x709. Still dips under load -> raise it. Humps upward ->
 // lower it. Flat -> correct.
 //
-// NOTE this now MOVES THE DERATE KNEE, by design -- see the derivation below.
-// It is no longer "shipped low is the safe direction": too low a value pulls
-// the knee down towards the AMS trip and shrinks the window the derate has to
-// work in. Commission it properly.
+// This MOVES THE DERATE KNEE, by design -- see the derivation below. Shipping it
+// low is NOT the safe direction: too low a value pulls the knee down towards the
+// AMS trip and shrinks the window the derate has to work in. Measure it.
 inline constexpr uint16_t CellIrMilliOhm       = 1;     // COMMISSION: measure on car
 // Ceiling on the correction, so a current sensor reading nonsense cannot mask
 // an empty pack without limit. 500 A is the EV 2.2.2 cap, so at the shipped
@@ -185,7 +182,7 @@ inline constexpr uint16_t PeakPackCurrentA     = 230;
 
 // ---- Low-cell-voltage torque derate ---------------------------------------
 //
-// >>> THE AMS TRIP POINT IS FIXED. THE DERATE HAS TO FIT ABOVE IT. <<<
+// The AMS trip point is fixed. The derate has to fit ABOVE it.
 //
 // The AMS faults and OPENS THE AIRS when the RAW LOADED minimum cell falls
 // below CellUnderVoltageMv (IFS08-CE-AMS ams_config.hpp, consumed as an
@@ -195,9 +192,10 @@ inline constexpr uint16_t PeakPackCurrentA     = 230;
 // We derate on IR-COMPENSATED OCV, which under load is ALWAYS HIGHER than the
 // loaded reading they trip on. So thresholds set at or below their trip point
 // can never engage: the AIRs open while this ECU is still commanding 100 %.
-// That was live until #177 follow-up -- knee and floor were 2800/2500 against
-// an AMS trip of 2800, so the ENTIRE ramp sat underneath it and the derate was
-// decorative. At 230 A and 1 mOhm a loaded 2799 mV reads as 3029 mV here.
+// The arithmetic that makes this easy to get wrong: at 230 A and 1 mOhm a
+// loaded 2799 mV -- one millivolt from the AIRs opening -- reads as 3029 mV
+// here. Thresholds picked against the loaded number leave the whole ramp
+// underneath the trip, where it can never engage.
 //
 // So the thresholds are DERIVED, not chosen:
 //
@@ -216,7 +214,7 @@ inline constexpr uint16_t PeakPackCurrentA     = 230;
 // Hand-picked numbers would have silently stopped being correct the moment that
 // value changed, which is exactly how the first version broke.
 //
-// >>> MIRRORED FROM THE AMS -- diff on any AMS bump. <<<
+// MIRRORED from the AMS -- diff it on any AMS bump.
 inline constexpr uint16_t AmsCellUnderVoltageMv = 2800;  // ams_config.hpp CellUnderVoltageMv
 // Headroom above their trip at floor torque. At 13 % (20 Nm) the current is
 // small, so loaded ~= OCV and 100 mV is plenty.
@@ -262,7 +260,7 @@ static_assert(CellVDerateFloorPct > DeadbandLowPct,
               "(DeadbandLowPct), or it commands 0 Nm and strands the car");
 static_assert(CellVDefaultMv >= CellVDerateKneeMv,
               "the stale-AMS default must sit at/above the knee, i.e. imply no derate");
-// >>> THE ASSERT THAT WOULD HAVE CAUGHT THE ORIGINAL BUG. <<<
+// The assert that pins the relationship these thresholds depend on.
 // The AMS opens the AIRs on the RAW LOADED cell below AmsCellUnderVoltageMv. We
 // derate on IR-compensated OCV, which under load reads HIGHER. Any threshold at
 // or below their trip is unreachable -- the AIRs open first and the derate is
@@ -284,7 +282,7 @@ static_assert(CellVFilterShift < 24,
 
 // ---- Motor ------------------------------------------------------------------
 // The inverter reports EMachine_Speed_erpm (0x463) -- ELECTRICAL rpm. Mechanical
-// shaft rpm = erpm / pole pairs. Powertrain-confirmed 2026-07-03: 10 pole pairs.
+// shaft rpm = erpm / pole pairs. Powertrain-confirmed: 10 pole pairs.
 inline constexpr int32_t  MotorPolePairs       = 10;
 
 // ---- Inverter command unit map (used by the deferred inverter E2E adapter) -
@@ -294,7 +292,7 @@ inline constexpr int32_t  MotorPolePairs       = 10;
 // 100% -> 240 Nm (full scale unchanged). Legacy VCU used 240/90 with bias 2400,
 // i.e. zero at 10%. Re-based for the 5% deadband: slope 240/(100-5) = 240/95,
 // bias 5*240 = 1200. Full scale stays 240 Nm -- only the zero-crossing moved.
-// ---- FS-Rules EV 2.2.1 tractive-power envelope (#177) ----------------------
+// ---- FS-Rules EV 2.2.1 tractive-power envelope ----------------------
 // "The TS power at the outlet of the TSAC must not exceed 80 kW", judged on a
 // 500 ms moving average (D 10.4.1). Nothing in the vehicle enforced this before
 // -- see power_limit.hpp.
@@ -337,7 +335,7 @@ inline constexpr uint32_t PowerCapK =
 // tell when the envelope is not binding without re-deriving it.
 inline constexpr uint32_t InvTorqueFullScaleNm = 240;
 
-// ---- Motor thermal torque cap (#177) ---------------------------------------
+// ---- Motor thermal torque cap ---------------------------------------
 // The inverter reports two motor temperatures on 0x464 as raw bytes with a -50
 // offset. See motor_thermal.hpp for why this is a cap rather than a gain and
 // why losing the sensors does NOT mean "no limit".
@@ -347,7 +345,7 @@ inline constexpr uint32_t InvTorqueFullScaleNm = 240;
 // deliberately unspent. The cap reaches its floor AT the limit rather than
 // starting there -- a limiter that waits has already let the winding arrive.
 //
-// >>> THE SENSOR CANNOT SEE THE PART THAT ACTUALLY DIES. <<<
+// The sensor cannot see the part that actually dies.
 // The thermistor is in the STATOR WINDING. What fails permanently is the ROTOR
 // MAGNETS (irreversible demagnetisation), and the rotor has no direct cooling
 // path, so under sustained load it can run hotter than the winding while 0x464
@@ -386,11 +384,11 @@ static_assert(MotorTempFloorPct <= 100 && MotorTempUnknownCapPct <= 100,
               "thermal caps are percentages");
 static_assert(MotorTempFloorPct > 0,
               "the floor is a limp-home: a thermal cap that strands the car is not a safe default");
-// ---- Accumulator thermal torque cap (#177) ---------------------------------
+// ---- Accumulator thermal torque cap ---------------------------------
 // Per-module maxima on 0x136/0x137, signed degC (no offset -- unlike the
 // inverter's byte encoding). See pack_thermal.hpp.
 //
-// 50 degC cell limit, from the team (2026-08-02) -- conservative against the
+// 50 degC cell limit, from the team -- conservative against the
 // usual 60 degC Li-ion NMC discharge ceiling. Still worth confirming it sits at
 // or below whatever the AMS itself trips on: if the AMS opens first this cap
 // never engages and is decorative.
@@ -455,7 +453,7 @@ inline constexpr uint32_t AmsStaleMs           = 200;   // matches the AMS VcuSt
 // The frame is 50 ms cyclic; 200 ms is four missed in a row before the IR
 // compensation gives up and the derate falls back to raw loaded voltage.
 inline constexpr uint32_t AcuCurrentsStaleMs   = 200;
-inline constexpr uint32_t AcuDischargeInterlockId = 0x021u;  // AMS fsm_in_start + tsms (#198)
+inline constexpr uint32_t AcuDischargeInterlockId = 0x021u;  // AMS fsm_in_start + tsms
 // 0x136/0x137 per-module temperatures, 250 ms cyclic. Four missed in a row
 // before the pack cap falls back to its unknown-sensor value. This window is the
 // WHOLE fail-safe for the uninitialised case (0 degC is a real pack
@@ -470,22 +468,21 @@ inline constexpr uint32_t InvStaleMs           = 200;   // inverter feedback con
 // AMS. DELIBERATELY GENEROUS: this frame's cycle time is recorded NOWHERE -- not
 // in the vendor DBC (it carries no GenMsgCycleTime at all) and not measured on
 // the car -- so a tight window would false-trip and republish 0 V during normal
-// running. Narrow it once the period is captured; see #198.
+// running. Narrow it once the period is captured.
 inline constexpr uint32_t InvDcBusStaleMs      = 500;
 
-// ---- ECU-held DC-link discharge (#198) -------------------------------------
+// ---- ECU-held DC-link discharge -------------------------------------
 // See discharge.hpp for the topology, why the ECU can only ever ADD a reason to
 // discharge, and why the AMS -- not the ECU -- decides when one is needed.
 //
 // RELEASE THRESHOLD. 10 V, deliberately far below the 60 V of the FS rule and
 // of the AMS's own gate (their DcBusDischargedV = 60).
 //
-// The cross-repo invariant still holds and in fact holds more strongly. #198
-// asks that the AMS gate sit AT OR ABOVE ours so the two never fight over the
-// boundary: at 10 vs 60 the AMS is already satisfied long before we release, so
-// no AMS change is needed for this.
+// The cross-repo invariant is that the AMS gate must sit AT OR ABOVE ours, so
+// the two never fight over the boundary. At 10 vs 60 the AMS is already
+// satisfied long before we release, so no AMS change is needed.
 //
-// >>> 10 V MAY BE BELOW WHAT THE INVERTER CAN REPORT. <<<
+// This may be BELOW what the inverter can report.
 // The link voltage is not measured by the ECU -- it is relayed from the
 // inverter's 0x466, and the W90's nominal DC-link operating range starts around
 // 48 V. If the inverter browns out or its measurement pins before the link
@@ -494,7 +491,7 @@ inline constexpr uint32_t InvDcBusStaleMs      = 500;
 // instead of completing. At 60 V we sat above that floor; at 10 V we are well
 // under it.
 //
-// This is the measurement nobody has taken yet (#198): open the SDC and watch
+// This is the measurement nobody has taken yet: open the SDC and watch
 // whether 0x466 keeps counting down past 10 V or stops. If it stops, either
 // raise this back towards the inverter's floor or give the ECU its own DC-link
 // sense -- PF10 (GPIO10) is free and ADC-capable.
@@ -508,10 +505,9 @@ inline constexpr uint16_t DischargeReleaseV     = 10;
 // sense fault, or the coil-interrupt relay not obeying. Holding forever would
 // leave a car that never arms with nothing indicating why.
 //
-// GENEROUS ON PURPOSE: the discharge curve has never been measured (#198 says
-// they no longer need it to proceed, so it may stay that way for a while). The
-// FS rule requires below 60 V within 5 s, so 30 s is 6x that. Narrow it once
-// the real time constant is on a log.
+// GENEROUS ON PURPOSE: the discharge curve has never been measured. The FS rule
+// requires below 60 V within 5 s, so 30 s is 6x that. Narrow it once the real
+// time constant is on a log.
 inline constexpr uint32_t DischargeTimeoutMs    = 30000;
 // 0x021 is 100 ms cyclic. 500 ms is five missed before we stop believing the
 // request -- but note that losing it does NOT abort a discharge in progress:
@@ -528,9 +524,9 @@ inline constexpr uint32_t UdvR2dStaleMs        = 200;   // 0x510 R2D request con
 // Non-overlapping MessageRAM offset for FDCAN2, in words. FDCAN1 keeps offset 0
 // and occupies 1 std + 2 ext + 32*4*3 = 387 words of the shared 10 KB SRAMCAN;
 // FDCAN2 starts right after so the two instances DON'T overlap -- overlap was
-// the #48 TX-dead root cause. CubeMX resets it to 0 on EVERY regen, so it MUST be
+// the TX-dead root cause. CubeMX resets it to 0 on EVERY regen, so it MUST be
 // re-applied by hand in MX_FDCAN2_Init (fdcan.c) each time -- NOT regen-stable, and
-// App_InitTask does NOT re-apply it. (2026-07-01: a regen silently reset this + the
+// App_InitTask does NOT re-apply it. (A regen silently reset this + the
 // FDCAN2 AutoRetransmission=ENABLE; both had to be restored in fdcan.c.)
 inline constexpr std::uint32_t Fdcan2MessageRamOffset = 387u;
 
@@ -556,7 +552,7 @@ inline constexpr uint32_t InvRxDcBusId         = 0x466u;     // EMC_TX_STATE_7 (
 // The inverter's own view of what it is doing and what it is willing to do.
 // All three were arriving already -- FDCAN1 accepts every standard ID into
 // FIFO0 -- and were simply never decoded, which left "is the INVERTER limiting
-// us?" unanswerable from the car (#177).
+// us?" unanswerable from the car.
 inline constexpr uint32_t InvRxCtrlModeId      = 0x465u;     // EMC_TX_STATE_6 (Cmd_Src/Ctrl_Type/Ctrl_Mode/PosFb_Src)
 inline constexpr uint32_t InvRxTorqueLimId     = 0x467u;     // EMC_TX_STATE_8 (Torque_Max_Feas + Setpoint_App_D/Q_A)
 inline constexpr uint32_t InvRxTorqueEstId     = 0x468u;     // EMC_TX_STATE_9 (Torque_Est_Nm)
@@ -564,7 +560,7 @@ inline constexpr uint32_t InvRxTorqueEstId     = 0x468u;     // EMC_TX_STATE_9 (
 // already decode -- 16-bit signed at frame bit 26, 32.767 W/LSB. The handler
 // guarded dlc < 4 and dropped bytes 3-5, so the inverter's OWN measurement of
 // its AC output power was arriving and being discarded. It is the cheapest
-// route to a real drivetrain efficiency (#177).
+// route to a real drivetrain efficiency.
 inline constexpr int32_t  InvAcPowerScaleMilli = 32767;      // W per LSB * 1000
 // 0x463/0x465/0x467/0x468 freshness. The inverter cyclics are fast; 200 ms is
 // the same window the rest of the inverter feedback uses.
@@ -594,7 +590,7 @@ inline constexpr uint8_t  InvTxSetpointModeDlc   = 3u;
 //   Flt_Clear     : 23|1@1+  -> bit 7    (explicit fault-clear request)
 // Every InvMode is <= 0x13, so bit 7 was always 0 -- Flt_Clear had never been
 // asserted. Used to clear a LATCHED inverter fault (dem_present = 0, condition
-// already gone) that the reset mode words alone do not shift (#148).
+// already gone) that the reset mode words alone do not shift.
 inline constexpr uint8_t  InvFltClearBit         = 0x80u;
 inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
 inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;

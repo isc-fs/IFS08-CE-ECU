@@ -63,7 +63,7 @@ DischargeState Discharge::update(const DischargeInputs& in) noexcept {
 
     st.secure = secured_;
     st.fault  = fault_;
-    // COMMANDED, not confirmed. #198 asked for an auxiliary-contact readback
+    // COMMANDED, not confirmed. The design asked for an auxiliary-contact readback
     // here and the team decided against wiring one; the header spells out the
     // two failures that leaves undetectable. Separate field rather than reusing
     // `secure` at the call sites, so adding the readback later is one line.

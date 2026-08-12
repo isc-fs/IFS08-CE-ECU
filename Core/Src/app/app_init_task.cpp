@@ -2,7 +2,7 @@
 //
 // App_InitTask: runs once at high priority after the scheduler starts, brings
 // up the two FDCAN instances, then self-deletes. The bring-up is the heart of
-// the #48 fix:
+// the FDCAN bring-up fix:
 //   1. The non-overlapping MessageRAM offsets (FDCAN1=0 / FDCAN2=387 words) are
 //      set at the single MX_FDCAN1/2_Init in fdcan.c -- FDCAN2 no longer shares
 //      SRAMCAN with FDCAN1 (the overlap was what corrupted TX). NOT re-applied

@@ -10,8 +10,8 @@ using namespace config;
 
 std::int16_t Inverter::torque_to_nm_req(std::uint8_t torque_pct) noexcept {
     if (torque_pct < DeadbandLowPct) return 0;          // below the deadband -> no torque
-    // Map: pct*Mul/Div - Bias/Div, re-based so DeadbandLowPct(5) -> 0 and
-    // 100 -> 240. (Legacy VCU was 240/90 - 2400/90, i.e. zero at 10%.)
+    // Map: pct*Mul/Div - Bias/Div, re-based so DeadbandLowPct(5) -> 0 Nm and
+    // 100 -> 240 Nm. The bias is what puts zero exactly at the deadband edge.
     const std::int32_t mapped =
         static_cast<std::int32_t>(torque_pct) * InvTorqueMapMul / InvTorqueMapDiv
         - InvTorqueMapBias / InvTorqueMapDiv;

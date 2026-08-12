@@ -2,7 +2,7 @@
 //
 // Classifies the cause of the last reset from the RCC reset-status register,
 // read + cleared once early in boot. Feeds the 0x704 health frame's
-// `reset_cause` so an IWDG reset (the #48-class failure mode) is visible over
+// `reset_cause` so an IWDG reset (the TX-dead class of failure mode) is visible over
 // CAN. Values match the pit-diag enum (0 unknown ... 4 IWDG ...).
 
 #pragma once
