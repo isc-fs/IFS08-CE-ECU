@@ -122,6 +122,11 @@ struct VehicleState {
     std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
     std::uint32_t last_udv_cmd_tick = 0;      // 0x507 seen
     std::uint32_t last_udv_r2d_tick = 0;      // 0x510 seen
+    std::uint8_t  udv_as_status     = 0;      // 0x50A byte0, the uDV's AS state
+    // 0x50A's OWN tick. Losing this frame while the uDV was DRIVING or READY is
+    // itself the emergency condition (as_buzzer.hpp), so it cannot share a tick
+    // with 0x507/0x510 -- a live torque stream would mask a dead AS monitor.
+    std::uint32_t last_udv_as_tick  = 0;      // 0x50A seen
 
     // --- AMS per-module telemetry (FDCAN2, 0x131-0x137) for the radio/dash ---
     std::uint16_t vmin_module[5]    = {};     // 0x131/0x132, mV, per module

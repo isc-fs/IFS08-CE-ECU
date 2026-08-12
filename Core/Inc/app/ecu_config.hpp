@@ -33,6 +33,32 @@ inline constexpr uint32_t UdvTxPeriodMs        = 100;
 inline constexpr uint32_t PrechargeTimeoutMs   = 10000; // no precharge -> retry
 inline constexpr uint32_t R2dSoundMs           = 2000;  // RTDS buzzer duration
 
+// ---- AS Emergency acoustic signal (driverless) ----------------------------
+// FSG wants AS Emergency indicated acoustically: intermittent, 50 % duty, in
+// the 1-5 Hz band, for 10 s, at the same time as the ASSI blue flash. The DV
+// stack has no buzzer, so it borrows the RTDS one. See as_buzzer.hpp.
+//
+// 3.3 Hz at 50 % duty, matching the uDV's ASSI flash exactly (their
+// ASSI_HALF_PERIOD_MS is the same 150). Same rate, deliberately NOT phase
+// locked -- two MCUs on two clocks, and phase-locking would mean the uDV
+// driving both edges over CAN.
+inline constexpr uint32_t AsBuzzerHalfPeriodMs = 150;
+// The rule caps the SOUND at 10 s. The light keeps flashing for as long as the
+// uDV latches Emergency, which is usually much longer -- hence the tone is
+// edge-triggered on a timer rather than driven from the level.
+inline constexpr uint32_t AsEmergencySoundMs   = 10000;
+// 0x50A is a ~10 Hz heartbeat, so 400 ms is four missed frames. Losing it while
+// the uDV was DRIVING or READY sounds the tone too: a uDV that has gone quiet
+// mid-mission cannot tell us it is in trouble.
+inline constexpr uint32_t UdvAsStaleMs         = 400;
+// AS state codes on 0x50A byte 0. The uDV's encoding, matching their 0x100 ASSI
+// byte, so a value means the same thing on both nodes.
+inline constexpr uint8_t  AsStatusOff          = 0x00;
+inline constexpr uint8_t  AsStatusEmergency    = 0x01;
+inline constexpr uint8_t  AsStatusReady        = 0x02;
+inline constexpr uint8_t  AsStatusDriving      = 0x03;
+inline constexpr uint8_t  AsStatusFinished     = 0x04;
+
 // Inverter App_State feedback values (EMC_TX_STATE_2 / 0x461, App_State_App).
 // NOTE on provenance: 3/4/10/11 are BENCH-PROVEN on this inverter (the fault
 // recovery chain 11 -> 0x0D -> 3 -> 0x04 -> 4 -> Active was observed). 0 and 13
@@ -555,6 +581,7 @@ inline constexpr uint32_t AcuTmaxModuleAId     = 0x136u;     // AMS per-module t
 inline constexpr uint32_t AcuTmaxModuleBId     = 0x137u;     // AMS per-module tmax, modules 3..4 + dcdc stub
 inline constexpr uint32_t AmsStatusId          = 0x4A0u;     // AMS FSM status
 inline constexpr uint32_t UdvTorqueCmdId       = 0x507u;     // uDV torque command (s32 LE, integer %)
+inline constexpr uint32_t UdvAsStatusId        = 0x50Au;     // uDV autonomous-system state (AS Emergency buzzer)
 inline constexpr uint32_t UdvR2dRequestId      = 0x510u;     // uDV DV ready-to-drive request
 inline constexpr uint32_t InvRxStateId         = 0x461u;     // EMC_TX_STATE_2 (App_State_App)
 inline constexpr uint32_t InvRxRpmId           = 0x463u;     // EMC_TX_STATE_4 (EMachine_Speed_erpm, 20-bit signed @ bit44)

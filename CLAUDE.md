@@ -145,7 +145,7 @@ vistazo en el código:
 | Bus       | FDCAN  | Rol |
 |-----------|--------|-----|
 | **INV**   | FDCAN1 | Inversor NX/EMC (IDs estándar). RX 0x461/0x463/0x464/0x465/0x466/0x467/0x468 · TX 0x360/0x362. |
-| **ACU**   | FDCAN2 | AMS + Pit-Tool + uDV (compartido). RX 0x020/0x021/0x12C/0x4A0/0x131-0x137/0x507/0x510/0x002/0x7E0/0x7E2 · TX 0x100 + bloque uDV + stream pit-diag. |
+| **ACU**   | FDCAN2 | AMS + Pit-Tool + uDV (compartido). RX 0x020/0x021/0x12C/0x4A0/0x131-0x137/0x507/0x50A/0x510/0x002/0x7E0/0x7E2 · TX 0x100 + bloque uDV + stream pit-diag. |
 | **DASH**  | FDCAN3 | Dashboard, **sólo TX**. 18 tramas `0x510..0x521` desde `TelemetryTask` — ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md). |
 
 El `0x600` está **retirado** (la AMS auto-dispara precarga).
@@ -242,6 +242,7 @@ El `0x600` está **retirado** (la AMS auto-dispara precarga).
 | ID | Dir | Contenido |
 |----|-----|-----------|
 | `0x507` | RX | `UDV_torque_cmd` — par como **entero %** (s32 LE). Se condiciona a 0..100 (negativo → 0: no hay regen en el contrato); stale → 0, **nunca** fallback a APPS. |
+| `0x50A` | RX | `UDV_as_status` — estado del sistema autónomo (~10 Hz). `byte0 == 0x01 EMERGENCY` dispara el zumbador de AS Emergency en el RTDS: 3,3 Hz / 50 % durante 10 s, por FLANCO (el uDV mantiene Emergency latcheado mucho más de 10 s; la regla limita el SONIDO, no la luz). Perder la trama con el uDV en `DRIVING`/`READY` también suena — un uDV mudo a media misión es una emergencia. Ver `as_buzzer.hpp`. |
 | `0x510` | RX | `UDV_r2d_request` — petición R2D autónoma (sólo vale con freno EBS duro verificado en nuestro propio sensor). |
 | `0x504` | TX | `VCU_ts_active` — vista viva de `ok_precharge`, cada 100 ms (el uDV expira a 400 ms). |
 | `0x505` | TX | `VCU_brake_over_limit` — verdicto del ECU sobre el freno. |
@@ -356,8 +357,8 @@ ctest --test-dir build-sil --output-on-failure        # o:
 ./build-sil/tests/sil/ecu08_sil --test-all
 ```
 
-El target SIL `ecu08_sil` define `SIL_BUILD=1` y compila **16 unidades**:
-`sil_control_tests.cpp` + `Core/Src/app/{control,cell_derate,discharge,motor_thermal,
+El target SIL `ecu08_sil` define `SIL_BUILD=1` y compila **17 unidades**:
+`sil_control_tests.cpp` + `Core/Src/app/{control,as_buzzer,cell_derate,discharge,motor_thermal,
 pack_thermal,pedal_cal,power_limit,pedal_cal_nvm,cal_session,inverter,udv_tx,
 radio_snapshot,vehicle_service,gps_nmea,gps_tx}.cpp`. **Sin HAL, sin FreeRTOS, sin mocks** — esos ficheros no incluyen nada
 del HAL y `Controller::step()` recibe `now_ms` como argumento, así que el test es
@@ -385,6 +386,7 @@ ficheros).
 | `Core/Inc/app/pack_thermal.hpp` · `.cpp` | Cap térmico de acumulador (por módulo, con `module_online_mask`). Puro. |
 | `Core/Inc/app/power_limit.hpp` · `.cpp` | Envolvente EV 2.2.1. Feed-forward, entero. Puro. |
 | `Core/Inc/app/derate_ramp.hpp` | La rampa descendente que comparten los dos caps térmicos. |
+| `Core/Inc/app/as_buzzer.hpp` · `Core/Src/app/as_buzzer.cpp` | Zumbador de AS Emergency sobre el RTDS (0x50A). Flanco + ventana de 10 s + onda de 150 ms. Puro, en el SIL. |
 | `Core/Inc/app/discharge.hpp` · `Core/Src/app/discharge.cpp` | Descarga del DC-link mantenida por la ECU (#198). Latch sobre `0x021`, suelta con **medida propia**. Puro. |
 | `Core/Src/app/control_task.cpp` | Tarea realtime 10 ms. `0x100` en todo estado + único kicker IWDG. |
 | `Core/Src/app/can_rx_task.cpp` | Drena RX, despacha, único escritor de VehicleService. |
