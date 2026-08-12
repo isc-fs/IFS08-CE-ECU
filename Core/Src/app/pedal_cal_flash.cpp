@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // The one part of calibration persistence that touches hardware: programming a
-// single flash word into the bootloader's NVM sector (#169).
+// single flash word into the bootloader's NVM sector.
 //
 // Deliberately thin, and deliberately NOT in the SIL target. Everything that
 // can be got wrong -- where the entry goes, what sequence number it needs, what

@@ -29,7 +29,7 @@ struct VehicleState {
     std::uint8_t  inv_state         = 0;  // 0x461 App_State_App (>=10 = fault)
     std::uint8_t  inv_error         = 0;  // 0x461 DEM_Code low byte
     bool          inv_dem_present   = false;  // 0x461 byte3 bit7: DEM active NOW vs latched history
-    // The two LOWER fault layers, same frame (0x461), never decoded until #148.
+    // The two LOWER fault layers, same frame (0x461).
     // The W90's layers cascade upward (manual 9.2), so a latched L3 DEM that
     // will not clear may be held up by a live L1/L2 condition -- which no CAN
     // command can clear. Bitmasks, not enums: several bits can be set at once.
@@ -41,7 +41,7 @@ struct VehicleState {
     // as the DC-bus voltage. It was arriving and being discarded: the 0x466
     // handler guarded dlc < 4 and never looked at bytes 3-5. This is the
     // cheapest path to a measured drivetrain efficiency, which is the entire
-    // margin of the EV 2.2.1 envelope (#177).
+    // margin of the EV 2.2.1 envelope.
     std::int32_t  inv_ac_power_W    = 0;  // 0x466 ACBus_Power_W, decoded to WATTS
     std::uint8_t  inv_temp_board    = 0;  // 0x464 board temp       (raw byte; -50 -> degC)
     std::uint8_t  inv_temp_pwrstg   = 0;  // 0x464 power-stage temp  (raw)
@@ -52,7 +52,7 @@ struct VehicleState {
     // All of this was already on the wire and simply not decoded. Current_Q_A is
     // the torque-producing axis, so a Q current that plateaus while the request
     // keeps climbing IS the inverter limiting -- and Torque_Max_Feas is the
-    // inverter stating that ceiling outright (#177).
+    // inverter stating that ceiling outright.
     std::int16_t  inv_current_d_raw  = 0;  // 0x463 b0-1  Current_D_A,  LSB = 1/32 A
     std::int16_t  inv_current_q_raw  = 0;  // 0x463 b2-3  Current_Q_A,  LSB = 1/32 A
     // Voltage modulus in per-mille. Near 1000 means the inverter is against the
@@ -84,7 +84,7 @@ struct VehicleState {
     // 0x461 SPECIFICALLY (not any inverter frame): inv_state and the DEM ride
     // on it, and the whole climb/fault ladder is steered by them, so its own
     // arrival rate is what matters -- last_inv_tick is also refreshed by
-    // 0x463/0x464/0x466 and would mask a slow 0x461 (#148).
+    // 0x463/0x464/0x466 and would mask a slow 0x461.
     std::uint32_t last_inv_state_tick = 0;  // 0x461 only
     std::uint8_t  inv_state_seq       = 0;  // wrapping count of 0x461 frames
     std::uint32_t last_vconfig_tick = 0;  // 0x466 seen -> gates Precharge
@@ -104,7 +104,7 @@ struct VehicleState {
     // module is then skipped and the pack cap sits at its unknown value for the
     // whole run, unannunciated.
     std::uint32_t last_ams_status_tick = 0;   // 0x4A0 seen
-    // 0x021 ACU_discharge_interlock (#198). TWO raw observations, not a request:
+    // 0x021 ACU_discharge_interlock. TWO raw observations, not a request:
     // the AMS deliberately does not pre-compute one, because the third term of
     // the decision is the ECU's OWN DC-link measurement and routing that through
     // CAN would put a stale value in the middle of the judgement.
@@ -116,7 +116,7 @@ struct VehicleState {
     std::uint8_t  ams_tsms              = 0;  // 0x021 bit 1 (SDC complete)
     std::uint32_t last_discharge_req_tick = 0;
     std::uint32_t last_ams_tick     = 0;      // any AMS frame
-    // --- uDV / autonomous (FDCAN2, #17). Own freshness ticks -- uDV traffic
+    // --- uDV / autonomous (FDCAN2). Own freshness ticks -- uDV traffic
     //     must NOT keep the AMS freshness alive (or vice versa). ---
     std::int32_t  udv_torque_cmd    = 0;      // 0x507 torque command, s32 LE (integer %, unconditioned)
     std::uint8_t  udv_r2d_request   = 0;      // 0x510 byte0 (!= 0 = requesting R2D)
@@ -141,11 +141,12 @@ struct VehicleState {
     // -- 0 degC is a real pack temperature, so staleness is the ONLY thing that
     // can catch an uninitialised state.
     // TWO ticks, not one. The per-module maxima arrive in two frames (0x136 =
-    // modules 0-2, 0x137 = modules 3-4) and both used to stamp a single tick, so
-    // losing 0x137 alone left modules 3-4 frozen at their last value FOREVER
-    // while pack_temps_fresh stayed true -- and 0x70A went on reporting
-    // mod3_used/mod4_used = 1. The frame whose purpose is catching a silently
-    // EXCLUDED module was blind to a silently FROZEN one. Frozen cold is the
+    // modules 0-2, 0x137 = modules 3-4), and each stamps its OWN tick. Share one
+    // between them and losing 0x137 alone leaves modules 3-4 frozen at their last
+    // value forever while the freshness flag stays true, with 0x70A still
+    // reporting mod3_used/mod4_used = 1 -- the frame whose purpose is catching a
+    // silently EXCLUDED module would be blind to a silently FROZEN one. Frozen
+    // cold is the
     // dangerous direction: those two modules cook with the cap reading 100 %.
     std::uint32_t last_tmax_a_tick  = 0;      // 0x136 seen (modules 0-2)
     std::uint32_t last_tmax_b_tick  = 0;      // 0x137 seen (modules 3-4)
@@ -175,16 +176,16 @@ public:
     // The dangerous direction is FROZEN HIGH. The AMS's precharge-complete
     // criterion is dc_bus_V >= 95 % of pack, so a value frozen at pack voltage
     // satisfies it before precharge even starts -- the precharge resistor never
-    // carries current and a DEAD PRECHARGE PATH PASSES ITS OWN SELF-TEST (#198).
+    // carries current and a DEAD PRECHARGE PATH PASSES ITS OWN SELF-TEST.
     //
     // Stale therefore publishes 0 V, which is the fail-safe direction for that
     // criterion: 0 is never >= 95 % of pack, so the AMS keeps precharging rather
     // than taking the shortcut. The frame keeps flowing, so the AMS VcuStale
     // watchdog is not disturbed and the AIRs are not dropped by this.
     //
-    // >>> 0 IS NOT FAIL-SAFE FOR EVERY CONSUMER. <<< For the discharge gate
-    // proposed in #198 ("hold the bleed until the link is below threshold") a
-    // frozen-low reading would release the gate EARLY. That case needs an
+    // 0 IS NOT FAIL-SAFE FOR EVERY CONSUMER. For a discharge gate that holds
+    // the bleed until the link is below a threshold, a frozen-low reading would
+    // release the gate EARLY. That case needs an
     // explicit validity bit alongside the voltage, which is a two-sided change
     // to the 0x100 contract and is being agreed on that issue. This function is
     // the unilateral half: it removes the frozen-HIGH hazard, which is live

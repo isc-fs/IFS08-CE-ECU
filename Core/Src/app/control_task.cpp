@@ -39,7 +39,7 @@ extern "C" void ecu_control_task_run(void *argument) {
     Discharge  discharge;
     IoSignals  io;
     // The ACTIVE pedal calibration, loaded ONCE at task start from the
-    // bootloader NVM sector (#169). load_cal_from_nvm never fails: absent,
+    // bootloader NVM sector. load_cal_from_nvm never fails: absent,
     // torn, unknown-version or invalid records all return the compile-time
     // defaults, because refusing to drive over a bad calibration would be worse
     // than running the values the car shipped with. The outcome is latched into
@@ -48,11 +48,11 @@ extern "C" void ecu_control_task_run(void *argument) {
     // quietly ignored it".
     const CalLoadResult cal_load =
         load_cal_from_nvm(reinterpret_cast<const void*>(CalNvmBase), CalNvmSize);
-    // NOT const: a valid commit applies immediately (apply-on-commit). Safe by
-    // construction -- a session only opens while the vehicle is quiescent, so
-    // the calibration never changes under a moving car, and the operator's
-    // read-back verification then reflects what they just committed rather
-    // than the old values plus an instruction to power-cycle.
+    // NOT const: a valid commit applies immediately (apply-on-commit). That is
+    // safe because a session only opens while the vehicle is quiescent, so the
+    // calibration never changes under a moving car. It also means the
+    // operator's read-back shows what they just committed, instead of the old
+    // values plus "now power-cycle".
     PedalCal   cal = cal_load.cal;
     CalSession cal_session;
     uint32_t   last_cal_status = 0;
@@ -146,14 +146,14 @@ extern "C" void ecu_control_task_run(void *argument) {
                                     VehicleService::is_fresh(now, veh.last_tmax_b_tick,
                                                              config::AcuTmaxStaleMs);
         }
-        // uDV / autonomous (#17): the DV R2D request (0x510, value AND fresh)
+        // uDV / autonomous: the DV R2D request (0x510, value AND fresh)
         // and the conditioned 0x507 accel command with its own freshness --
         // stale command => the core commands torque 0 (never APPS fallback).
         ci.dv_r2d_req    = (veh.udv_r2d_request != 0u) &&
                            VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
         ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
         ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
-        // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL (#177).
+        // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL.
         //
         // GATED, like every other safety input on this page. 0x463 is the only
         // signal feeding the 80 kW envelope, and last_inv_tick is stamped by
@@ -190,7 +190,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         g_last_start_button  = in.start_button ? 1u : 0u;
         g_last_t11_8_9       = out.t11_8_9  ? 1u : 0u;
 
-        // --- calibration session (#169) ------------------------------------
+        // --- calibration session ------------------------------------
         // Entry is gated on a genuinely quiescent car: TS down, not in the
         // drive state, no torque commanded and the motor stopped. All four,
         // because a pedal calibration that changed under load could command
@@ -260,13 +260,16 @@ extern "C" void ecu_control_task_run(void *argument) {
             }
         }
 
-        // --- ECU-held DC-link discharge (#198) -----------------------------
-        // The SDC still drives the discharge relay exactly as before; PB6 only
+        // --- ECU-held DC-link discharge -----------------------------
+        // The SDC still drives the discharge relay exactly as before. PB6 only
         // interrupts its COIL, so the ECU can add a reason to discharge and can
-        // never take one away. The AMS decides WHEN (0x021: its FSM in Start,
-        // TSMS on, link still charged -- conditions only it can see); the ECU
-        // owns the HOLD, releasing on its own voltage rather than on the request,
-        // so a lost frame mid-discharge cannot re-strand the link.
+        // never take one away.
+        //
+        // The AMS decides WHEN, on 0x021: its FSM in Start, TSMS on, and the
+        // link still charged -- conditions only it can see. The ECU owns the
+        // HOLD, and releases on its own voltage measurement rather than on the
+        // request going away, so one lost frame mid-discharge cannot re-strand
+        // the link.
         const bool dc_bus_valid =
             VehicleService::is_fresh(now, veh.last_vconfig_tick, config::InvDcBusStaleMs);
         DischargeInputs di{};
@@ -293,10 +296,10 @@ extern "C" void ecu_control_task_run(void *argument) {
         // --- 0x100 heartbeat: EVERY state, every cycle (the AMS VcuStale contract) ---
         {
             VCU_heartbeat_t hb{};
-            // NOT veh.inv_dc_bus_V directly: that is a held 0x466 reading with
-            // no expiry, and this frame is emitted every 10 ms regardless -- so a
-            // silent inverter left us broadcasting pack voltage forever while the
-            // AMS's own staleness check saw a perfectly healthy frame (#198).
+            // NOT veh.inv_dc_bus_V directly. That field is a held 0x466 reading
+            // with no expiry, and this frame goes out every 10 ms regardless.
+            // A silent inverter therefore left us broadcasting pack voltage
+            // forever, and the AMS's staleness check still saw a healthy frame.
             hb.dc_bus_voltage = VehicleService::heartbeat_dc_bus_V(veh, now);
             hb.dc_bus_valid   = dc_bus_valid ? 1u : 0u;
             hb.discharge_engaged = dis.engaged ? 1u : 0u;
@@ -310,7 +313,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(f);
         }
 
-        // --- uDV autonomous contract (#17), ACU bus, UNGATED (not pit-diag) ---
+        // --- uDV autonomous contract, ACU bus, UNGATED (not pit-diag) ---
         // 0x506 motor rpm every cycle (10 ms -- the uDV SLAM/odometry input);
         // 0x504 TS-active + 0x505 brake-over-limit at 100 ms. ts_active is the
         // FSM's own ok_precharge view (stub-consistent); the brake verdict uses
@@ -336,7 +339,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         // inverter fault -- the follow-up Off(0x01) does (manual 9.3, and the
         // IFS07 VCU that recovered without a power cycle sent the same
         // sequence). Non-empty ONLY while inv_state is 10/11, so the healthy
-        // path still emits exactly one 0x360 per cycle (#148).
+        // path still emits exactly one 0x360 per cycle.
         // Flt_Clear rides the LAST follow word only -> the bit pulses low-low-high
         // each cycle, so an edge-triggered clear sees a fresh rising edge at 100 Hz
         // instead of one stuck-high level.
@@ -367,7 +370,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             static_cast<uint32_t>(now - last_pit) >= config::PitDiagStreamMs) {
             last_pit = now;
             can_tx_post(PitDiag::build_status(out, veh, in.start_button));
-            can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy (#109)
+            can_tx_post(PitDiag::build_dv(out, ci, veh));   // 0x707 DV/autonomy
             can_tx_post(PitDiag::build_cell(ctrl.cell_derate()));  // 0x709 low-cell estimator
             can_tx_post(PitDiag::build_pack_temp(ctrl.pack_thermal()));  // 0x70A pack thermal cap
             can_tx_post(PitDiag::build_inv_foc(veh, now));               // 0x70B inverter FOC feedback
@@ -379,7 +382,7 @@ extern "C" void ecu_control_task_run(void *argument) {
             can_tx_post(PitDiag::build_pedals(in, ci.cal));
             can_tx_post(PitDiag::build_inverter(veh, static_cast<std::uint8_t>(out.inv_mode)));
             can_tx_post(PitDiag::build_inverter_temps(veh, ctrl.motor_thermal()));
-            can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness (#148)
+            can_tx_post(PitDiag::build_inv_faults(veh, out, now));  // 0x708 L1/L2 + cmd + 0x461 freshness
             can_tx_post(PitDiag::build_fwinfo());
             can_tx_post(PitDiag::build_brake(in, ci.cal));
 #if defined(ECU_DEBUG_INV_BRIDGE)

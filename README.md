@@ -1,9 +1,9 @@
 ![ISC Logo](http://iscracingteam.com/wp-content/uploads/2022/03/Picture5.jpg)
 
-# IFS08 — Central ECU
+# IFS08 — ECU
 
-Firmware for the **Central ECU** of the IFS08, the ISC Racing Team's Formula
-Student electric car. It reads the driver's pedals, decides how much torque the
+Firmware for the **ECU** of the IFS08, the ISC Racing Team's Formula Student
+electric car. It reads the driver's pedals, decides how much torque the
 car is allowed to make, and talks to everything else on the car over CAN.
 
 **STM32H733ZG · FreeRTOS · C++17.** The image links at `0x08020000` and is
@@ -73,7 +73,9 @@ the DBC — CI fails the build if it drifts.
 ## Build and test
 
 ```bash
-cmake -S . -B build-sil && cmake --build build-sil -j8 && ./build-sil/tests/sil/ecu08_sil --test-all
+cmake -S . -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
+cmake --build build-sil -j8
+./build-sil/tests/sil/ecu08_sil --test-all
 ```
 
 The SIL suite is the regression gate — the control core is pure, host-testable

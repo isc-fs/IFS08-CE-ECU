@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: proprietary
 //
-// motor_thermal.hpp -- motor over-temperature torque limiting (#177).
+// motor_thermal.hpp -- motor over-temperature torque limiting.
 //
-// The motor limit is 80 degC. A limit is not a trip point: reaching it and then
-// cutting is too late, because the winding is already there. So the cap starts
-// backing torque off at MotorTempDerateStartDegC and reaches its floor AT the
-// limit, which is what keeps the motor from getting there in the first place.
+// The motor limit is MotorTempLimitDegC (110 degC). A limit is not a trip point:
+// reaching it and then cutting is too late, because the winding is already
+// there. So the cap starts backing torque off at MotorTempDerateStartDegC
+// (90 degC) and reaches its floor AT the limit, which is what keeps the motor
+// from getting there in the first place.
 //
 // A CAP, NOT A GAIN. torque = min(torque, cap), so everything below the cap
 // passes through untouched and the driver keeps full pedal resolution over the
-// range that is still allowed. Every torque limiter in the core works this way
-// now -- the low-cell derate was the last multiplier and was converted in #177 --
+// range that is still allowed. Every torque limiter in the core works this way,
 // which is also why their order does not matter: the lowest ceiling wins.
 //
 // Heat goes as torque squared, so the floor does not need to be near zero to
@@ -67,6 +67,8 @@ public:
     // and publish the inputs that produced it.
     MotorThermalState update(const MotorThermalInputs& in) noexcept;
 
+    // NOT CURRENTLY CALLED: update() already unseeds itself on a stale or
+    // unusable input. Kept for tests.
     void reset() noexcept { seeded_ = false; }
 
 private:

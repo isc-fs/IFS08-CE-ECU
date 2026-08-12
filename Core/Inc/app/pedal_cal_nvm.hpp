@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // pedal_cal_nvm.hpp -- reading the stored pedal calibration out of the
-// bootloader's NVM sector. READ ONLY; the write path is step 5 of #169.
+// bootloader's NVM sector. READ ONLY; the write path lives in pedal_cal_flash.cpp.
 //
 // WHERE IT LIVES. The bootloader owns flash sector 7 (0x080E0000, 128 KB) as a
 // log-structured key/value store. That sector is OUTSIDE the application region
@@ -16,7 +16,7 @@
 // append/compaction logic could corrupt the bootloader's own keys. Step 5 must
 // settle that separately and must not simply extend this file.
 //
-// >>> THE CONSTANTS BELOW ARE DUPLICATED FROM THE BOOTLOADER. <<<
+// The constants below are DUPLICATED from the bootloader.
 // Source of truth: isc-fs/stm32-can-bootloader
 //   Core/Inc/bl_memmap.h : BL_NVM_BASE, BL_NVM_SIZE, BL_APP_METADATA_ADDR
 //   Core/Inc/bl_nvm.h    : BL_NVM_ENTRY_SIZE, BL_NVM_ENTRY_MAGIC,

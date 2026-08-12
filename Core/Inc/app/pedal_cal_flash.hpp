@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// pedal_cal_flash.hpp -- the hardware half of calibration persistence (#169).
+// pedal_cal_flash.hpp -- the hardware half of calibration persistence.
 // Separated from pedal_cal_nvm so the pure logic stays in the SIL build and
 // only the unavoidable HAL call sits outside it.
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// udv_tx -- builders for the ECU -> uDV autonomous-contract frames (#17), the
+// udv_tx -- builders for the ECU -> uDV autonomous-contract frames, the
 // pit_diag pattern: pure (no HAL/RTOS), encode via the DSL, return a CanFrame
 // for can_tx_post(). Host-testable from the SIL.
 //

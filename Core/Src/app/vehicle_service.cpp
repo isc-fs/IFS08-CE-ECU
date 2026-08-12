@@ -105,7 +105,7 @@ std::int32_t VehicleService::decode_inv_rpm(const std::uint8_t* d) noexcept {
 }
 
 std::uint8_t VehicleService::condition_udv_torque(std::int32_t cmd) noexcept {
-    // Fail-safe conditioning of the autonomous torque command (#17): the wire
+    // Fail-safe conditioning of the autonomous torque command: the wire
     // value is an integer percent; anything outside 0..100 is not a sane
     // command. Negative -> 0 (regen/reverse is NOT in the contract -- an
     // explicit extension if ever wanted), overrange clamps.
@@ -118,7 +118,7 @@ std::uint16_t VehicleService::heartbeat_dc_bus_V(const VehicleState& v,
                                                  std::uint32_t now) noexcept {
     // See the header for why stale publishes 0 rather than the held value, and
     // why 0 is the right direction for the AMS precharge criterion but NOT for
-    // the discharge gate under discussion in #198.
+    // the DC-link discharge gate.
     if (!is_fresh(now, v.last_vconfig_tick, config::InvDcBusStaleMs)) return 0u;
     return v.inv_dc_bus_V;
 }
@@ -155,7 +155,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
                 state_.inv_pwrstg_bits = static_cast<std::uint16_t>(
                     (f.data[5] >> 7) | (static_cast<std::uint16_t>(f.data[6]) << 1));
             }
-            state_.last_inv_state_tick = f.timestamp_ms;    // 0x461 only (#148)
+            state_.last_inv_state_tick = f.timestamp_ms;    // 0x461 only
             ++state_.inv_state_seq;                         // wraps; delta = arrivals
             state_.last_inv_tick = f.timestamp_ms;
             return true;
@@ -163,10 +163,10 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.id == config::InvRxRpmId) {                   // 0x463
             if (f.dlc < 8) return false;
             state_.inv_rpm       = decode_inv_rpm(f.data);
-            // The FOC feedback that shares this frame and was never decoded
-            // (#177). Current_Q_A is the torque-producing axis: a Q current that
-            // plateaus while the request keeps climbing IS the inverter
-            // limiting, and it has been on the wire the whole time.
+            // FOC (field-oriented control) feedback, which shares this frame.
+            // Current_Q_A is the torque-producing axis: if Q current plateaus
+            // while our request keeps climbing, the INVERTER is what is
+            // limiting us.
             state_.inv_current_d_raw = le16_s(&f.data[0]);   // Current_D_A
             state_.inv_current_q_raw = le16_s(&f.data[2]);   // Current_Q_A
             // Volt_Modulus_permil: 12 bits at frame bit 32 -> byte4 | byte5[0:3].
@@ -202,7 +202,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             if (f.dlc < 6) return false;
             // Torque_Max_Feas: the inverter stating its OWN ceiling. This is the
             // single most direct answer to "is the inverter limiting us?" and it
-            // has been broadcast, undecoded, the whole time (#177).
+            // has been broadcast, undecoded, the whole time.
             state_.inv_torque_max_feas = le16_s(&f.data[0]);
             state_.inv_setpoint_q_raw  = le16_s(&f.data[4]);   // Setpoint_App_Q_A
             state_.last_inv_tick    = f.timestamp_ms;
@@ -241,7 +241,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_ams_tick = f.timestamp_ms;
             return true;
         }
-        if (f.id == config::AcuDischargeInterlockId) {      // 0x021 (#198)
+        if (f.id == config::AcuDischargeInterlockId) {      // 0x021
             if (f.dlc < 1) return false;
             // Bit 0 fsm_in_start, bit 1 tsms -- mirrors the AMS's own .def.
             state_.ams_fsm_in_start        = static_cast<std::uint8_t>(f.data[0] & 0x01u);
@@ -265,7 +265,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_ams_tick = f.timestamp_ms;
             return true;
         }
-        // --- uDV / autonomous (#17). Deliberately does NOT touch last_ams_tick:
+        // --- uDV / autonomous. Deliberately does NOT touch last_ams_tick:
         //     uDV traffic must not keep the AMS freshness (ok_precharge) alive.
         if (f.id == config::UdvTorqueCmdId) {               // 0x507
             if (f.dlc < 4) return false;

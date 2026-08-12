@@ -15,8 +15,8 @@
 //      (legacy had it commented out -> instant trip).
 //
 // What is NOT here: reading the ADC/GPIO (io_signals), the CAN wire encoding,
-// and the inverter unit-map + two's-complement + E2E framing (the deferred
-// inverter adapter, task #10). The core emits a torque PERCENTAGE and an
+// and the inverter unit-map + two's-complement + E2E framing (the inverter
+// adapter). The core emits a torque PERCENTAGE and an
 // abstract inverter MODE; the firmware layer encodes them.
 
 #ifndef ECU_CONTROL_HPP_
@@ -95,7 +95,7 @@ struct CtrlInputs {
     uint8_t  module_online_mask = 0;     // 0x4A0 byte2
     bool     ams_status_fresh = false;   // 0x4A0 fresh -> the mask is trustworthy
     bool     pack_temps_fresh = false;   // 0x136/0x137 recently received
-    // uDV / autonomous (#17, FDCAN2). The DV ready-to-drive gate is
+    // uDV / autonomous (FDCAN2). The DV ready-to-drive gate is
     // dv_r2d_req && brake_raw > BrakeDvHardRaw -- the EBS holds HARD braking
     // and the ECU verifies it on its own brake sensor; no start button in DV.
     bool     dv_r2d_req = false;         // 0x510 byte0 != 0 AND fresh (UdvR2dStaleMs)
@@ -103,12 +103,11 @@ struct CtrlInputs {
     uint8_t  dv_torque_pct = 0;          // 0x507 conditioned (clamped/NaN-rejected) 0..100
     // MECHANICAL motor speed (0x463 erpm / MotorPolePairs). Feeds the EV 2.2.1
     // power envelope. Feed-forward only: the cap reads this, it does not drive
-    // it on the timescale of a control tick, so no loop is closed (#177).
+    // it on the timescale of a control tick, so no loop is closed.
     int32_t  motor_rpm_mech = 0;
     // Pedal calibration, carried IN rather than read from a global so step()
     // stays a pure function of its arguments and the SIL suite can vary it.
-    // Defaults reproduce the values that used to be constexpr, so an ECU with
-    // no stored calibration behaves exactly as before (#169).
+    // Falls back to the ecu_config.hpp defaults when nothing is stored.
     PedalCal cal{};
 };
 
@@ -127,7 +126,7 @@ struct CtrlOutput {
     // App_State switch fell through with no breaks: soft fault -> 0x13, 0x0D,
     // 0x01; hard fault -> 0x0D, 0x01. Commanding the reset word ALONE (what we
     // did before) means the OFF that actually clears the fault is never sent,
-    // so the inverter stays faulted and WaitInvStandby hangs forever (#148).
+    // so the inverter stays faulted and WaitInvStandby hangs forever.
     InvMode   inv_mode_follow[2] = { InvMode::Off, InvMode::Off };
     uint8_t   inv_mode_follow_n = 0;
     // Assert Flt_Clear (0x360 byte 2 bit 7) on the LAST follow-up word. Set only
@@ -136,19 +135,31 @@ struct CtrlOutput {
     // inverter a fresh rising edge every 10 ms cycle rather than a stuck-high
     // level (which an edge-triggered clear would see exactly once). The mode
     // words alone do not shift a LATCHED fault -- dem_present = 0, condition
-    // already gone, inverter still parked in SoftFault(10) (#148).
+    // already gone, inverter still parked in SoftFault(10).
     bool      inv_flt_clear = false;
-    // EV 2.2.1 power envelope is actively limiting this tick. Annunciated on
-    // 0x700 so a driver complaining of "no power at the end of the straight"
-    // can be answered from a capture instead of a guess (#177).
+    // MIND THE DIFFERENCE BETWEEN THESE THREE FLAGS.
+    //
+    // power_capped means the envelope ACTUALLY CLIPPED the request this tick --
+    // it is set only when the demand exceeded the cap. Reported on 0x700, so a
+    // driver complaining of "no power at the end of the straight" can be
+    // answered from a capture instead of a guess.
     bool      power_capped = false;
-    // Motor thermal cap is limiting this tick (including the unknown-sensor
-    // case). Annunciated on 0x706 next to the temperatures that caused it.
+    // The two thermal flags mean something WEAKER: the ceiling is below 100 %,
+    // whether or not it clipped anything. At 60 % pedal with a 70 % motor cap,
+    // thermal_capped is 1 and the cap is not costing you a single Nm.
+    //
+    // So when you are chasing a slow car, do NOT read these as "this is the one
+    // limiting me". Compare torque_pct (0x700) against the published ceilings --
+    // cap_pct (0x709), thermal_cap_pct (0x706), pack_cap_pct (0x70A) -- and the
+    // ceiling equal to torque_pct is the binding one.
+    //
+    // Motor thermal ceiling is below full (including the unknown-sensor case).
+    // Reported on 0x706 next to the temperatures that caused it.
     bool      thermal_capped = false;
-    // Accumulator thermal cap is limiting this tick. Annunciated on 0x70A.
+    // Accumulator thermal ceiling is below full. Reported on 0x70A.
     bool      pack_thermal_capped = false;
     // Wrapping count of times Active dropped back to WaitInvStandby because the
-    // inverter left the drive (#191). Transient by nature -- the inverter
+    // inverter left the drive. Transient by nature -- the inverter
     // recovers and the FSM climbs again within a couple of ticks -- so without a
     // counter the event is invisible after the fact. On 0x708.
     uint8_t   inv_redrive_count = 0;
@@ -195,7 +206,7 @@ private:
     uint32_t  state_entry_ms_ = 0;
     bool      apps_disagree_active_ = false;
     uint32_t  apps_disagree_since_ms_ = 0;
-    // The mode decision (#17): latched by WHICH trigger fired at WaitStartBrake
+    // The mode decision: latched by WHICH trigger fired at WaitStartBrake
     // (manual start+brake vs DV 0x510+EBS-brake); cleared on any exit from the
     // drive ladder (enter_ to a pre-R2D state or AmsError). Never swaps live.
     bool      dv_latched_ = false;

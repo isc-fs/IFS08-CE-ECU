@@ -2,7 +2,7 @@
 //
 // DiagTask: emits the 0x704 firmware-health frame once a second. Runs at low
 // priority and -- crucially -- SEPARATELY from ControlTask, so it survives a
-// ControlTask stall (the exact #48-class failure it exists to diagnose). The
+// ControlTask stall (the exact class of failure it exists to diagnose). The
 // 0x704 frame is always-on (ungated) so reset_cause + task liveness are visible
 // over CAN immediately on boot, with no UART/SWD.
 

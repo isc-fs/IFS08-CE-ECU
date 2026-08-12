@@ -1,104 +1,87 @@
 // SPDX-License-Identifier: proprietary
 //
-// discharge.hpp -- ECU-held DC-link discharge (#198).
+// discharge.hpp -- ECU-held DC-link discharge.
 //
-// THE CASE. The discharge relay follows the SDC and nothing else: SDC open ->
-// coil de-energised -> its NC contact closes -> bleed across the link. That is
-// fail-safe and it stays exactly as it is. What it cannot do is FINISH: cycle
-// the SDC inside the discharge time -- an e-stop tapped and released, a
-// connector bounce, a driver resetting immediately -- and the coil re-energises,
-// the contact opens, and the discharge stops part-way. The link is then frozen
-// at an intermediate voltage with nothing draining it.
+// THE FAILURE THIS PREVENTS. The discharge relay follows the shutdown circuit
+// and nothing else: SDC open -> coil de-energised -> its NC contact closes ->
+// bleed across the link. That is fail-safe and it stays as it is. What it
+// cannot do is FINISH. Cycle the SDC inside the discharge time -- an e-stop
+// tapped and released, a connector bounce, a driver resetting immediately --
+// and the coil re-energises, the contact opens, and the bleed stops part-way.
+// The link is left at an intermediate voltage with nothing draining it.
 //
 // If that residual sits above 95 % of pack, the AMS's precharge-complete
-// criterion (dc_bus >= 95 % of pack) is already true when precharge STARTS. The
-// precharge resistor never carries meaningful current and the check whose whole
-// purpose is proving that resistor and contactor work is satisfied by leftover
-// charge. A DEAD PRECHARGE PATH PASSES ITS OWN SELF-TEST.
+// criterion (dc_bus >= 95 % of pack) is already true before precharge starts.
+// The resistor never carries meaningful current, and the check whose purpose is
+// to prove the resistor and contactor work is satisfied by leftover charge --
+// a dead precharge path passes its own self-test.
 //
-// THE TOPOLOGY (AMS team's proposal, and it is better than a parallel driver).
-// A normally-closed, ECU-driven relay sits in SERIES WITH THE DISCHARGE RELAY
-// COIL -- not in the bleed path:
+// TOPOLOGY. A normally-closed, ECU-driven relay sits in series with the
+// discharge relay COIL, not in the bleed path:
 //
 //      coil energised  =  (SDC closed)  AND  (ECU permits)
 //      discharging     =  (SDC open)    OR   (ECU secures)
 //
-// The ECU can therefore only ever ADD a reason to discharge. It is physically
-// incapable of defeating the SDC's authority, which is the property that makes
-// a new component in this path defensible at all. A parallel driver would have
-// fought the SDC for the coil; a relay in series with the BLEED could only ever
-// interrupt a discharge, which is a rules problem.
+// So the ECU can only ever ADD a reason to discharge; it is physically
+// incapable of defeating the SDC. That is what makes adding a component to this
+// path defensible. (A parallel driver would fight the SDC for the coil; a relay
+// in series with the BLEED could interrupt a discharge, which is a rules
+// problem.)
 //
-// WHO DECIDES. Split, deliberately, and the split is the AMS's design (0x021
-// ACU_discharge_interlock). They publish two RAW OBSERVATIONS -- never a
-// pre-computed request -- and WE supply the third term and combine them:
+// WHO DECIDES. Split, because neither side can see everything. The AMS
+// publishes two raw observations on 0x021 -- never a pre-computed request -- and
+// the ECU supplies the third term, which is a measurement only it has:
 //
-//      secure = fsm_in_start  AND  tsms  AND  (OUR dc_bus > DischargeReleaseV)
-//               \____________ 0x021 ____________/   \____ our measurement ____/
+//      secure = fsm_in_start AND tsms AND (our dc_bus > DischargeReleaseV)
+//               \_________ 0x021 _________/  \____ our measurement ____/
 //
-// Their reasoning, and it is right: the third term is a measurement only the ECU
-// has, and routing the whole decision through a CAN frame would put a stale
-// value in the middle of it.
+// All three terms are load-bearing:
+//   - fsm_in_start: TSMS-on with a charged link is also true in normal driving,
+//     so without it this would bleed a live tractive system at speed. In Start
+//     the AIRs are commanded open, so the same reading uniquely means "the SDC
+//     was cycled and the discharge did not finish". We know neither FSM state
+//     nor TSMS ourselves.
+//   - dc_bus: without it, entering Start with an already-drained link and a
+//     stale 0x466 secures on every entry and holds to the timeout, because the
+//     release path needs a valid reading and never gets one.
 //
-// The Start qualifier is load-bearing: TSMS-on with a charged link is ALSO true
-// in normal driving, so without it this would command a bleed across a live
-// tractive system at speed. In Start the AIRs are all commanded open, so the
-// same reading uniquely means "the shutdown circuit was cycled and the discharge
-// did not finish". The AMS knows FSM state and TSMS; we know neither.
+// This is a LEVEL condition, not an edge: a stranded link holds the observations
+// true for as long as it is stranded, so nothing has to catch a fast SDC
+// transient.
 //
-// The dc_bus term is not optional either. Without it, entering Start with an
-// already-drained link and a stale 0x466 secures on every entry and holds to the
-// timeout -- the release needs a VALID reading, which never comes.
+// WHAT THE ECU ADDS: the hold. Latch on the observations, release only on our
+// own measurement -- so one lost CAN frame mid-discharge cannot abort a bleed
+// and re-strand the link. That asymmetry is the entire point of doing this here
+// rather than in the AMS.
 //
-// Note this is a LEVEL condition, not an edge. The stranded link keeps the
-// request true for as long as it is stranded, so nothing has to catch a fast
-// SDC transient -- which is what an ECU-side SDC sense would have had to do,
-// and would probably have missed at a 50 ms bounce.
+// RELEASE AT DischargeReleaseV, well below the AMS's own 60 V gate, so their
+// re-arm is satisfied before we let go. Note this may be below what the inverter
+// can report; if 0x466 stops updating on the way down, the release can never be
+// confirmed and every discharge ends in the timeout instead of completing.
 //
-// WHAT WE OWN. The hold. Latch on the request, release on OUR OWN measurement
-// -- so a single lost CAN frame mid-discharge cannot abort it and re-strand the
-// link. That asymmetry is the entire value the ECU adds.
+// TIMEOUT. If we secure and the link does not fall -- bleed resistor open, sense
+// fault, or a measurement that stops short -- an indefinite hold would leave a
+// car that never arms with nothing saying why. So give up after
+// DischargeTimeoutMs, report a fault, and stop securing. Releasing is safe: the
+// AMS gates on its own voltage too, so it simply will not arm, now with a reason
+// attached.
 //
-// RELEASE AT 10 V, not the 60 V of the rule. Well below the AMS's own gate, so
-// their re-arm is satisfied before we let go. Note this may be BELOW what the
-// inverter can report -- see the constant in ecu_config.hpp; if 0x466 dies on
-// the way down, the release can never be confirmed and every discharge ends in
-// the timeout below instead of completing.
+// BOOT reports "cannot confirm" rather than forcing a discharge. Defaulting to
+// engaged would be dangerous here: a watchdog reset mid-drive would boot with
+// the TS live and the AIRs closed, and securing would put a transient-duty
+// resistor across a live pack. Instead dc_bus_valid reads 0 until 0x466 is
+// fresh, and the AMS treats "cannot confirm" as "do not arm".
 //
-// TIMEOUT. If we secure and the link does NOT fall -- bleed resistor gone open,
-// sense fault, or a measurement that stops before the threshold -- an indefinite
-// hold would leave a car that never arms with nothing indicating why. So: give up after DischargeTimeoutMs, report a fault,
-// and stop securing. Releasing is safe because the AMS gates on its OWN voltage
-// too; it simply will not arm, which is the correct outcome, but now with a
-// reason attached.
-//
-// BOOT. Issue #198 asks for "power-up default engaged". Taken literally that is
-// DANGEROUS with this topology: an ECU watchdog reset mid-drive would boot with
-// the TS live and the AIRs closed, and securing would put a transient-duty bleed
-// resistor across a live pack. What the requirement actually protects against is
-// the ECU REPORTING "not engaged" before it knows, so that is what we do
-// instead: dc_bus_valid reads 0 until 0x466 is fresh, and the AMS treats
-// "cannot confirm" as "do not arm". Satisfied without ever forcing a discharge
-// into a link we have not looked at.
-//
-// >>> NO AUXILIARY CONTACT READBACK -- TEAM DECISION, AND IT HAS A COST. <<<
-// #198 asked for the reported bit to come from a genuine auxiliary contact
-// rather than from the command, on the grounds that "I commanded permit" is
-// worthless if the relay did not obey. We report the COMMAND. Two things are
-// therefore NOT detectable from the ECU, and both were named in that issue:
-//
-//   1. Coil-interrupt relay stuck OPEN (driver shorted on, contact welded).
-//      We release the command, report engaged = 0, and the bleed is STILL
-//      connected. The AMS then closes an AIR into a transient-duty resistor.
-//      This is the failure the readback existed to prevent.
-//   2. A discharge the SDC started on its own. The bit only ever means "the ECU
-//      is commanding one", not "the bleed is connected". Narrower in practice
-//      -- an SDC-driven discharge implies the SDC is open, so the AMS is not
-//      arming anyway -- but the two are NOT the same statement and the AMS gate
-//      is written against the second.
-//
-// If an auxiliary pole is ever wired, feed it in here and report THAT: the
-// change is one input and one line, and it buys back case 1.
+// NO AUXILIARY CONTACT READBACK -- a team decision with a real cost. The bit on
+// 0x100 reports what we COMMANDED, not what the relay did, so two failures are
+// undetectable from the ECU:
+//   1. Coil-interrupt relay stuck open (driver shorted on, contact welded). We
+//      release the command and report engaged = 0 while the bleed is still
+//      connected, and the AMS closes an AIR into a transient-duty resistor.
+//   2. A discharge the SDC started on its own. The bit means "the ECU is
+//      commanding one", never "the bleed is connected" -- and the AMS gate is
+//      written against the second statement.
+// Wiring an auxiliary pole later is one input and one line, and buys back (1).
 
 #ifndef DISCHARGE_HPP_
 #define DISCHARGE_HPP_
@@ -110,26 +93,21 @@
 namespace ecu {
 
 struct DischargeInputs {
-    // The AMS's two raw observations (0x021), ALREADY conditioned on that
-    // frame's freshness by the caller. NOT a request -- see the header note.
+    // The caller conditions the 0x021 bits on that frame's freshness.
     bool          fsm_in_start   = false;  // 0x021 bit 0: AIRs and precharge all open
     bool          tsms           = false;  // 0x021 bit 1: SDC complete -> bleed disconnected
     std::uint16_t dc_bus_V       = 0;      // 0x466, relayed
-    bool          dc_bus_valid   = false;  // 0x466 fresh -- a held reading is not a measurement
+    bool          dc_bus_valid   = false;  // 0x466 fresh; a held reading is not a measurement
     std::uint32_t now_ms         = 0;
 };
 
 struct DischargeState {
-    // Drive the coil-interrupt relay. true = open the coil path = force a
-    // discharge. This is a COMMAND; it is not what gets reported.
-    bool secure  = false;
-    // What goes on 0x100. COMMANDED state -- see the readback note in the file
-    // header for what that cannot catch. Mirrors `secure`; kept as a separate
-    // field so that wiring an auxiliary contact later changes one assignment
-    // rather than every call site.
+    bool secure  = false;  // drive the coil-interrupt relay: true = force a discharge
+    // Goes on 0x100. Mirrors `secure`, kept separate so wiring an auxiliary
+    // contact later changes one assignment rather than every call site.
     bool engaged = false;
-    // Secured for longer than DischargeTimeoutMs without the link falling.
-    // Sticky until the request is withdrawn.
+    // Secured longer than DischargeTimeoutMs without the link falling.
+    // Sticky until the AMS withdraws its observations.
     bool fault   = false;
 };
 
