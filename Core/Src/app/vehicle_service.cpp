@@ -163,10 +163,10 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.id == config::InvRxRpmId) {                   // 0x463
             if (f.dlc < 8) return false;
             state_.inv_rpm       = decode_inv_rpm(f.data);
-            // The FOC feedback that shares this frame and was never decoded
-            //. Current_Q_A is the torque-producing axis: a Q current that
-            // plateaus while the request keeps climbing IS the inverter
-            // limiting, and it has been on the wire the whole time.
+            // FOC (field-oriented control) feedback, which shares this frame.
+            // Current_Q_A is the torque-producing axis: if Q current plateaus
+            // while our request keeps climbing, the INVERTER is what is
+            // limiting us.
             state_.inv_current_d_raw = le16_s(&f.data[0]);   // Current_D_A
             state_.inv_current_q_raw = le16_s(&f.data[2]);   // Current_Q_A
             // Volt_Modulus_permil: 12 bits at frame bit 32 -> byte4 | byte5[0:3].

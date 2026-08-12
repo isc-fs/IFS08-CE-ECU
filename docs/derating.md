@@ -40,7 +40,18 @@ driver keeps full resolution over the range still allowed. This distinction cost
 | Motor thermal | inverter `0x464` motor temps (EMRAX 228) | `0x706` `thermal_capped` | `motor_thermal.hpp` |
 | Pack thermal | AMS `0x136`/`0x137` per-module maxima | `0x70A` `pack_capped` | `pack_thermal.hpp` |
 | Power envelope | `0x463` rpm, feed-forward | `0x700` `power_capped` | `power_limit.hpp` |
-| `TorqueCap` | nothing — a compile-time bench stub | `0x704` `stub_torque_cap` (**ungated**) | — |
+| `TorqueCap` | nothing — a bench stub (a config value, applied at runtime) | `0x704` `stub_torque_cap` (**ungated**) | — |
+
+> ⚠️ **The `capped` flags do not all mean the same thing.** `power_capped` is set
+> only when the envelope *actually clipped* the request. The other three mean
+> only that the ceiling is below 100 %, whether or not it bound — at 60 % pedal
+> with a 70 % motor cap, `thermal_capped` reads 1 and is costing you nothing.
+>
+> **To find the binding cap:** read `torque_pct` on `0x700`, then compare it
+> against the published ceilings — `cap_pct` (`0x709`), `thermal_cap_pct`
+> (`0x706`), `pack_cap_pct` (`0x70A`). The ceiling equal to `torque_pct` is the
+> one limiting you. The power envelope publishes no percentage, so if none of
+> the three matches, it is the envelope: check `power_capped` on `0x700`.
 
 **Check `0x704` first.** `TorqueCap` is applied *after* the pure core, so it trips none of
 the `capped` flags — a bench image looks exactly like a derate that no derate explains.
@@ -60,7 +71,8 @@ CAN signal, give it its own timestamp.**
 **3. A floor must command real torque.** The percentage scale is *not* linear to 240 Nm —
 `InvTorqueMap*` is re-based so `DeadbandLowPct` maps to exactly 0 Nm. A floor written as
 "5 %" commanded *nothing*, while reading as a limp-home. Assert on the **Nm**, not the
-percent; `ecu_config.hpp` has the `static_assert`.
+percent. `ecu_config.hpp` asserts the floor sits above `DeadbandLowPct`; the
+Nm assertions themselves live in `tests/sil/sil_control_tests.cpp`.
 
 ## Constants that were never measured
 
@@ -69,12 +81,19 @@ the ones whose absence changes behaviour most:
 
 - **`CellIrMilliOhm`** — one acceleration run, plot `est_ocv_mV` against `raw_mV` on `0x709`. Flat is correct.
 - **`DrivetrainEffPct`** — the *entire* EV 2.2.1 compliance margin. `0x70D` puts commanded shaft power next to the inverter's own AC measurement and the DC bus, so one capture at steady full throttle gives the real number.
-- **`PackTempLimitDegC`, `CellVDerateFloorMv`** — must be checked against what the **AMS** actually trips on. See below.
+- **`AmsCellUnderVoltageMv`** — mirrored from the AMS, and the cell thresholds are
+  derived from it. See below.
+- **`PackTempLimitDegC`** — note the AMS gates its own cell-temperature faults behind
+  `TempFaultsTrusted`, which is `false` on a flight build, so **this ECU cap is
+  currently the only pack over-temperature response in the car**. It is not a soft
+  pre-limit under a real one.
 
 ## ⚠️ The AMS trip point is fixed, and the derate is derived from it
 
 The AMS opens the AIRs when the **raw loaded** minimum cell falls below its
-`CellUnderVoltageMv`. That value is theirs and **cannot be changed**.
+`CellUnderVoltageMv`. That value is theirs to set, not ours — but it is **not
+fixed**: it is still tagged `COMMISSION` in their config, so it will move when
+they measure it, and every threshold derived from it moves with it.
 
 This ECU derates on **IR-compensated OCV**, which under load is always *higher*
 than the loaded reading they trip on. So any threshold at or below their trip
@@ -105,3 +124,8 @@ relationship.
 
 **`IFS08-CE-AMS/Core/Inc/app/ams_config.hpp` is a sibling checkout — read it, and
 run `scripts/check_ams_contract.py` before any PR that touches a shared frame.**
+
+⚠️ That script compares **CAN frame layout only** — DLC, start bit, length, byte
+order, signedness. It does **not** compare `AmsCellUnderVoltageMv` against the
+AMS's `CellUnderVoltageMv`. The one number whose drift caused this bug is guarded
+by nothing but the note above it. Diff it by hand on any AMS bump.

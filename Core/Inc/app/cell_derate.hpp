@@ -91,9 +91,12 @@ public:
     // an estimator you cannot commission.
     CellDerateState update(const CellDerateInputs& in) noexcept;
 
-    // Drop the filter history. Call when the AMS link is re-established: a
-    // filter carrying seconds-old state across a dropout would ramp through
-    // voltages the pack was never at.
+    // Drop the filter history, so a filter carrying seconds-old state across a
+    // dropout cannot ramp through voltages the pack was never at.
+    //
+    // NOT CURRENTLY CALLED from anywhere: update() already unseeds itself when
+    // the input goes stale or unusable, which covers the dropout case. Kept for
+    // tests and for a caller that needs to force it.
     void reset() noexcept { seeded_ = false; }
 
     [[nodiscard]] std::uint16_t est_ocv_mV() const noexcept { return last_.est_ocv_mV; }

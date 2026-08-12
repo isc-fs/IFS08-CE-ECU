@@ -59,6 +59,12 @@ inline constexpr uint8_t  InvShutdownState     = 13;  // bench-confirmed
 inline constexpr uint8_t  AmsFsmError          = 5;
 
 // ---- Pedals / brake (raw 12-bit ADC) --------------------------------------
+// RUNTIME-OVERRIDDEN. The eight values in this section are POWER-ON DEFAULTS
+// only. The live calibration loads from the bootloader NVM sector into
+// CtrlInputs::cal at boot, and 0x704 cal_status says which set is in force.
+// Editing a value here does NOTHING on a car that already has a stored record
+// -- recalibrate over 0x7E2 instead. See pedal_cal.hpp.
+//
 // APPS travel calibration: pct = clamp((raw - min) * 100 / (max - min), 0, 100).
 inline constexpr uint16_t Apps1AdcMin          = 2490;  // bench-cal (rest 2476 + margin)
 inline constexpr uint16_t Apps1AdcMax          = 3350;  // bench-cal (full 3363 - headroom)
@@ -328,9 +334,9 @@ inline constexpr uint32_t PowerLimitW          = 76000;
 inline constexpr uint32_t DrivetrainEffPct     = 90;
 // Folded constant: K = P * eta * 60/(2*pi), so T_max[Nm] = K / rpm_mech.
 // 60/(2*pi) = 9.5493, carried as 9549/1000. Ordered to stay inside uint32:
-// 800 * 90 = 72000, 72000 * 9549 = 6.875e8, well under 4.29e9.
+// 760 * 90 = 68400, 68400 * 9549 = 6.53e8, well under 4.29e9.
 inline constexpr uint32_t PowerCapK =
-    (PowerLimitW / 100u) * DrivetrainEffPct * 9549u / 1000u;   // 687528
+    (PowerLimitW / 100u) * DrivetrainEffPct * 9549u / 1000u;   // 653151
 // Shaft torque at 100 % on the map below. Kept explicit so power_cap_pct can
 // tell when the envelope is not binding without re-deriving it.
 inline constexpr uint32_t InvTorqueFullScaleNm = 240;
@@ -373,7 +379,7 @@ inline constexpr uint8_t  MotorTempDisconnectedRaw = 0xFFu;  // inverter sentine
 inline constexpr int16_t  MotorTempRawOffsetDegC   = -50;    // NX encoding: degC = raw - 50
 inline constexpr int16_t  MotorTempMinPlausibleDegC = -40;   // below this the reading is not a temperature
 // tau ~= (1 << shift) * ControlPeriodMs = 2.56 s. The sensor is 1 degC/count and
-// the ramp is 8 points of cap per degC, so without this a reading dithering
+// the ramp is 4 points of cap per degC, so without this a reading dithering
 // between two counts steps torque by 8 points at 100 Hz. Temperature is slow
 // enough that the lag costs nothing.
 inline constexpr uint8_t  MotorTempFilterShift     = 8;
@@ -388,10 +394,15 @@ static_assert(MotorTempFloorPct > 0,
 // Per-module maxima on 0x136/0x137, signed degC (no offset -- unlike the
 // inverter's byte encoding). See pack_thermal.hpp.
 //
-// 50 degC cell limit, from the team -- conservative against the
-// usual 60 degC Li-ion NMC discharge ceiling. Still worth confirming it sits at
-// or below whatever the AMS itself trips on: if the AMS opens first this cap
-// never engages and is decorative.
+// 50 degC cell limit, from the team -- conservative against the usual 60 degC
+// Li-ion NMC discharge ceiling.
+//
+// THIS IS CURRENTLY THE ONLY PACK OVER-TEMPERATURE RESPONSE IN THE VEHICLE. The
+// AMS has a 60 degC limit of its own, but its cell-temperature predicates are
+// gated behind TempFaultsTrusted, which is false on a flight build because the
+// NTC mux path is unvalidated -- so the AMS will NOT open the contactors on a
+// hot pack. Do not treat this cap as a soft pre-limit sitting under a real one.
+// Re-check that gate in the AMS before relaxing anything here.
 //
 // NOTE this engages EARLY in practice. 40 degC is reachable partway into a hot
 // endurance run, so expect the car to spend real time capped -- that is the
@@ -574,7 +585,7 @@ inline constexpr uint32_t InvFeedbackStaleMs   = 200;
 // natural-looking one: falling back to 0 rpm hands out full torque for the rest
 // of the run while power_capped correctly reports "not limiting".
 //
-// Assuming max rpm instead caps at ~54 %, which is legal at any speed this car
+// Assuming max rpm instead caps at ~51 %, which is legal at any speed this car
 // reaches and still drives it off the track. Slow and obvious beats fast and
 // unlimited.
 inline constexpr int32_t  MotorRpmStaleAssumed  = 5500;  // EMRAX 228 max-ish
@@ -595,7 +606,7 @@ inline constexpr uint8_t  InvFltClearBit         = 0x80u;
 inline constexpr uint32_t InvTxSetpointTorqueId  = 0x362u;   // EMC_RX_SETPOINT_3 (Torque_Nm_Req @ bytes 2-3, s16 LE)
 inline constexpr uint8_t  InvTxSetpointTorqueDlc = 4u;
 // Torque map (reuses InvTorqueMap* above): pct>=5 -> pct*240/95 - 1200/95
-// (10%->0, 100%->240), then NEGATED. The negation is a MECHANICAL constraint of
+// (5%->0, 100%->240), then NEGATED. The negation is a MECHANICAL constraint of
 // the motor (its mounting): forward drive = NEGATIVE Torque_Nm_Req. NOT optional
 // and NOT a protocol quirk -- removing it drives the car the wrong way (verified
 // against the original VCU + confirmed mechanically).

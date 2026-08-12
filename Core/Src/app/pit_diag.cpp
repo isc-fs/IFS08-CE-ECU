@@ -301,9 +301,9 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
 
 CanFrame PitDiag::build_brake(const IoInputs& io, const PedalCal& cal) noexcept {
     PitDiag_brake_t br{};
-    // Real pressure from the EPT1400 transfer function. Returns 0 while the
-    // sensor's full-scale range is unset or no rest point has been captured --
-    // reporting an invented pressure would be worse than reporting none.
+    // Real pressure from the EPT1400 transfer function, using an ABSOLUTE map
+    // -- no calibration involved. Returns 0 while the sensor's full-scale range
+    // is unset: reporting an invented pressure would be worse than none.
     br.brake_pressure = brake_pressure_dbar(io.brake_raw);
     // Percentage now uses the CALIBRATED span once a rest point exists, and
     // falls back to the legacy full-range scaling until then (see brake_pct).

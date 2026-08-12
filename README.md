@@ -73,7 +73,9 @@ the DBC — CI fails the build if it drifts.
 ## Build and test
 
 ```bash
-cmake -S . -B build-sil && cmake --build build-sil -j8 && ./build-sil/tests/sil/ecu08_sil --test-all
+cmake -S . -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
+cmake --build build-sil -j8
+./build-sil/tests/sil/ecu08_sil --test-all
 ```
 
 The SIL suite is the regression gate — the control core is pure, host-testable

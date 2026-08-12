@@ -137,14 +137,26 @@ struct CtrlOutput {
     // words alone do not shift a LATCHED fault -- dem_present = 0, condition
     // already gone, inverter still parked in SoftFault(10).
     bool      inv_flt_clear = false;
-    // EV 2.2.1 power envelope is actively limiting this tick. Annunciated on
-    // 0x700 so a driver complaining of "no power at the end of the straight"
-    // can be answered from a capture instead of a guess.
+    // MIND THE DIFFERENCE BETWEEN THESE THREE FLAGS.
+    //
+    // power_capped means the envelope ACTUALLY CLIPPED the request this tick --
+    // it is set only when the demand exceeded the cap. Reported on 0x700, so a
+    // driver complaining of "no power at the end of the straight" can be
+    // answered from a capture instead of a guess.
     bool      power_capped = false;
-    // Motor thermal cap is limiting this tick (including the unknown-sensor
-    // case). Annunciated on 0x706 next to the temperatures that caused it.
+    // The two thermal flags mean something WEAKER: the ceiling is below 100 %,
+    // whether or not it clipped anything. At 60 % pedal with a 70 % motor cap,
+    // thermal_capped is 1 and the cap is not costing you a single Nm.
+    //
+    // So when you are chasing a slow car, do NOT read these as "this is the one
+    // limiting me". Compare torque_pct (0x700) against the published ceilings --
+    // cap_pct (0x709), thermal_cap_pct (0x706), pack_cap_pct (0x70A) -- and the
+    // ceiling equal to torque_pct is the binding one.
+    //
+    // Motor thermal ceiling is below full (including the unknown-sensor case).
+    // Reported on 0x706 next to the temperatures that caused it.
     bool      thermal_capped = false;
-    // Accumulator thermal cap is limiting this tick. Annunciated on 0x70A.
+    // Accumulator thermal ceiling is below full. Reported on 0x70A.
     bool      pack_thermal_capped = false;
     // Wrapping count of times Active dropped back to WaitInvStandby because the
     // inverter left the drive. Transient by nature -- the inverter

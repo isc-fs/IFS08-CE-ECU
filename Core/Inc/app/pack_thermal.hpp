@@ -65,6 +65,8 @@ struct PackThermalState {
 class PackThermal {
 public:
     PackThermalState update(const PackThermalInputs& in) noexcept;
+    // NOT CURRENTLY CALLED: update() already unseeds itself on a stale or
+    // unusable input. Kept for tests.
     void reset() noexcept { seeded_ = false; }
 
 private:

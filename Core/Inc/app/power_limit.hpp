@@ -44,8 +44,8 @@ namespace ecu {
 // where the physics say it must. Sign of rpm is ignored: the envelope applies
 // to power magnitude in either direction of rotation.
 //
-// At the shipped constants (80 kW, 90 % assumed efficiency, 240 Nm full scale)
-// the cap starts biting at roughly 2865 mechanical rpm.
+// At the shipped constants (76 kW, 90 % assumed efficiency, 240 Nm full scale)
+// the cap starts biting at roughly 2721 mechanical rpm.
 [[nodiscard]] std::uint8_t power_cap_pct(std::int32_t rpm_mech) noexcept;
 
 // Commanded shaft torque in Nm for a torque percentage, using the same map the
