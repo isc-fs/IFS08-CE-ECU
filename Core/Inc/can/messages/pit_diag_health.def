@@ -64,6 +64,13 @@ CAN_MSG(PitDiag_health, 0x704, 8, "VCU", 1000)
      * 0x709/0x70A. A car quietly limited to 80 % looked exactly like a derate
      * that no derate could explain. Ungated, like the rest of the announce. */
     FIELD_LE_BITS (stub_torque_cap,  uint8_t, 46, 1, 1, 0, "bit")
+    /* byte5 b7: the ECU has REFUSED at least one 0x002 reboot trigger since
+     * boot, because the car was in the drive ladder. Sticky, and one bit is the
+     * right size -- the operator's question is "did it say no?", not "how many
+     * times". Lives on the UNGATED frame on purpose: someone whose flash did
+     * nothing has to be able to tell a refusal from a dead node without first
+     * arming pit-diag on a car that is not answering. Drop TS and retry. */
+    FIELD_LE_BITS (boot_refused,     uint8_t, 47, 1, 1, 0, "bit")
     FIELD_LE (uptime_s,      uint8_t,  6, 8,  1, 0, "s")
     FIELD_LE (last_fault,    uint8_t,  7, 8,  1, 0, "code")
 CAN_MSG_END(PitDiag_health)

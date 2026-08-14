@@ -57,8 +57,21 @@ extern "C" void ecu_can_rx_task_run(void *argument) {
 
         // (1) bootloader trigger (0x002 / 0xB007AD12) -> reboot to BL. The
         // recovery path home; never returns.
+        //
+        // GATED ON BEING OUT OF THE DRIVE LADDER. The ECU drives no contactors,
+        // but resetting stops the 10 ms 0x100 heartbeat, the AMS trips VcuStale
+        // at 200 ms, and IT opens the AIRs -- under load. See
+        // Bootloader::reboot_allowed_in for the full chain and for why this can
+        // safely read a mirror written by another task.
         if (Bootloader::matches_trigger(f)) {
-            Bootloader::request_reboot(JumpReason::ManualRequest);
+            const auto st = static_cast<CtrlState>(g_last_ctrl_state);
+            if (Bootloader::reboot_allowed_in(st)) {
+                Bootloader::request_reboot(JumpReason::ManualRequest);
+            }
+            // Refused. Count it rather than dropping it silently: an operator
+            // whose flash did nothing needs to tell "the ECU said no" from
+            // "the ECU is dead", and only one of those is fixed by dropping TS.
+            ++g_boot_trigger_refused;
         }
 
         // (2) pit-diag enable/disable (0x7E0, magic 0xDEADBEEF) -> set the gate,

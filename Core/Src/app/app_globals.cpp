@@ -14,6 +14,7 @@ volatile uint8_t  g_cal_load_status = 0u;   /* ecu::CalLoad::Defaults */
 volatile uint8_t  g_cal_load_flags  = 0u;
 uint32_t g_last_torque_pct = 0;
 uint8_t  g_last_ctrl_state = 0;
+volatile uint32_t g_boot_trigger_refused = 0;
 uint16_t g_last_apps1_raw = 0;
 uint16_t g_last_apps2_raw = 0;
 uint16_t g_last_brake_raw = 0;
