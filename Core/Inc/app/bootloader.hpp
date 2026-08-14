@@ -12,13 +12,22 @@
 // and the flasher use. matches_trigger() is pure logic, kept inline so the host
 // unit-test build exercises it without HAL/FreeRTOS.
 //
-// NOTE vs the AMS: the ECU owns no contactors (the AMS does), so request_reboot
-// does not drive relays -- the reset alone stops all ECU TX, and the inverter
-// falls back to its own safe state when our commands stop.
+// NOTE vs the AMS: the ECU owns no contactors, so request_reboot drives no
+// relays. That does NOT make a reboot free while the car is driving, and the
+// reason is on the other board. Resetting stops all ECU TX, including the
+// 10 ms 0x100 heartbeat the AMS watches. In Car mode the AMS arms VcuStale at
+// 200 ms and, when it fires, latches Error and opens the AIRs -- under whatever
+// the inverter is drawing. Opening AIR+ under load is how contactors weld, and
+// the AMS's ErrorLatch is sticky, so the car then boots back into Error needing
+// a physical RST_BMS press the driver cannot reach.
+//
+// So a 4-byte frame anyone on the shared bus can send would take the car out
+// mid-drive. reboot_allowed_in() below is the gate; the caller must consult it.
 
 #pragma once
 
 #include "app/can_frame.hpp"
+#include "app/control.hpp"
 #include "app/ecu_config.hpp"
 
 #include <cstdint>
@@ -38,6 +47,32 @@ public:
     // pulls the HAL -- not part of the host build.)
     [[noreturn]] static void request_reboot(
         JumpReason reason = JumpReason::ManualRequest) noexcept;
+
+    // States in which honouring the reboot trigger is safe.
+    //
+    // The ECU's definition of "quiet" is NOT the AMS's. Theirs is "contactors
+    // open"; ours is "not in the drive ladder" -- no torque commanded and no
+    // R2D sequence under way. Same predicate Controller::enter_() uses to clear
+    // the DV latch, deliberately: one definition of leaving the drive, not two.
+    //
+    // AmsError is included rather than grudgingly excepted. It is an inhibit
+    // state with the car already stopped, and it is exactly when someone wants
+    // to reflash. Refusing there would make a faulted car unrecoverable over
+    // CAN, which is the failure this whole path exists to prevent.
+    //
+    // Every flashing workflow -- bench, pit tool, can-flasher, the VS Code
+    // extension -- operates from these states, so the gate is invisible to them.
+    //
+    // THIS DEPENDS ON ControlTask KICKING THE IWDG, and nothing else does. A
+    // wedged ControlTask would freeze the state mirror this reads, and if it
+    // froze at Active the gate would refuse the reboot forever -- blocking
+    // recovery exactly when it is needed. The watchdog is what makes that
+    // impossible: a stalled ControlTask resets the board, which comes up in
+    // WaitInvVdcConfig, where the gate opens. If the IWDG ever stops being
+    // ControlTask's alone, re-check this.
+    [[nodiscard]] static bool reboot_allowed_in(CtrlState s) noexcept {
+        return s < CtrlState::R2dDelay || s == CtrlState::AmsError;
+    }
 
     // True iff a frame is the boot-request trigger: the ACU bus, id 0x002,
     // dlc 4, payload 0xB007AD12. Pure -> host-testable.

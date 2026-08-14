@@ -59,6 +59,10 @@ extern uint8_t  g_discharge_fault;
  * a safety-cyclic (0x100/0x504/...) may have been silently dropped. Also readable
  * over SWD for the exact count. */
 extern volatile uint32_t g_can_tx_dropped;
+// Reboot triggers REFUSED because the car was in the drive ladder. Surfaced on
+// the ungated 0x704 so "my flash did nothing" is answerable from the bus: a
+// refusal that is invisible is indistinguishable from a dead node.
+extern volatile uint32_t g_boot_trigger_refused;
 
 /* Outcome of loading the pedal calibration from NVM at boot (#169).
  * status is ecu::CalLoad; flags is the cal_flag:: bitmask when the stored

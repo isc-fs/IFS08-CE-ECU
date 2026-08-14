@@ -286,6 +286,9 @@ CanFrame PitDiag::build_health(const HealthMetrics& m) noexcept {
     // 0x504 VCU_ts_active reports to the uDV, so set => TS-active here is FAKE.
     // Boot-time calibration outcome -- see the .def for why it is here.
     h.cal_status       = static_cast<std::uint8_t>(g_cal_load_status & 0x03u);
+    // Sticky: any refusal since boot. See the .def for why it is one bit and
+    // why it belongs on the ungated frame.
+    h.boot_refused     = (g_boot_trigger_refused != 0u) ? 1u : 0u;
     h.stub_no_ams      = config::StubNoAms ? 1u : 0u;
     h.stub_no_inverter = config::StubNoInverter ? 1u : 0u;
     h.stub_start       = config::StubStart ? 1u : 0u;
