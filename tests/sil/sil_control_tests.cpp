@@ -790,6 +790,147 @@ static void test_power_margin() {
 }
 
 // ECU-held DC-link discharge (#198).
+static void test_as_buzzer() {
+    std::printf("[as_buzzer]\n");
+
+    auto at = [](uint8_t status, bool fresh, uint32_t t) {
+        AsBuzzerInputs a{}; a.as_status = status; a.as_fresh = fresh; a.now_ms = t;
+        return a;
+    };
+    // Count the on-ticks and the edges across a window, sampling at the 10 ms
+    // control period -- the same rate the real caller runs at.
+    auto run = [&](AsBuzzer& b, uint8_t status, bool fresh,
+                   uint32_t from, uint32_t to, int* edges) {
+        int on = 0; bool prev = false; if (edges) *edges = 0;
+        for (uint32_t t = from; t < to; t += 10) {
+            const bool s = b.update(at(status, fresh, t)).sounding;
+            if (s) ++on;
+            if (edges && s && !prev) ++*edges;
+            prev = s;
+        }
+        return on;
+    };
+
+    // ---- the rule: 3.3 Hz, 50 % duty, for 10 s ----------------------------
+    CHECK(AsBuzzerHalfPeriodMs * 2u >= 200u && AsBuzzerHalfPeriodMs * 2u <= 1000u,
+          "buzzer period is inside the 1-5 Hz band the rule requires");
+    CHECK(AsEmergencySoundMs == 10000u, "the tone runs for the 10 s the rule caps it at");
+
+    // ---- EMERGENCY rising edge starts a 10 s, 50 % duty tone --------------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));          // establish a non-emergency
+        int edges = 0;
+        const int on = run(b, AsStatusEmergency, true, 10, 10010, &edges);
+        // 10 s of 150 on / 150 off sampled every 10 ms -> ~half the ticks on.
+        CHECK(on > 460 && on < 540, "50 % duty across the 10 s window");
+        // 10000 / 300 = 33 full cycles.
+        CHECK(edges >= 32 && edges <= 34, "~33 pulses -> 3.3 Hz");
+    }
+
+    // ---- EDGE-TRIGGERED, NOT LEVEL: it stops while still in EMERGENCY -----
+    // The uDV latches Emergency until ASMS-off, routinely longer than 10 s. The
+    // light keeps flashing; the rule caps the SOUND. Driving this from the level
+    // would buzz until the marshals arrived.
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        run(b, AsStatusEmergency, true, 10, 10010, nullptr);
+        const int after = run(b, AsStatusEmergency, true, 10010, 14000, nullptr);
+        CHECK(after == 0, "silent after 10 s even though EMERGENCY is still asserted");
+        CHECK(!b.update(at(AsStatusEmergency, true, 14000)).active,
+              "and the window is closed");
+    }
+
+    // ---- already in EMERGENCY on the first frame still sounds -------------
+    // No earlier state to rise from, but arriving in Emergency IS an emergency.
+    {
+        AsBuzzer b;
+        CHECK(b.update(at(AsStatusEmergency, true, 0)).active,
+              "EMERGENCY on the very first frame counts as an edge");
+    }
+
+    // ---- the stale fail-safe: a uDV that goes quiet mid-mission -----------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        const AsBuzzerState s = b.update(at(0, false, 500));
+        CHECK(s.active,     "0x50A lost while DRIVING sounds the tone");
+        CHECK(s.from_stale, "and is reported as silence-triggered, not a frame");
+    }
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusReady, true, 0));
+        CHECK(b.update(at(0, false, 500)).active, "same from READY");
+    }
+
+    // ---- but NOT for a car that never had a uDV ---------------------------
+    // A manual car never sends 0x50A. If absence alone triggered the tone, every
+    // manual run would buzz for ten seconds.
+    {
+        AsBuzzer b;
+        bool any = false;
+        for (uint32_t t = 0; t < 3000; t += 10) any |= b.update(at(0, false, t)).sounding;
+        CHECK(!any, "never-seen uDV does not sound -- a manual car must stay quiet");
+    }
+    // ---- nor after a clean finish -----------------------------------------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusFinished, true, 0));
+        CHECK(!b.update(at(0, false, 500)).active,
+              "0x50A stopping after FINISHED is a mission ending, not an emergency");
+    }
+
+    // ---- the fail-safe fires ONCE per silence, not once per tick ----------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        int edges = 0;
+        run(b, 0, false, 10, 10010, &edges);
+        CHECK(edges >= 32 && edges <= 34, "one 10 s tone, not a retrigger every tick");
+        CHECK(run(b, 0, false, 10010, 14000, nullptr) == 0, "and it ends");
+    }
+    // ---- and re-arms once frames come back --------------------------------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        b.update(at(0, false, 500));                       // first silence
+        run(b, 0, false, 500, 11000, nullptr);             // let it finish
+        b.update(at(AsStatusDriving, true, 11000));        // uDV returns
+        CHECK(b.update(at(0, false, 11500)).active, "a second silence sounds again");
+    }
+
+    // ---- a second emergency restarts the window ---------------------------
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        b.update(at(AsStatusEmergency, true, 10));         // first
+        b.update(at(AsStatusDriving, true, 5000));         // cleared
+        b.update(at(AsStatusEmergency, true, 5010));       // second
+        CHECK(b.update(at(AsStatusEmergency, true, 12000)).active,
+              "the window restarts on a fresh edge rather than expiring from the first");
+    }
+
+    // ---- OFF/READY/DRIVING/FINISHED never sound ---------------------------
+    {
+        const uint8_t quiet[] = {AsStatusOff, AsStatusReady, AsStatusDriving, AsStatusFinished};
+        for (uint8_t s : quiet) {
+            AsBuzzer b;
+            CHECK(run(b, s, true, 0, 2000, nullptr) == 0, "non-emergency states are silent");
+        }
+    }
+
+    // ---- the emergency tone OVERRIDES the R2D chirp -----------------------
+    // Checked through the controller, because the override lives there: an
+    // emergency landing during an R2D tone must not be swallowed by it.
+    {
+        AsBuzzer b;
+        b.update(at(AsStatusDriving, true, 0));
+        CHECK(b.update(at(AsStatusEmergency, true, 10)).sounding,
+              "the emergency pattern is asserted independently of the FSM state");
+    }
+}
+
 static void test_discharge_hold() {
     std::printf("[discharge_hold]\n");
 
@@ -2906,6 +3047,7 @@ static void run_all() {
     test_endurance_guards();
     test_heartbeat_freshness();
     test_discharge_hold();
+    test_as_buzzer();
     test_power_margin();
     test_t11_8_9_window();
     test_ams_error();
@@ -2949,6 +3091,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-power-margin"))       test_power_margin();
     else if (!std::strcmp(m, "--test-heartbeat-fresh"))    test_heartbeat_freshness();
     else if (!std::strcmp(m, "--test-discharge"))          test_discharge_hold();
+    else if (!std::strcmp(m, "--test-as-buzzer"))          test_as_buzzer();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

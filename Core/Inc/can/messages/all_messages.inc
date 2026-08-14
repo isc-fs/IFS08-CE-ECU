@@ -57,6 +57,7 @@
 #include "acu_tmax_module_b.def"    /* 0x137  AMS per-module tmax 3..4 + dcdc */
 #include "ams_status.def"           /* 0x4A0  AMS FSM state / ams_ok          */
 #include "udv_torque_cmd.def"       /* 0x507  uDV torque command (s32 LE, %)  */
+#include "udv_as_status.def"        /* 0x50A  uDV autonomous-system state     */
 #include "udv_r2d_request.def"      /* 0x510  uDV DV ready-to-drive request   */
 #include "bl_boot_trigger.def"      /* 0x002  jump-to-bootloader magic        */
 #include "pit_diag_cmd.def"         /* 0x7E0  pit-diag enable/disable magic   */

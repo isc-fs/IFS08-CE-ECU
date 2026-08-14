@@ -279,6 +279,12 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
             state_.last_udv_r2d_tick = f.timestamp_ms;
             return true;
         }
+        if (f.id == config::UdvAsStatusId) {                // 0x50A
+            if (f.dlc < 1) return false;
+            state_.udv_as_status    = f.data[0];
+            state_.last_udv_as_tick = f.timestamp_ms;
+            return true;
+        }
         // --- AMS per-module telemetry (0x131-0x137, decoded for radio/dash) ---
         if (f.id == config::AcuVminModuleAId) {             // 0x131
             if (f.dlc < 6) return false;

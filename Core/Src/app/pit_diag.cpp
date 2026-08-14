@@ -65,6 +65,13 @@ CanFrame PitDiag::build_dv(const CtrlOutput& c, const CtrlInputs& in,
     d.r2d_confirm      = c.dv_mode ? 1u : 0u;                               // TX 0x511 (== latched)
     d.dv_torque_pct    = in.dv_torque_pct;                                  // conditioned 0x507
     d.motor_rpm_mech   = static_cast<std::int16_t>(v.inv_rpm / config::MotorPolePairs);
+    // AS Emergency buzzer. as_status is the RAW byte, published even when
+    // stale, so a bench can see what the uDV last said before it went quiet --
+    // which is precisely the state the fail-safe acts on.
+    d.as_emergency     = c.as_buzzer_active ? 1u : 0u;
+    d.as_from_stale    = c.as_buzzer_from_stale ? 1u : 0u;
+    d.as_fresh         = in.as_fresh ? 1u : 0u;
+    d.as_status        = in.as_status;
     std::uint8_t b[PitDiag_dv_DLC];
     encode_PitDiag_dv(d, b);
     return make_acu(PitDiag_dv_ID, b);

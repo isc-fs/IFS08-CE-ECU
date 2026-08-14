@@ -153,6 +153,15 @@ extern "C" void ecu_control_task_run(void *argument) {
                            VehicleService::is_fresh(now, veh.last_udv_r2d_tick, config::UdvR2dStaleMs);
         ci.dv_fresh      = VehicleService::is_fresh(now, veh.last_udv_cmd_tick, config::UdvCmdStaleMs);
         ci.dv_torque_pct = VehicleService::condition_udv_torque(veh.udv_torque_cmd);
+        // AS state for the emergency buzzer, on 0x50A's OWN tick. Not the
+        // 0x507/0x510 freshness: a live torque stream from a uDV whose AS
+        // monitor has died would mask exactly the case the fail-safe exists
+        // for. The status byte is passed through raw -- as_buzzer decides what
+        // it means, and it needs to distinguish "reported OFF" from "stopped
+        // reporting", which it can only do with the flag alongside.
+        ci.as_status     = veh.udv_as_status;
+        ci.as_fresh      = VehicleService::is_fresh(now, veh.last_udv_as_tick,
+                                                    config::UdvAsStaleMs);
         // 0x463 reports ELECTRICAL rpm; the envelope needs MECHANICAL.
         //
         // GATED, like every other safety input on this page. 0x463 is the only
