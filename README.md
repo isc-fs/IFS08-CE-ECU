@@ -21,6 +21,7 @@ flashed over CAN through [`stm32-can-bootloader`](https://github.com/isc-fs/stm3
 | **Bringing the car up** | [`docs/commissioning.md`](docs/commissioning.md) — the on-car runbook. |
 | **Changing code** | [`CLAUDE.md`](CLAUDE.md) — the architecture reference and the conventions. |
 | **Chasing "why is the car slow?"** | [`docs/derating.md`](docs/derating.md), then the pit-diag frames it names. |
+| **Picking this up a season later** | [`HANDOVER.md`](HANDOVER.md) — where it was left, what is half-finished, and the traps that are not in the code. |
 
 Anything in [`docs/historical/`](docs/historical/README.md) describes the **old
 C firmware** and is kept only so old decisions stay readable. Do not trust it
