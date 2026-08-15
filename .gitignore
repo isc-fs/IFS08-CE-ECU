@@ -46,3 +46,6 @@ Thumbs.db
 # everything else in .vscode/ (launch.json, personal tweaks) stays local.
 .vscode/*
 !.vscode/settings.json
+
+# clangd LSP index (was accidentally committed — never version this)
+.cache/
