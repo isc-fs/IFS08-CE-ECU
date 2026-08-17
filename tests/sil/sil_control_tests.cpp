@@ -790,6 +790,54 @@ static void test_power_margin() {
 }
 
 // ECU-held DC-link discharge (#198).
+static void test_boot_trigger_gate() {
+    std::printf("[boot_trigger_gate]\n");
+
+    // Out of the drive ladder: nothing is commanding torque and nothing has
+    // been asked to. A reset here costs nothing that has not already happened.
+    CHECK(Bootloader::reboot_allowed_in(CtrlState::WaitInvVdcConfig), "allowed in WaitInvVdcConfig");
+    CHECK(Bootloader::reboot_allowed_in(CtrlState::Precharge),        "allowed in Precharge");
+    CHECK(Bootloader::reboot_allowed_in(CtrlState::WaitStartBrake),   "allowed in WaitStartBrake");
+
+    // AmsError is the one that must NOT be forgotten. The car is stopped and
+    // inhibited, and it is exactly when someone wants to reflash. Refusing here
+    // would make a faulted car unrecoverable over CAN.
+    CHECK(Bootloader::reboot_allowed_in(CtrlState::AmsError),
+          "allowed in AmsError -- a faulted car must stay flashable");
+
+    // In the ladder: resetting stops 0x100, the AMS trips VcuStale at 200 ms
+    // and opens the AIRs under load.
+    CHECK(!Bootloader::reboot_allowed_in(CtrlState::R2dDelay),       "refused in R2dDelay");
+    CHECK(!Bootloader::reboot_allowed_in(CtrlState::WaitInvStandby), "refused in WaitInvStandby");
+    CHECK(!Bootloader::reboot_allowed_in(CtrlState::Active),         "refused in Active -- the whole point");
+
+    // The predicate is the SAME one Controller::enter_() uses to clear the DV
+    // latch. Pinned so the two cannot drift into two definitions of "left the
+    // drive": reorder CtrlState and this fails, rather than silently changing
+    // which states accept a reboot.
+    for (std::uint8_t i = 0; i <= static_cast<std::uint8_t>(CtrlState::AmsError); ++i) {
+        const auto s = static_cast<CtrlState>(i);
+        const bool clears_dv_latch = (s < CtrlState::R2dDelay) || (s == CtrlState::AmsError);
+        CHECK(Bootloader::reboot_allowed_in(s) == clears_dv_latch,
+              "reboot gate matches the drive-ladder predicate for every state");
+    }
+
+    // Gating must not have loosened what counts as a trigger.
+    {
+        CanFrame f{};
+        f.bus = static_cast<std::uint8_t>(CanBus::Acu);
+        f.id  = config::BlBootTriggerCanId;
+        f.dlc = config::BlBootTriggerDlc;
+        std::memcpy(f.data, config::BlBootTriggerPayload, config::BlBootTriggerDlc);
+        CHECK(Bootloader::matches_trigger(f), "the real trigger still matches");
+        f.data[0] = static_cast<std::uint8_t>(f.data[0] ^ 0xFFu);
+        CHECK(!Bootloader::matches_trigger(f), "a wrong payload does not");
+        std::memcpy(f.data, config::BlBootTriggerPayload, config::BlBootTriggerDlc);
+        f.bus = static_cast<std::uint8_t>(CanBus::Inv);
+        CHECK(!Bootloader::matches_trigger(f), "and not off the inverter bus");
+    }
+}
+
 static void test_as_buzzer() {
     std::printf("[as_buzzer]\n");
 
@@ -3048,6 +3096,7 @@ static void run_all() {
     test_heartbeat_freshness();
     test_discharge_hold();
     test_as_buzzer();
+    test_boot_trigger_gate();
     test_power_margin();
     test_t11_8_9_window();
     test_ams_error();
@@ -3092,6 +3141,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-heartbeat-fresh"))    test_heartbeat_freshness();
     else if (!std::strcmp(m, "--test-discharge"))          test_discharge_hold();
     else if (!std::strcmp(m, "--test-as-buzzer"))          test_as_buzzer();
+    else if (!std::strcmp(m, "--test-boot-gate"))          test_boot_trigger_gate();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();
     else if (!std::strcmp(m, "--test-precharge-no-ack"))   test_precharge_no_ack();
     else if (!std::strcmp(m, "--test-error-voltage"))      { test_cell_v_derate(); test_cell_ir_compensation(); }

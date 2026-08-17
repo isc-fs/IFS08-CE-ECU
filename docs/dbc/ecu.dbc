@@ -177,6 +177,7 @@ BO_ 1796 PitDiag_health: 8 VCU
  SG_ stub_brake : 43|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ cal_status : 44|2@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ stub_torque_cap : 46|1@1+ (1,0) [0|0] "bit" Vector__XXX
+ SG_ boot_refused : 47|1@1+ (1,0) [0|0] "bit" Vector__XXX
  SG_ uptime_s : 48|8@1+ (1,0) [0|0] "s" Vector__XXX
  SG_ last_fault : 56|8@1+ (1,0) [0|0] "code" Vector__XXX
 
