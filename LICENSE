@@ -1,0 +1,42 @@
+Copyright (c) 2026 ISC Racing Team
+
+All rights reserved.
+
+This software is proprietary. Every first-party source file in this repository
+carries `SPDX-License-Identifier: proprietary`, and this file states what that
+means:
+
+No permission is granted to any person to use, copy, modify, merge, publish,
+distribute, sublicense, or sell this software or any part of it, except by
+separate written permission from the copyright holder.
+
+The repository is publicly readable. That is for the benefit of Formula Student
+teams, scrutineers and anyone who wants to read how the car works — being able
+to READ it is not permission to USE it. If you want to build on any of this,
+ask; the answer is likely yes, and having asked means we both know what was
+agreed.
+
+No warranty. This is competition firmware for a vehicle that can injure people.
+It is provided as-is, with no warranty of any kind, express or implied, and no
+representation that it is fit for any purpose. Anyone running it on hardware
+does so entirely at their own risk. See HANDOVER.md and docs/commissioning.md
+for what has and has not been validated.
+
+
+THIRD-PARTY COMPONENTS
+
+The terms above apply to FIRST-PARTY code only — broadly, everything under
+Core/Inc/app/, Core/Src/app/, Core/Inc/can/, tests/, tools/ and scripts/.
+
+This repository also vendors third-party components under their own licences,
+which are NOT superseded by anything above:
+
+  Drivers/STM32H7xx_HAL_Driver/   STMicroelectronics HAL and LL drivers
+  Drivers/CMSIS/                  ARM CMSIS, and the ST device headers
+  Middlewares/Third_Party/FreeRTOS/
+                                  FreeRTOS kernel and the CMSIS-RTOS v2 shim
+
+Those trees carry BSD-3-Clause, Apache-2.0 and MIT terms in their own file
+headers. Where a file states its own licence, that licence governs it. Nothing
+here claims rights over them, and the "all rights reserved" above must not be
+read as doing so.

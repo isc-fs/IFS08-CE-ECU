@@ -162,4 +162,16 @@ Go faster than we did.
 
 ---
 
+## Licence
+
+Proprietary — see [`LICENSE`](LICENSE). The repository is public so the car can
+be read about; that is not permission to reuse the code. Ask, and it is likely
+yes.
+
+The vendored `Drivers/` and `Middlewares/` trees are third-party (ST, ARM CMSIS,
+FreeRTOS) under their own BSD-3-Clause / Apache-2.0 / MIT terms, which the
+proprietary notice does not override.
+
+---
+
 *ISC Racing Team — IFS08 Control Electronics*
