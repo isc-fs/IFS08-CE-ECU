@@ -44,7 +44,7 @@ jobs:
       - name: Run SIL suites
         run: |
           set -u
-          SIL=build-sil/tests/sil/ecu08_sil
+          SIL=build-sil/sil/ecu08_sil
           test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
           # ONE flag: --test-all. This used to be a hand-maintained list of twelve
           # suite flags, and it had rotted into a trap. --test-safety-brake was

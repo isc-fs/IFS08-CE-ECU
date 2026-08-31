@@ -112,7 +112,7 @@ jobs:
         run: |
           cmake -S . -B build-sil -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
           cmake --build build-sil -j
-          build-sil/tests/sil/ecu08_sil --test-all
+          build-sil/sil/ecu08_sil --test-all
 
       - name: Regenerate ecu.dbc from the tagged code-first DSL
         # Source of truth = Core/Inc/can/messages/*.def. Regenerating here (rather
