@@ -1,7 +1,7 @@
 # Cross-compilation toolchain for the STM32H733ZG (Cortex-M7, double-precision FPU).
 # Used to build the ECU firmware for ARM:
-#   cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
-# Compiler + MCU flags only; the linker script is selected by firmware/CMakeLists.txt.
+#   cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+# Compiler + MCU flags only; the linker script is selected by the repo-root CMakeLists.txt.
 
 set(CMAKE_SYSTEM_NAME      Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)

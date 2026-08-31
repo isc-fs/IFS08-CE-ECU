@@ -368,7 +368,7 @@ runs — nothing to inject, no CAN traffic, no globals. **Both are config values
 (`if constexpr` / `!= 0`), so a flight `dev` build carries no stub code:
 
 > **The stubs are not `-D` flags, but two real CMake options do exist** in
-> `firmware/CMakeLists.txt`, both `OFF` by default and both **never a flight default**:
+> the repo-root `CMakeLists.txt`, both `OFF` by default and both **never a flight default**:
 > `-DECU_HIL_CLEAR_ERROR_LATCH=ON` (wipes the RTC fault latch at boot — HIL only) and
 > `-DECU_DEBUG_INV_BRIDGE=ON` (mirrors FDCAN1 inverter frames onto FDCAN2 for a pit
 > sniffer, emitting extra IDs `0x560`/`0x562`/`0x57F`).
@@ -397,7 +397,7 @@ first, then the ordinary firmware build. The **stubs** are source constants, not
 ```bash
 #   ecu_config.hpp: StubBrakeRaw = 2700;  StubStart = true;  // MANUAL R2D only — leave
 #                                                            // StubStart false for DV/uDV
-cmake -S firmware -B build-fw-brake \
+cmake -B build-fw-brake \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 cmake --build build-fw-brake
 ```
@@ -446,7 +446,7 @@ firmware build (no `-D` stub flags):
 ```bash
 #   ecu_config.hpp: StubBrakeRaw = 2700;  StubNoAms = true;  TorqueCap = 20;
 #                   StubStart = true;   // MANUAL only — leave false for a DV/uDV torque test
-cmake -S firmware -B build-fw-bringup \
+cmake -B build-fw-bringup \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 cmake --build build-fw-bringup
 arm-none-eabi-objcopy -O binary build-fw-bringup/ECU08.elf build-fw-bringup/ECU08.bin
@@ -497,7 +497,7 @@ the DV trigger:
 ```bash
 #   ecu_config.hpp: StubNoAms = true;  StubNoInverter = true;  StubStart = false;
 #                   StubBrakeRaw = 2700;   // only if the EBS isn't pressing the brake
-cmake -S firmware -B build-fw-dv \
+cmake -B build-fw-dv \
   -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake
 cmake --build build-fw-dv
 ```

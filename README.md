@@ -74,7 +74,7 @@ the DBC — CI fails the build if it drifts.
 ## Build and test
 
 ```bash
-cmake -S . -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
+cmake -S tests -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
 cmake --build build-sil -j8
 ./build-sil/tests/sil/ecu08_sil --test-all
 ```
@@ -84,11 +84,11 @@ C++ with no HAL and no RTOS, so it runs anywhere with a compiler. If you change
 behaviour, a test should change with it.
 
 ```bash
-cmake -S firmware -B build-fw && cmake --build build-fw -j8
-python3 scripts/check_flash_layout.py build-fw/ECU08.elf
+cmake -B build && cmake --build build -j8
+python3 scripts/check_flash_layout.py build/ECU08.elf
 ```
 
-> `firmware/CMakeLists.txt` globs its sources **at configure time**. Add a
+> the repo-root `CMakeLists.txt` globs its sources **at configure time**. Add a
 > `.cpp` and the build will fail to link until you re-run the `cmake -S` step,
 > not just `--build`.
 

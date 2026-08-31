@@ -351,7 +351,7 @@ uDV 0x03).
 
 ```bash
 # SIL host (núcleo de control puro). Unity offline → deshabilitar unit tests:
-cmake -S . -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
+cmake -S tests -B build-sil -DBUILD_SIL_TESTS=ON -DBUILD_UNIT_TESTS=OFF
 cmake --build build-sil
 ctest --test-dir build-sil --output-on-failure        # o:
 ./build-sil/tests/sil/ecu08_sil --test-all
@@ -369,7 +369,7 @@ transporte nRF24 — eso es banco / HIL.
 `Core/Src/{can,control,telemetry,app_state}.c`, borrados en el rewrite a C++, y además
 descarga Unity por red. No compila.
 
-El firmware ARM se compila desde `firmware/CMakeLists.txt`, que hace **`file(GLOB)`** de
+El firmware ARM se compila desde the repo-root `CMakeLists.txt`, que hace **`file(GLOB)`** de
 `Core/Src/*.c` y `Core/Src/app/*.cpp` (sólo hay que re-lanzar el configure si un regen añade
 ficheros).
 

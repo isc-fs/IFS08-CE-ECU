@@ -62,16 +62,16 @@ jobs:
 
       - name: Build firmware (cross, Release)
         run: |
-          cmake -S firmware -B build-fw \
+          cmake -B build \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/gcc-arm-none-eabi.cmake" \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-fw -j
+          cmake --build build -j
 
       - name: Verify app entry point is 0x08020000
         run: |
           set -e
-          python3 scripts/check_flash_layout.py build-fw/ECU08.elf | tee layout.log
-          ENTRY=$(arm-none-eabi-objdump -h build-fw/ECU08.elf | awk '/\.isr_vector/ {print "0x"$5; exit}')
+          python3 scripts/check_flash_layout.py build/ECU08.elf | tee layout.log
+          ENTRY=$(arm-none-eabi-objdump -h build/ECU08.elf | awk '/\.isr_vector/ {print "0x"$5; exit}')
           echo "Detected .isr_vector LMA: $ENTRY"
           if [ "$ENTRY" != "0x08020000" ]; then
             echo "::error::App entry point is $ENTRY, expected 0x08020000"
@@ -89,21 +89,21 @@ jobs:
 
       - name: Convert .elf to .bin and .hex
         run: |
-          arm-none-eabi-objcopy -O binary build-fw/ECU08.elf build-fw/ECU08.bin
-          arm-none-eabi-objcopy -O ihex   build-fw/ECU08.elf build-fw/ECU08.hex
-          ls -la build-fw/ECU08.*
+          arm-none-eabi-objcopy -O binary build/ECU08.elf build/ECU08.bin
+          arm-none-eabi-objcopy -O ihex   build/ECU08.elf build/ECU08.hex
+          ls -la build/ECU08.*
 
       - name: Report sizes
         run: |
           {
             echo "## Firmware sizes for \`${{ steps.tag.outputs.name }}\`"
             echo '```'
-            arm-none-eabi-size --format=berkeley build-fw/ECU08.elf
+            arm-none-eabi-size --format=berkeley build/ECU08.elf
             echo '```'
             echo
             echo '### Asset sizes'
             echo '```'
-            ls -la build-fw/ECU08.bin build-fw/ECU08.elf build-fw/ECU08.hex \
+            ls -la build/ECU08.bin build/ECU08.elf build/ECU08.hex \
               | awk '{printf "%-18s  %s bytes\n", $NF, $5}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -173,7 +173,7 @@ jobs:
           else
             TITLE="$TAG"
           fi
-          ASSETS="build-fw/ECU08.elf build-fw/ECU08.bin build-fw/ECU08.hex /tmp/ecu.dbc"
+          ASSETS="build/ECU08.elf build/ECU08.bin build/ECU08.hex /tmp/ecu.dbc"
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG exists -- uploading/refreshing assets (notes left untouched)."
             gh release upload "$TAG" --repo "${{ github.repository }}" --clobber $ASSETS

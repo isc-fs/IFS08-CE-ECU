@@ -30,13 +30,13 @@ Node IDs on the bus: **ECU `0x01`**, AMS `0x02`, uDV `0x03`.
 ## Build a flight image
 
 ```bash
-cmake -S firmware -B build-fw && cmake --build build-fw
+cmake -B build && cmake --build build
 ```
 
-**`cmake -S firmware`, not `cmake -S .`** — the repo-root `CMakeLists.txt` is the *host SIL*
+**`cmake -B build` from the repo root** — the firmware is the root project (matching IFS08-CE-AMS); the *host SIL*
 project, not the firmware.
 
-> ⚠️ **`firmware/CMakeLists.txt` globs `Core/Src/*.c` and `Core/Src/app/*.cpp` at CONFIGURE
+> ⚠️ **the repo-root `CMakeLists.txt` globs `Core/Src/*.c` and `Core/Src/app/*.cpp` at CONFIGURE
 > time.** If you add a new source file and only run `cmake --build`, it will not be compiled
 > and you get a confusing **link** error (`undefined reference to ...`) rather than a missing
 > file. Re-run the configure step whenever a file is added.
@@ -44,7 +44,7 @@ project, not the firmware.
 Then check the layout before you write anything:
 
 ```bash
-python3 scripts/check_flash_layout.py build-fw/ECU08.elf
+python3 scripts/check_flash_layout.py build/ECU08.elf
 ```
 
 This is what stops an image that has grown into sector 0 or sector 7 — such an image
@@ -106,7 +106,7 @@ routinely edited locally and easy to commit by accident.
 PCAN on the **ACU bus (FDCAN2)**. All three buses are classic CAN at **500 kbit/s**.
 
 ```bash
-arm-none-eabi-objcopy -O binary build-fw/ECU08.elf ECU08.bin
+arm-none-eabi-objcopy -O binary build/ECU08.elf ECU08.bin
 ```
 
 Then flash with `can-flasher` / MingoCAN to node `0x01`, app base `0x08020000`.
