@@ -148,34 +148,6 @@ jobs:
                 issue_number: context.issue.number, body,
               });
             }
-        run: |
-          set -u
-          SIL=build-sil/sil/ecu08_sil
-          test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
-          # ONE flag: --test-all. This used to be a hand-maintained list of twelve
-          # suite flags, and it had rotted into a trap. --test-safety-brake was
-          # retired with the EV.2.3 removal, and an UNRECOGNISED flag makes this
-          # binary run the whole suite -- so that one dead entry was silently the
-          # only reason every suite added this season was covered at all. Tidying
-          # the dead flag away would have quietly dropped CI to eleven suites.
-          # The release workflow already gates on --test-all; matching it here
-          # means PR CI and the release gate run the same thing on purpose.
-          flags="--test-all"
-          fail=0
-          for flag in $flags; do
-            out=$("$SIL" $flag 2>&1) ; code=$?
-            # Defensive: trip on a non-zero exit OR any failure marker in the
-            # output (some suites print failures without setting the exit code).
-            if [ "$code" -ne 0 ] || printf '%s\n' "$out" \
-                 | grep -qiE '\[FAIL\]|FALLARON|checks failed|FALLOS: [1-9]|HAY TESTS FALLIDOS'; then
-              echo "::error::SIL $flag FAILED (exit=$code)"
-              printf '%s\n' "$out" | grep -iE '\[FAIL\]|FALLOS|FALLARON|checks failed' | head -20
-              fail=1
-            else
-              echo "PASS  $flag"
-            fi
-          done
-          [ "$fail" -eq 0 ] && echo "All SIL suites passed." || { echo "::error::One or more SIL suites failed"; exit 1; }
 
       # The "DBC matches the code-first CAN DSL" check that used to live
       # here was retired when the dbcinator bot took over docs/dbc/ecu.dbc
