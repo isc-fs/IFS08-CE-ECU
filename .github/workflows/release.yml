@@ -110,7 +110,7 @@ jobs:
 
       - name: Host SIL suite (safety belt -- the tag may point at any SHA)
         run: |
-          cmake -S . -B build-sil -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
+          cmake -S tests -B build-sil -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
           cmake --build build-sil -j
           build-sil/sil/ecu08_sil --test-all
 

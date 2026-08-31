@@ -41,7 +41,27 @@ jobs:
       - name: Build SIL
         run: cmake --build build-sil -j
 
+      # The binary's exit code is authoritative: main() ends with
+      #   return g_fails == 0 ? 0 : 1
+      # and an unrecognised flag now exits 2 instead of silently running
+      # everything. This step used to additionally grep stdout for
+      # '[FAIL]|FALLARON|checks failed|FALLOS: [1-9]|HAY TESTS FALLIDOS'
+      # because the old harness could print failures while exiting 0. That
+      # harness is gone, and a bilingual grep over test output is a fragile way
+      # to decide whether a hardware-adjacent gate passed.
+      #
+      # --list comes from the same table the dispatch validates against, so the
+      # suite inventory is reported rather than hardcoded here.
       - name: Run SIL suites
+        run: |
+          set -euo pipefail
+          SIL=build-sil/sil/ecu08_sil
+          test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
+          echo "Suites available: $("$SIL" --list | wc -l | tr -d ' ')"
+          "$SIL" --list | sed 's/^/  /'
+          echo
+          "$SIL" --test-all
+          echo "All SIL suites passed."
         run: |
           set -u
           SIL=build-sil/sil/ecu08_sil

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <cstddef>
 #include <cstring>
 
 #include "app/control.hpp"
@@ -3126,9 +3127,99 @@ static void run_all() {
     test_gps();
 }
 
+
+/* ===== Flag validation =====
+ *
+ * The dispatch below ends in `else run_all()`, which meant ANY unrecognised
+ * flag silently ran the whole suite and exited 0. A typo looked like a passing
+ * targeted run, and a retired flag kept "working" -- which is precisely how a
+ * dead flag in CI ended up being the only thing that ran every suite.
+ *
+ * kSilFlags is checked BEFORE dispatch, so an unknown flag now fails loudly and
+ * a flag added to the dispatch but not here fails immediately rather than
+ * drifting quietly. It also backs --list, so CI can enumerate suites instead of
+ * hardcoding them.
+ */
+static const char* const kSilFlags[] = {
+    "--dump-radio",
+    "--test-apps",
+    "--test-rtos-startup",
+    "--test-boot",
+    "--test-full-cycle",
+    "--test-inv-leaves-drive",
+    "--test-endurance-guards",
+    "--test-power-margin",
+    "--test-heartbeat-fresh",
+    "--test-discharge",
+    "--test-as-buzzer",
+    "--test-boot-gate",
+    "--test-dynamic-states",
+    "--test-precharge-no-ack",
+    "--test-error-voltage",
+    "--test-ams-error",
+    "--test-cell-ir",
+    "--test-motor-thermal",
+    "--test-pack-thermal",
+    "--test-inv-foc",
+    "--test-legacy-compat",
+    "--test-plausibility",
+    "--test-bootloader-trigger",
+    "--test-dsl-parity",
+    "--test-inverter",
+    "--test-inverter-recovery",
+    "--test-inverter-ts-off",
+    "--test-inverter-fault-burst",
+    "--test-inverter-fault-layers",
+    "--test-pedal-cal",
+    "--test-brake-pressure",
+    "--test-power-envelope",
+    "--test-pedal-cal-nvm",
+    "--test-cal-session",
+    "--test-cal-nvm-write",
+    "--test-inverter-rx",
+    "--test-udv",
+    "--test-dv-mode",
+    "--test-radio",
+    "--test-gps",
+    "--test-all",
+    "--test-integration",
+};
+static const size_t kSilFlagCount = sizeof(kSilFlags) / sizeof(kSilFlags[0]);
+
+static bool sil_flag_known(const char* m) {
+    for (size_t i = 0; i < kSilFlagCount; ++i) {
+        if (!std::strcmp(m, kSilFlags[i])) return true;
+    }
+    return false;
+}
+
+static void sil_print_usage(const char* prog) {
+    std::printf("Usage: %s [FLAG]\n", prog);
+    std::printf("  no flag / --test-all / --test-integration   run every suite\n");
+    std::printf("  --list      print each suite flag, one per line\n");
+    std::printf("  --help      this message\n");
+    std::printf("  --dump-radio  dump a radio snapshot and exit\n\n");
+    std::printf("Suite flags (%u):\n", (unsigned)kSilFlagCount);
+    for (size_t i = 0; i < kSilFlagCount; ++i) std::printf("  %s\n", kSilFlags[i]);
+}
+
 int main(int argc, char** argv) {
     const char* m = (argc > 1) ? argv[1] : "--test-all";
+
+    if (!std::strcmp(m, "--help")) { sil_print_usage(argv[0]); return 0; }
+    if (!std::strcmp(m, "--list")) {
+        for (size_t i = 0; i < kSilFlagCount; ++i) std::printf("%s\n", kSilFlags[i]);
+        return 0;
+    }
     if (!std::strcmp(m, "--dump-radio")) { dump_radio_snapshot(); return 0; }
+
+    /* Reject before dispatching: the chain's trailing else would otherwise run
+     * every suite and report success for a flag that does not exist. */
+    if (!sil_flag_known(m)) {
+        std::printf("Unknown test: %s\n\n", m);
+        sil_print_usage(argv[0]);
+        return 2;
+    }
     std::printf("=== ECU SIL (control core) : %s ===\n", m);
 
     if      (!std::strcmp(m, "--test-apps"))               test_apps_pct();
