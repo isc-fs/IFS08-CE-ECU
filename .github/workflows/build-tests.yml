@@ -32,6 +32,13 @@ jobs:
   sil-tests:
     name: Host SIL suite
     runs-on: ubuntu-latest
+    # Needed to post the result back onto the PR. A green tick says a job passed;
+    # it does not say WHICH suites ran or how many checks, and nobody clicks into
+    # Actions to find out on a passing run -- which is how a suite silently
+    # falling out of the set goes unnoticed.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -41,35 +48,106 @@ jobs:
       - name: Build SIL
         run: cmake --build build-sil -j
 
+      # The binary's exit code is authoritative: main() ends with
+      #   return g_fails == 0 ? 0 : 1
+      # and an unrecognised flag now exits 2 instead of silently running
+      # everything. This step used to additionally grep stdout for
+      # '[FAIL]|FALLARON|checks failed|FALLOS: [1-9]|HAY TESTS FALLIDOS'
+      # because the old harness could print failures while exiting 0. That
+      # harness is gone, and a bilingual grep over test output is a fragile way
+      # to decide whether a hardware-adjacent gate passed.
+      #
+      # --list comes from the same table the dispatch validates against, so the
+      # suite inventory is reported rather than hardcoded here.
       - name: Run SIL suites
+        id: sil
         run: |
-          set -u
+          set -uo pipefail
           SIL=build-sil/sil/ecu08_sil
           test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
-          # ONE flag: --test-all. This used to be a hand-maintained list of twelve
-          # suite flags, and it had rotted into a trap. --test-safety-brake was
-          # retired with the EV.2.3 removal, and an UNRECOGNISED flag makes this
-          # binary run the whole suite -- so that one dead entry was silently the
-          # only reason every suite added this season was covered at all. Tidying
-          # the dead flag away would have quietly dropped CI to eleven suites.
-          # The release workflow already gates on --test-all; matching it here
-          # means PR CI and the release gate run the same thing on purpose.
-          flags="--test-all"
-          fail=0
-          for flag in $flags; do
-            out=$("$SIL" $flag 2>&1) ; code=$?
-            # Defensive: trip on a non-zero exit OR any failure marker in the
-            # output (some suites print failures without setting the exit code).
-            if [ "$code" -ne 0 ] || printf '%s\n' "$out" \
-                 | grep -qiE '\[FAIL\]|FALLARON|checks failed|FALLOS: [1-9]|HAY TESTS FALLIDOS'; then
-              echo "::error::SIL $flag FAILED (exit=$code)"
-              printf '%s\n' "$out" | grep -iE '\[FAIL\]|FALLOS|FALLARON|checks failed' | head -20
-              fail=1
-            else
-              echo "PASS  $flag"
-            fi
-          done
-          [ "$fail" -eq 0 ] && echo "All SIL suites passed." || { echo "::error::One or more SIL suites failed"; exit 1; }
+
+          SUITES=$("$SIL" --list | wc -l | tr -d ' ')
+          "$SIL" --list > /tmp/sil-suites.txt
+
+          set +e
+          "$SIL" --test-all 2>&1 | tee /tmp/sil-out.txt
+          CODE=${PIPESTATUS[0]}
+          set -e
+
+          # "=== N checks, M failed ===" is the binary's own summary line.
+          TOTALS=$(grep -oE '=== [0-9]+ checks, [0-9]+ failed ===' /tmp/sil-out.txt | tail -1 || true)
+          CHECKS=$(printf '%s' "$TOTALS" | grep -oE '[0-9]+ checks' | grep -oE '[0-9]+' || echo 0)
+          FAILED=$(printf '%s' "$TOTALS" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
+          {
+            echo "suites=$SUITES"
+            echo "checks=$CHECKS"
+            echo "failed=$FAILED"
+            echo "code=$CODE"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            if [ "$CODE" -eq 0 ]; then echo "### 🟢 SIL suites passed"; else echo "### 🔴 SIL suites FAILED"; fi
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| suites | $SUITES |"
+            echo "| checks | $CHECKS |"
+            echo "| failed | $FAILED |"
+            echo ""
+            echo "<details><summary>Suites run</summary>"
+            echo ""
+            sed 's/^/- `/;s/$/`/' /tmp/sil-suites.txt
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$CODE"
+
+      # Put the numbers on the PR itself. One sticky comment, updated in place,
+      # so a long-running PR does not accumulate one per push.
+      - name: Report SIL result on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SUITES: ${{ steps.sil.outputs.suites }}
+          CHECKS: ${{ steps.sil.outputs.checks }}
+          FAILED: ${{ steps.sil.outputs.failed }}
+          OUTCOME: ${{ steps.sil.outcome }}
+        with:
+          script: |
+            const marker = '<!-- sil-results -->';
+            const ok = process.env.OUTCOME === 'success';
+            const { SUITES = '?', CHECKS = '?', FAILED = '?' } = process.env;
+            const body = [
+              marker,
+              `### ${ok ? '🟢' : '🔴'} Host SIL suite`,
+              '',
+              '| | |',
+              '|---|---|',
+              `| suites | ${SUITES} |`,
+              `| checks | ${CHECKS} |`,
+              `| failed | ${FAILED} |`,
+              `| commit | \`${context.sha.slice(0, 8)}\` |`,
+              '',
+              `[Full log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
 
       # The "DBC matches the code-first CAN DSL" check that used to live
       # here was retired when the dbcinator bot took over docs/dbc/ecu.dbc
