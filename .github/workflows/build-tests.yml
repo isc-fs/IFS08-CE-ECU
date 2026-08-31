@@ -32,6 +32,13 @@ jobs:
   sil-tests:
     name: Host SIL suite
     runs-on: ubuntu-latest
+    # Needed to post the result back onto the PR. A green tick says a job passed;
+    # it does not say WHICH suites ran or how many checks, and nobody clicks into
+    # Actions to find out on a passing run -- which is how a suite silently
+    # falling out of the set goes unnoticed.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -53,15 +60,94 @@ jobs:
       # --list comes from the same table the dispatch validates against, so the
       # suite inventory is reported rather than hardcoded here.
       - name: Run SIL suites
+        id: sil
         run: |
-          set -euo pipefail
+          set -uo pipefail
           SIL=build-sil/sil/ecu08_sil
           test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
-          echo "Suites available: $("$SIL" --list | wc -l | tr -d ' ')"
-          "$SIL" --list | sed 's/^/  /'
-          echo
-          "$SIL" --test-all
-          echo "All SIL suites passed."
+
+          SUITES=$("$SIL" --list | wc -l | tr -d ' ')
+          "$SIL" --list > /tmp/sil-suites.txt
+
+          set +e
+          "$SIL" --test-all 2>&1 | tee /tmp/sil-out.txt
+          CODE=${PIPESTATUS[0]}
+          set -e
+
+          # "=== N checks, M failed ===" is the binary's own summary line.
+          TOTALS=$(grep -oE '=== [0-9]+ checks, [0-9]+ failed ===' /tmp/sil-out.txt | tail -1 || true)
+          CHECKS=$(printf '%s' "$TOTALS" | grep -oE '[0-9]+ checks' | grep -oE '[0-9]+' || echo 0)
+          FAILED=$(printf '%s' "$TOTALS" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
+          {
+            echo "suites=$SUITES"
+            echo "checks=$CHECKS"
+            echo "failed=$FAILED"
+            echo "code=$CODE"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            if [ "$CODE" -eq 0 ]; then echo "### 🟢 SIL suites passed"; else echo "### 🔴 SIL suites FAILED"; fi
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| suites | $SUITES |"
+            echo "| checks | $CHECKS |"
+            echo "| failed | $FAILED |"
+            echo ""
+            echo "<details><summary>Suites run</summary>"
+            echo ""
+            sed 's/^/- `/;s/$/`/' /tmp/sil-suites.txt
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$CODE"
+
+      # Put the numbers on the PR itself. One sticky comment, updated in place,
+      # so a long-running PR does not accumulate one per push.
+      - name: Report SIL result on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SUITES: ${{ steps.sil.outputs.suites }}
+          CHECKS: ${{ steps.sil.outputs.checks }}
+          FAILED: ${{ steps.sil.outputs.failed }}
+          OUTCOME: ${{ steps.sil.outcome }}
+        with:
+          script: |
+            const marker = '<!-- sil-results -->';
+            const ok = process.env.OUTCOME === 'success';
+            const { SUITES = '?', CHECKS = '?', FAILED = '?' } = process.env;
+            const body = [
+              marker,
+              `### ${ok ? '🟢' : '🔴'} Host SIL suite`,
+              '',
+              '| | |',
+              '|---|---|',
+              `| suites | ${SUITES} |`,
+              `| checks | ${CHECKS} |`,
+              `| failed | ${FAILED} |`,
+              `| commit | \`${context.sha.slice(0, 8)}\` |`,
+              '',
+              `[Full log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
         run: |
           set -u
           SIL=build-sil/sil/ecu08_sil
