@@ -13,7 +13,7 @@ name: Build and tests
 #                     Does NOT cover: the task layer, HAL/peripherals, io_signals,
 #                     pit_diag (#9) or the nRF24 transport -- those are bench/HIL.
 #                     Regression gate for the control core.
-#   firmware-build  — arm-none-eabi cross-compile for STM32H733 (firmware/),
+#   firmware-build  — arm-none-eabi cross-compile for STM32H733 (repo root),
 #                     then check_flash_layout.py enforces the image is
 #                     bootloader-compatible (app at 0x08020000, sectors 0 & 7
 #                     clear), plus a size report.
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure SIL (host, no unit/Unity, no network)
-        run: cmake -B build-sil -S . -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
+        run: cmake -B build-sil -S tests -DBUILD_UNIT_TESTS=OFF -DBUILD_SIL_TESTS=ON
 
       - name: Build SIL
         run: cmake --build build-sil -j
@@ -44,7 +44,7 @@ jobs:
       - name: Run SIL suites
         run: |
           set -u
-          SIL=build-sil/tests/sil/ecu08_sil
+          SIL=build-sil/sil/ecu08_sil
           test -x "$SIL" || { echo "::error::SIL binary not found at $SIL"; exit 1; }
           # ONE flag: --test-all. This used to be a hand-maintained list of twelve
           # suite flags, and it had rotted into a trap. --test-safety-brake was
@@ -97,14 +97,14 @@ jobs:
         run: python3 scripts/check_fdcan_ram.py Core/Src/fdcan.c
 
       - name: Configure CMake (cross)
-        run: cmake -S firmware -B build-fw -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/gcc-arm-none-eabi.cmake"
+        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
       - name: Build firmware
-        run: cmake --build build-fw -j
+        run: cmake --build build -j
 
       - name: Verify bootloader-compatible flash layout
         run: |
-          python3 scripts/check_flash_layout.py build-fw/ECU08.elf | tee layout.log
+          python3 scripts/check_flash_layout.py build/ECU08.elf | tee layout.log
           {
             echo "## Flash layout vs. stm32-can-bootloader"
             echo '```'
@@ -114,11 +114,11 @@ jobs:
 
       - name: Report firmware size
         run: |
-          test -f build-fw/ECU08.elf || { echo "::error::ECU08.elf not produced"; exit 1; }
+          test -f build/ECU08.elf || { echo "::error::ECU08.elf not produced"; exit 1; }
           {
             echo "## Firmware size (STM32H733)"
             echo '```'
-            arm-none-eabi-size --format=berkeley build-fw/ECU08.elf
+            arm-none-eabi-size --format=berkeley build/ECU08.elf
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
