@@ -54,7 +54,13 @@ extern "C" void ecu_diag_task_run(void *argument) {
         m.min_free_heap = static_cast<uint16_t>(min_heap > 0xFFFFu ? 0xFFFFu : min_heap);
         m.task_ran_mask = mask;
         m.reset_cause   = boot_cause;
-        m.uptime_s      = static_cast<uint8_t>(((osKernelGetTickCount() - boot_tick) / 1000u) & 0xFFu);
+        // Saturate rather than wrap. `& 0xFFu` rolled over every 255 s, so an
+        // ECU that had been up five minutes reported the same uptime as one
+        // that had just rebooted -- and telling those two apart is the whole
+        // point of the field. 255 now reads as ">= 255 s". free_heap and
+        // min_free_heap above clamp the same way.
+        const uint32_t up_s = (osKernelGetTickCount() - boot_tick) / 1000u;
+        m.uptime_s      = static_cast<uint8_t>(up_s > 0xFFu ? 0xFFu : up_s);
         m.last_fault    = last_fault;
         can_tx_post(PitDiag::build_health(m));
 
