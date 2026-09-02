@@ -85,7 +85,14 @@ jobs:
             REST="$(printf '%s' "$REST" | sed -E 's#--bench[[:space:]]+[^[:space:]]+##')"
           fi
           SUITE="$(printf '%s' "$REST" | xargs || true)"
-          [ -n "$SUITE" ] || SUITE='tests/hil/vcu/'
+          # Deliberately NO default. An empty suite means `smoke` to IFS_HIL,
+          # resolved from its configs/suites.yaml. This used to force
+          # 'tests/hil/vcu/' -- all 63 cases, including ones bench-01
+          # structurally cannot pass (it has no inverter, and the HIL flasher
+          # de-energises the AMS to flash this ECU), so every bare /hil-test
+          # came back red whatever the PR contained. A name or path after
+          # /hil-test is still honoured: `/hil-test dv`, `/hil-test full`,
+          # `/hil-test tests/hil/vcu/test_block_c_fsm.py`.
           {
             echo "bench=$BENCH"
             echo "suite=$SUITE"
