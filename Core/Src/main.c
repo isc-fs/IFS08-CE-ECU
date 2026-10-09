@@ -30,7 +30,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stm32h7xx_ll_cortex.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,7 +92,15 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  /* The idle hook sleeps the core with WFI (freertos.c). Make sure that WFI
+   * means Sleep -- CPU clock gated, peripherals and buses running -- and
+   * never Stop, which would stop the FDCAN clocks, whatever SLEEPDEEP was
+   * left at before the app started. Keep the debug clocks running in Sleep so
+   * a debugger attached to the flashed image does not drop the connection.
+   * Deliberately in every build, Release included, matching the AMS: the
+   * image the car and the bench run is the one worth attaching to. */
+  LL_LPM_EnableSleep();
+  HAL_DBGMCU_EnableDBGSleepMode();
   /* USER CODE END Init */
 
   /* Configure the system clock */
