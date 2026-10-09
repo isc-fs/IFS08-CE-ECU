@@ -49,10 +49,41 @@
 // true for as long as it is stranded, so nothing has to catch a fast SDC
 // transient.
 //
-// WHAT THE ECU ADDS: the hold. Latch on the observations, release only on our
-// own measurement -- so one lost CAN frame mid-discharge cannot abort a bleed
-// and re-strand the link. That asymmetry is the entire point of doing this here
-// rather than in the AMS.
+// WHAT THE ECU ADDS: the hold. Latch on the observations, release on our own
+// measurement -- so one lost CAN frame mid-discharge cannot abort a bleed and
+// re-strand the link. That asymmetry is the entire point of doing this here
+// rather than in the AMS. A LOST frame and a frame that says "not in Start" are
+// different things, though -- see the precharge edge below.
+//
+// THE PRECHARGE EDGE. The AMS will not leave Start while we report engaged, but
+// our view of fsm_in_start lags its FSM: 0x021 goes out on a 100 ms tick and we
+// keep believing the last one for DischargeReqStaleMs. So for up to a 0x021
+// period after the AMS closes the precharge relay we still read "Start", while
+// the link climbs through DischargeReleaseV in a few milliseconds. Latching
+// there would put the bleed across a link the precharge resistor is charging:
+// the two form a divider, the link settles far below 95 % of pack, the AMS times
+// the precharge out and latches Error -- which survives a power cycle and looks
+// exactly like a dead precharge circuit. Two rules close it:
+//
+//   1. Never latch on a link that rose from drained. In Start every contactor
+//      is open, so the AMS cannot be charging the link; a rise means it has
+//      already left Start and we have not heard yet. That is physics, not CAN
+//      timing, so it holds however late or lost the next 0x021 is. Re-armed
+//      only when a fresh 0x021 reports the AMS out of Start, so a link that is
+//      left charged when it comes back (a precharge that timed out) is still
+//      secured. Consequence, accepted: a link charged in Start by the motor --
+//      the car pushed or rolling, back-EMF through the inverter's freewheel
+//      diodes -- is not secured either. That is not charge an interrupted bleed
+//      left behind, and a transient-duty resistor must not carry a spinning
+//      motor continuously. It is also how the car behaved before this hold.
+//
+//   2. Release when a FRESH 0x021 reports the AMS out of Start. It is then
+//      either energising the link on purpose (the bleed must be off) or in
+//      Error with the SDC open (the hardware bleed is already on), so letting
+//      go is right in every case -- including Charger mode, where the AMS arms
+//      without checking engaged, and any case rule 1 cannot see (no valid
+//      drained reading before the rise). A stale or lost frame is NOT this
+//      report and keeps the hold, exactly as before.
 //
 // RELEASE AT DischargeReleaseV, well below the AMS's own 60 V gate, so their
 // re-arm is satisfied before we let go. Note this may be below what the inverter
@@ -93,7 +124,10 @@
 namespace ecu {
 
 struct DischargeInputs {
-    // The caller conditions the 0x021 bits on that frame's freshness.
+    // The caller conditions the 0x021 bits on that frame's freshness, and says
+    // whether it was fresh: a fresh "not in Start" is a report (precharge edge,
+    // rule 2), a stale one is a lost frame.
+    bool          interlock_fresh = false; // 0x021 received within DischargeReqStaleMs
     bool          fsm_in_start   = false;  // 0x021 bit 0: AIRs and precharge all open
     bool          tsms           = false;  // 0x021 bit 1: SDC complete -> bleed disconnected
     std::uint16_t dc_bus_V       = 0;      // 0x466, relayed
@@ -119,6 +153,10 @@ private:
     bool          secured_       = false;
     bool          fault_         = false;
     std::uint32_t secured_at_ms_ = 0;
+    // A valid reading at or below DischargeReleaseV has been seen since the AMS
+    // last reported leaving Start. Precharge edge, rule 1: a later reading above
+    // the threshold is charge coming IN, not charge left behind.
+    bool          link_seen_drained_ = false;
 };
 
 }  // namespace ecu
