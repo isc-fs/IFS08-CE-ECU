@@ -76,6 +76,7 @@ io_signals (ADC3 + GPIO) → ControlTask 10 ms → ecu::Controller::step()
 | `TelemetryTask`| BelowNormal   | 200 ms  | Snapshot → **dashboard por FDCAN3** (18 tramas, ver [`docs/CAN3_MAP.md`](docs/CAN3_MAP.md)) + **snapshot de radio nRF24** (102 B en 5 fragmentos, ver [`docs/RADIO_SNAPSHOT_MAP.md`](docs/RADIO_SNAPSHOT_MAP.md)). |
 | `defaultTask`  | Low           | idle    | Task de CubeMX; no hace trabajo de aplicación. |
 | `GpsTask`      | Low           | 20 ms   | Drena el anillo NMEA (ISR USART10), parsea y publica `0x508`/`0x509` a 5 Hz + `GpsService`. Creada en los **bloques USER CODE** de `freertos.c` (sobrevive a un regen de CubeMX). |
+| Idle (FreeRTOS)| la más baja   | cuando nada está listo | `vApplicationIdleHook` (`freertos.c`, USER CODE 2) duerme el núcleo con `__WFI()` hasta la siguiente interrupción, en vez de girar en vacío. Sleep, no Stop (`LL_LPM_EnableSleep` en `main.c`): periféricos, FDCAN e IWDG siguen funcionando. Activado en `ECU.ioc` (`configUSE_IDLE_HOOK`) para que un regen lo conserve; un `static_assert` en `app_init_task.cpp` rompe el build si se pierde. |
 
 ---
 

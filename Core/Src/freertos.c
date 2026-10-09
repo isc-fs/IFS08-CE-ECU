@@ -138,8 +138,27 @@ void StartTelemetryTask(void *argument);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* Hook prototypes */
+void vApplicationIdleHook(void);
 void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName);
 void vApplicationMallocFailedHook(void);
+
+/* USER CODE BEGIN 2 */
+void vApplicationIdleHook( void )
+{
+  /* Sleep until the next interrupt instead of spinning. The idle task only
+   * runs when no task is ready, and every source that can ready one -- the
+   * 1 kHz FreeRTOS tick, the TIM23 HAL timebase, FDCAN1/FDCAN2 RX and the
+   * USART10 (GPS) receive interrupt -- is an interrupt that wakes the core
+   * within a few cycles, so task timing is unchanged. ADC3 is polled from
+   * ControlTask and never needs to wake it. Sleep (SLEEPDEEP clear, forced by
+   * LL_LPM_EnableSleep in main.c) gates only the CPU clock: peripherals, buses
+   * and the IWDG keep running. The DSB lets outstanding memory accesses
+   * complete before the core stops. This hook must return and must never
+   * block: the idle task also frees deleted tasks (App_InitTask exits). */
+  __DSB();
+  __WFI();
+}
+/* USER CODE END 2 */
 
 /* USER CODE BEGIN 4 */
 void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName)
