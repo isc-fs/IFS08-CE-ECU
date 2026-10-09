@@ -988,8 +988,13 @@ static void test_discharge_hold() {
     // link it can see itself) and combines all three. This helper mirrors that:
     // `strand` sets BOTH AMS bits, which together with a charged, valid reading
     // is what "the link is stranded" means.
+    // `strand = false` models the request going AWAY -- a lost/stale 0x021 --
+    // so the frame is marked not fresh. A fresh frame that positively reports
+    // "out of Start" is a different event, covered by
+    // test_discharge_precharge_race.
     auto in_at = [](bool strand, uint16_t v, bool valid, uint32_t t) {
         DischargeInputs d{};
+        d.interlock_fresh = strand;
         d.fsm_in_start = strand; d.tsms = strand;
         d.dc_bus_V = v; d.dc_bus_valid = valid; d.now_ms = t;
         return d;
@@ -1138,6 +1143,96 @@ static void test_discharge_hold() {
             if (s.secure != s.engaged) mirrors = false;
         }
         CHECK(mirrors, "reported state mirrors the command across 200 mixed inputs");
+    }
+}
+
+// The Start -> Precharge edge (discharge.hpp, "the precharge edge"). The AMS
+// closes the precharge relay the instant it leaves Start, but its next 0x021 is
+// up to a period away and we believe the last one for DischargeReqStaleMs. A
+// latch in that window puts the bleed across a precharging link: a divider, a
+// precharge timeout, and a sticky AMS Error that looks like a dead precharge.
+static void test_discharge_precharge_race() {
+    std::printf("[discharge_precharge_race]\n");
+
+    // One 0x021 view per call, gated on freshness exactly as control_task does.
+    auto view = [](bool in_start, bool tsms, bool fresh, uint16_t v, uint32_t t) {
+        DischargeInputs d{};
+        d.interlock_fresh = fresh;
+        d.fsm_in_start    = in_start && fresh;
+        d.tsms            = tsms && fresh;
+        d.dc_bus_V = v; d.dc_bus_valid = true; d.now_ms = t;
+        return d;
+    };
+
+    // ---- the race: a link rising out of drained is never latched ----------
+    {
+        Discharge d;
+        DischargeState s = d.update(view(true, true, true, 3, 900));
+        CHECK(!s.secure, "drained link in Start: nothing to secure, so the AMS may arm");
+
+        // The AMS has closed the precharge relay; our 0x021 still says Start.
+        s = d.update(view(true, true, true, 40, 1010));
+        CHECK(!s.secure, "link rising out of drained is precharge, not stranded charge: no latch");
+        s = d.update(view(true, true, true, 250, 1080));
+        CHECK(!s.secure && !s.engaged, "still no latch further up the precharge curve");
+
+        // Every following 0x021 lost: the window must stay shut, not just shrink.
+        s = d.update(view(true, true, true, 370, 1400));
+        CHECK(!s.secure, "a late 0x021 cannot open the window");
+        s = d.update(view(true, true, false, 370, 1600));
+        CHECK(!s.secure, "nor can the view going stale");
+
+        s = d.update(view(false, true, true, 370, 1700));
+        CHECK(!s.secure && !s.fault, "AMS reports Precharge: idle, no fault");
+    }
+
+    // ---- a link left charged when the AMS comes BACK to Start is secured ---
+    // A precharge that timed out: the AMS opened everything and returned to
+    // Start with the link part-charged. The rising-link guard must not outlive
+    // the AMS leaving Start, or that link would never be drained.
+    {
+        Discharge d;
+        d.update(view(true, true, true, 2, 0));       // drained: guard armed
+        d.update(view(true, true, true, 60, 20));     // precharge begins: suppressed
+        d.update(view(false, true, true, 200, 120));  // AMS reports Precharge
+        const DischargeState s = d.update(view(true, true, true, 180, 5200));
+        CHECK(s.secure, "back in Start with a charged link: secured (guard cleared on leaving Start)");
+    }
+
+    // ---- a fresh "out of Start" releases a hold ----------------------------
+    // The backstop for any hold that got through, and Charger mode, whose
+    // re-arm gate does not check discharge_engaged.
+    {
+        Discharge d;
+        DischargeState s = d.update(view(true, true, true, 300, 0));
+        CHECK(s.secure, "stranded link: secured");
+        s = d.update(view(false, true, true, 300, 100));
+        CHECK(!s.secure && !s.engaged, "fresh 0x021 out of Start releases the hold");
+        CHECK(!s.fault, "and that is not a fault");
+        s = d.update(view(false, true, true, 320, 200));
+        CHECK(!s.secure, "and nothing re-latches while the AMS is out of Start");
+    }
+
+    // ---- ...but a LOST frame still never does ------------------------------
+    // The property the hold exists for, unchanged: stale is not a report.
+    {
+        Discharge d;
+        d.update(view(true, true, true, 300, 0));
+        const DischargeState s = d.update(view(true, true, false, 300, 600));
+        CHECK(s.secure, "a stale 0x021 keeps the hold: a lost frame never aborts a discharge");
+    }
+
+    // ---- an ECU-completed discharge arms the guard -------------------------
+    // The usual way into the race: we drain a stranded link, release, and the
+    // AMS arms on the link we just drained.
+    {
+        Discharge d;
+        DischargeState s = d.update(view(true, true, true, 250, 0));
+        CHECK(s.secure, "stranded: secured");
+        s = d.update(view(true, true, true, DischargeReleaseV - 1, 9000));
+        CHECK(!s.secure, "drained by us: released");
+        s = d.update(view(true, true, true, 120, 9100));
+        CHECK(!s.secure, "the AMS precharging the link we drained is not re-latched");
     }
 }
 
@@ -3096,6 +3191,7 @@ static void run_all() {
     test_endurance_guards();
     test_heartbeat_freshness();
     test_discharge_hold();
+    test_discharge_precharge_race();
     test_as_buzzer();
     test_boot_trigger_gate();
     test_power_margin();
@@ -3230,7 +3326,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(m, "--test-endurance-guards")) test_endurance_guards();
     else if (!std::strcmp(m, "--test-power-margin"))       test_power_margin();
     else if (!std::strcmp(m, "--test-heartbeat-fresh"))    test_heartbeat_freshness();
-    else if (!std::strcmp(m, "--test-discharge"))          test_discharge_hold();
+    else if (!std::strcmp(m, "--test-discharge"))        { test_discharge_hold(); test_discharge_precharge_race(); }
     else if (!std::strcmp(m, "--test-as-buzzer"))          test_as_buzzer();
     else if (!std::strcmp(m, "--test-boot-gate"))          test_boot_trigger_gate();
     else if (!std::strcmp(m, "--test-dynamic-states"))     test_dynamic_states();

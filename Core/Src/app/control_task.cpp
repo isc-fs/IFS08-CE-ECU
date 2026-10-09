@@ -287,6 +287,7 @@ extern "C" void ecu_control_task_run(void *argument) {
         const bool interlock_fresh =
             VehicleService::is_fresh(now, veh.last_discharge_req_tick,
                                      config::DischargeReqStaleMs);
+        di.interlock_fresh = interlock_fresh;   // fresh "out of Start" releases (discharge.hpp)
         di.fsm_in_start = (veh.ams_fsm_in_start != 0u) && interlock_fresh;
         di.tsms         = (veh.ams_tsms != 0u) && interlock_fresh;
         di.dc_bus_V     = veh.inv_dc_bus_V;
