@@ -154,7 +154,7 @@ inline constexpr bool StubStart      = false;  // assume start button pressed (P
 // discards it at compile time. ⚠ NEVER true for a flight/drive build (it would
 // broadcast fake pack/inverter telemetry). Covers the CAN-sourced fields; the
 // pedals/torque/flags still come from ControlTask's g_last_* mirrors.
-inline constexpr bool     StubTelemetryDummy   = false;
+inline constexpr bool     StubTelemetryDummy   = true;
 
 // ---- Torque / FSAE plausibility -------------------------------------------
 // Both sensors must exceed this before any torque is produced. This is a

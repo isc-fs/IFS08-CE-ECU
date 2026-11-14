@@ -44,6 +44,14 @@ std::uint8_t           s_rx_byte = 0;
 // Bytes dropped because the task did not drain in time. Non-zero means the GPS
 // task is starved -- surfaced nowhere yet, but invaluable under a debugger.
 volatile std::uint32_t s_overruns = 0;
+volatile std::uint32_t s_uart_errors = 0;
+volatile std::uint32_t s_rx_rearm_failures = 0;
+
+inline void arm_uart_rx(UART_HandleTypeDef* huart) noexcept {
+    if (HAL_UART_Receive_IT(huart, &s_rx_byte, 1u) != HAL_OK) {
+        ++s_rx_rearm_failures;
+    }
+}
 
 inline bool ring_pop(std::uint8_t& out) noexcept {
     const std::uint16_t tail = s_tail;
@@ -70,7 +78,16 @@ extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
         ++s_overruns;
     }
 
-    (void)HAL_UART_Receive_IT(huart, &s_rx_byte, 1u);
+    arm_uart_rx(huart);
+}
+
+extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
+    if (huart->Instance != USART10) return;
+
+    ++s_uart_errors;
+    if (huart->RxState == HAL_UART_STATE_READY) {
+        arm_uart_rx(huart);
+    }
 }
 
 namespace {
@@ -112,7 +129,7 @@ extern "C" void ecu_gps_task_run(void* argument) {
     pmtk_send(config::GpsPmtkUpdateRate);
 
     // Arm the interrupt-driven receive; every completion re-arms itself.
-    (void)HAL_UART_Receive_IT(&huart10, &s_rx_byte, 1u);
+    arm_uart_rx(&huart10);
 
     std::uint32_t tick    = osKernelGetTickCount();
     std::uint32_t last_tx = tick;
